@@ -551,10 +551,10 @@ esac
 UIDN="$(id -u)"
 if [ "$NO_LAUNCHD" = 0 ]; then
   say "LaunchAgents : migration puis (re)chargement"
-  for p in "$LA"/*claude-dojo*.plist; do
+  # Migration : seuls les anciens labels com.<auteur>.claude-dojo.* sont retirés (pas de glob *claude-dojo*).
+  for p in "$LA"/com.*.claude-dojo.agent.plist "$LA"/com.*.claude-dojo.wallpaper.plist; do
     [ -e "$p" ] || continue
     name="$(basename "$p" .plist)"
-    case "$name" in io.github.claude-dojo.*) continue ;; esac
     launchctl bootout "gui/$UIDN/$name" 2>/dev/null || true
     rm -f "$p"
     info "migration : ancien LaunchAgent $name déchargé et supprimé"
@@ -572,10 +572,9 @@ if [ "$NO_LAUNCHD" = 0 ]; then
   done
 else
   say "LaunchAgents : écrits mais ni chargés ni déchargés (--no-launchd)"
-  for p in "$LA"/*claude-dojo*.plist; do
+  for p in "$LA"/com.*.claude-dojo.agent.plist "$LA"/com.*.claude-dojo.wallpaper.plist; do
     [ -e "$p" ] || continue
     name="$(basename "$p" .plist)"
-    case "$name" in io.github.claude-dojo.*) continue ;; esac
     warn "ancien LaunchAgent $name laissé en place (--no-launchd). Relance sans --no-launchd pour le retirer."
   done
 fi

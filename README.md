@@ -20,7 +20,7 @@ An animated macOS desktop wallpaper that shows every active Claude Code session 
 - **Dev panel**: open GitHub pull requests and their CI status, your contribution streak, and local Git repositories with uncommitted changes or unpushed commits.
 - **Optional panels**: unresolved Sentry issues from the last 24 hours, a 3-day weather forecast, upcoming calendar events from ICS feeds, and the track currently playing.
 - **Menu bar icon** to toggle interactive mode, reload the page, mirror the layout, change the size, or quit.
-- **Private by default**: the local agent listens on `127.0.0.1` only, and every panel that needs the network is optional.
+- **Private by default**: the local agent listens on `127.0.0.1` only and rejects requests from other origins (protection against CSRF and DNS rebinding), so a web page open in your browser cannot read your data or trigger actions. Every panel that needs the network is optional.
 
 **Language and artwork**: the wallpaper labels are in French for now. Pull requests that add translations (i18n) are welcome. The background image is third-party fan art, included as a demo. To use your own, replace `~/.config/claude-dojo/wallpaper/background.jpg`, then choose Reload in the menu bar icon. Re-running `install.sh` copies the bundled image again, so keep a copy of your own image.
 

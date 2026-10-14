@@ -106,7 +106,8 @@ else
   for label in io.github.claude-dojo.agent io.github.claude-dojo.wallpaper; do
     launchctl bootout "gui/$UIDN/$label" 2>/dev/null || true
   done
-  for p in "$LA"/*claude-dojo*.plist; do
+  # Labels actuels et anciens (com.<auteur>.claude-dojo.*) uniquement : pas de glob *claude-dojo*.
+  for p in "$LA/io.github.claude-dojo.agent.plist" "$LA/io.github.claude-dojo.wallpaper.plist" "$LA"/com.*.claude-dojo.agent.plist "$LA"/com.*.claude-dojo.wallpaper.plist; do
     [ -e "$p" ] || continue
     name="$(basename "$p" .plist)"
     launchctl bootout "gui/$UIDN/$name" 2>/dev/null || true
@@ -118,7 +119,7 @@ fi
 # ── 2. Application ───────────────────────────────────────────────────────
 say "Application"
 if [ -e "$APP" ]; then
-  rm -rf "$APP"
+  rm -rf "${APP:?}"
   info "supprimée : $APP"
 else
   info "absente : $APP"

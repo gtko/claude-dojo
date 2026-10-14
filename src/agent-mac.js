@@ -649,20 +649,28 @@ async function sample() {
 // ── Serveur HTTP ───────────────────────────────────────────────────
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.jpg': 'image/jpeg', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json' };
 function send(res, code, body, type = 'application/json; charset=utf-8') {
-  res.writeHead(code, {
-    'Content-Type': type, 'Cache-Control': 'no-store',
-    'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Private-Network': 'true', 'Access-Control-Allow-Headers': '*',
-  });
+  res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' });
   res.end(body);
+}
+// Protection CSRF / DNS rebinding : seule la page servie par cet agent (même origine, loopback) peut
+// lire ou déclencher une action. Un site tiers ouvert dans le navigateur reçoit un 403.
+const OWN_HOSTS = [`127.0.0.1:${PORT}`, `localhost:${PORT}`];
+const OWN_ORIGINS = [`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`];
+function isOwnRequest(req) {
+  const h = req.headers;
+  if (!OWN_HOSTS.includes(h.host)) return false;
+  if (h.origin !== undefined && !OWN_ORIGINS.includes(h.origin)) return false;
+  if (h['sec-fetch-site'] !== undefined && !['same-origin', 'none'].includes(h['sec-fetch-site'])) return false;
+  return true;
 }
 function sendFile(res, file) {
   fs.readFile(file, (e, b) => e ? send(res, 404, '{}') : send(res, 200, b, TYPES[path.extname(file)] || 'application/octet-stream'));
 }
 const server = http.createServer(async (req, res) => {
   try {
+    if (!isOwnRequest(req)) return send(res, 403, '{}');
     const u = new URL(req.url, 'http://localhost');
     const q = (k) => u.searchParams.get(k);
-    if (req.method === 'OPTIONS') return send(res, 204, '');
     switch (u.pathname) {
       case '/stats': return send(res, 200, JSON.stringify(state));
       case '/focus': return send(res, 200, JSON.stringify({ result: await focusSession(q('id')).catch((e) => 'erreur: ' + e.message) }));
