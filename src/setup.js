@@ -603,6 +603,12 @@ function validateConfig(c) {
       if (c.sentry[k] !== undefined && typeof c.sentry[k] !== 'string') fail(`sentry.${k} doit être une chaîne.`);
     }
   }
+  if (c.wallpapers !== undefined && c.wallpapers !== null) {
+    if (!isObj(c.wallpapers)) fail('wallpapers doit être un objet {autoDownload}.');
+    if (c.wallpapers.autoDownload !== undefined && typeof c.wallpapers.autoDownload !== 'boolean') {
+      fail('wallpapers.autoDownload doit être un booléen (true ou false).');
+    }
+  }
   if (c.theme !== undefined && c.theme !== null && !(typeof c.theme === 'string' && THEME_ID_RE.test(c.theme))) {
     fail('theme doit être un identifiant (lettres minuscules, chiffres, tirets).');
   }
@@ -619,6 +625,10 @@ function validateConfig(c) {
     }
   }
 }
+
+// wallpapers.autoDownload (config.json, défaut true) : seul false coupe le téléchargement automatique
+// (wallpapers sync sans thème, needsSync de set-theme). Ne concerne pas le champ wallpapers de theme.json.
+const autoDownloadOf = (cfg) => !(isObj(cfg) && isObj(cfg.wallpapers) && cfg.wallpapers.autoDownload === false);
 
 // Galerie d'un thème : fichier directement dans backgrounds/<theme>/ (un seul niveau). Renvoie l'id du thème, ou null.
 function galleryOwner(file) {
@@ -1034,12 +1044,12 @@ function listThemes() {
   return themes;
 }
 
-// Liste des thèmes, thème courant (défaut naruto) et fond personnalisé (null = fond du thème).
+// Liste des thèmes, thème courant (défaut naruto), fond personnalisé (null = fond du thème) et autoDownload (bool).
 function themesInfo() {
   const cfg = readConfig() || {};
   const theme = typeof cfg.theme === 'string' && THEME_ID_RE.test(cfg.theme) ? cfg.theme : DEFAULT_THEME;
   const background = typeof cfg.background === 'string' && cfg.background !== '' ? cfg.background : null;
-  return { ok: true, themes: listThemes(), theme, background };
+  return { ok: true, themes: listThemes(), theme, background, autoDownload: autoDownloadOf(cfg) };
 }
 
 // Fond utilisable tel quel : chemin accepté par checkBackgroundPath et fichier régulier présent. La sentinelle « theme » n'est pas un fichier.
@@ -1076,7 +1086,7 @@ function setTheme(arg) {
     theme: id,
     background: typeof after.background === 'string' ? after.background : null,
     hasDownloads: galleryFiles(id).length > 0,
-    needsSync: missingIds(id).length > 0,
+    needsSync: autoDownloadOf(after) && missingIds(id).length > 0,
   };
 }
 
@@ -1156,6 +1166,16 @@ const strOrNull = (v) => (typeof v === 'string' ? v : null);
 const httpsOrNull = (u) => {
   if (typeof u !== 'string') return null;
   try { return new URL(u).protocol === 'https:' ? u : null; } catch { return null; }
+};
+// Page source d'un fond (crédits) : https et hôte exactement wallhaven.cc ou www.wallhaven.cc, sinon null.
+// Appliqué à l'index, aux réponses download, list, search et local (y compris pour un index.json ancien).
+const WALLHAVEN_SOURCE_HOSTS = ['wallhaven.cc', 'www.wallhaven.cc'];
+const sourceOrNull = (u) => {
+  if (typeof u !== 'string') return null;
+  try {
+    const url = new URL(u);
+    return url.protocol === 'https:' && WALLHAVEN_SOURCE_HOSTS.includes(url.hostname) ? u : null;
+  } catch { return null; }
 };
 const galleryDir = (theme) => path.join(paths.backgrounds(), theme);
 const indexFile = () => path.join(paths.backgrounds(), 'index.json');
@@ -1322,10 +1342,55 @@ function readIndex() {
   } catch { return []; }
 }
 
-function recordDownload(entry) {
+// Verrou d'écriture de index.json : index.json.lock, créé en wx (0600), contient le pid. Une écriture dure quelques ms :
+// 20 essais espacés de 50 ms suffisent. Un verrou de plus de 10 s est repris (takeOverStale). Non obtenu = erreur,
+// le fichier déjà téléchargé reste sans entrée d'index (un nouveau download la rajoute).
+const indexLock = () => `${indexFile()}.lock`;
+const INDEX_LOCK_TRIES = 20;
+const INDEX_LOCK_WAIT_MS = 50;
+const INDEX_LOCK_STALE_MS = 10 * 1000;
+
+// Verrou d'index périmé : pas mis à jour depuis plus de INDEX_LOCK_STALE_MS (absent = périmé, l'appelant réessaie).
+const indexLockIsStale = (file) => {
+  try { return Date.now() - fs.lstatSync(file).mtimeMs > INDEX_LOCK_STALE_MS; } catch { return true; }
+};
+
+async function acquireIndexLock() {
+  const lock = indexLock();
+  for (let i = 0; i < INDEX_LOCK_TRIES; i += 1) {
+    try {
+      fs.writeFileSync(lock, `${process.pid}\n`, { mode: 0o600, flag: 'wx' });
+      return;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+    if (indexLockIsStale(lock)) {
+      takeOverStale(lock, indexLockIsStale);
+      continue; // reprise (ou verrou déjà repris ailleurs) : nouvel essai sans attendre
+    }
+    await sleep(INDEX_LOCK_WAIT_MS);
+  }
+  fail('index des fonds occupé par un autre téléchargement : réessayez.');
+}
+
+// Libère seulement un verrou qui porte notre pid (un verrou repris entre-temps par un autre processus reste en place).
+function releaseIndexLock() {
+  const lock = indexLock();
+  try {
+    if (fs.readFileSync(lock, 'utf8').trim() === String(process.pid)) fs.rmSync(lock, { force: true });
+  } catch { /* déjà libéré */ }
+}
+
+// Ajout d'une entrée : sous verrou, l'index est relu puis réécrit (atomiquement) : deux téléchargements concurrents ne se perdent pas.
+async function recordDownload(entry) {
   ensureSafeDir(paths.backgrounds());
-  const rest = readIndex().filter((e) => !(e.id === entry.id && e.theme === entry.theme));
-  writeSecret(indexFile(), Buffer.from(JSON.stringify([...rest, entry], null, 2) + '\n'));
+  await acquireIndexLock();
+  try {
+    const rest = readIndex().filter((e) => !(e.id === entry.id && e.theme === entry.theme));
+    writeSecret(indexFile(), Buffer.from(JSON.stringify([...rest, entry], null, 2) + '\n'));
+  } finally {
+    releaseIndexLock();
+  }
 }
 
 // Thème connu (listé par listThemes), ou erreur.
@@ -1393,7 +1458,7 @@ function toEntry(d, locals) {
     id: d.id,
     resolution: strOrNull(d.resolution),
     thumb: httpsOrNull(d.thumbs && d.thumbs.large),
-    source: strOrNull(d.url),
+    source: sourceOrNull(d.url),
     purity: strOrNull(d.purity),
     downloaded: file !== null,
     file,
@@ -1479,9 +1544,9 @@ async function wallpapersDownload(idArg, themeArg, api) {
   ensureSafeDir(galleryDir(theme));
   const file = path.join(galleryDir(theme), `wallhaven-${id}${ext}`);
   writeSecret(file, buf);
-  const source = strOrNull(d.url);
+  const source = sourceOrNull(d.url);
   const resolution = strOrNull(d.resolution);
-  recordDownload({ id, theme, source, resolution, file, downloadedAt: new Date().toISOString() });
+  await recordDownload({ id, theme, source, resolution, file, downloadedAt: new Date().toISOString() });
   return { ok: true, id, theme, file, source, resolution };
 }
 
@@ -1586,7 +1651,7 @@ function wallpapersLocal(arg) {
     return {
       id: f.id,
       file: f.file,
-      source: strOrNull(meta.source),
+      source: sourceOrNull(meta.source),
       resolution: strOrNull(meta.resolution),
       current: f.file === current,
       builtin: false,
@@ -1639,19 +1704,50 @@ function pidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
 
-// Prend le verrou du thème : création exclusive (O_EXCL). Un verrou vivant bloque ; un verrou périmé (fichier ancien
-// ou pid mort) est repris. Renvoie false si un autre sync tourne.
+// Reprise d'un verrou périmé : rename vers « <verrou>.stale-<pid> ». Un seul processus gagne ce rename ; les autres
+// reçoivent ENOENT (retour false) et l'appelant retente sa création. Le contrôle isStale porte sur le fichier
+// effectivement renommé : s'il est redevenu vivant entre-temps (un autre processus l'a repris et recréé), il est remis
+// en place sans écraser un verrou plus récent (retour false). Sinon il est supprimé (retour true).
+function takeOverStale(lock, isStale) {
+  const moved = `${lock}.stale-${process.pid}`;
+  try {
+    fs.renameSync(lock, moved);
+  } catch (e) {
+    if (e.code === 'ENOENT') return false;
+    throw e;
+  }
+  if (isStale(moved)) {
+    fs.rmSync(moved, { force: true });
+    return true;
+  }
+  try { fs.linkSync(moved, lock); } catch { /* un verrou plus récent existe déjà : il prime */ }
+  fs.rmSync(moved, { force: true });
+  return false;
+}
+
+// Verrou de sync vivant : fichier régulier mis à jour il y a moins de PROGRESS_FRESH_MS, pid vivant.
+function progressIsLive(file) {
+  try {
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || Date.now() - st.mtimeMs >= PROGRESS_FRESH_MS) return false;
+    const v = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return isObj(v) && pidAlive(v.pid);
+  } catch { return false; }
+}
+
+// Prend le verrou du thème : création exclusive (wx). Un verrou vivant bloque ; un verrou périmé (fichier ancien
+// ou pid mort) est repris par takeOverStale, puis la création est retentée (3 tentatives au plus). Renvoie false si un autre sync tourne.
 function acquireLock(theme, state) {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  const lock = progressFile(theme);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      fs.writeFileSync(progressFile(theme), progressBytes(state), { mode: 0o600, flag: 'wx' });
+      fs.writeFileSync(lock, progressBytes(state), { mode: 0o600, flag: 'wx' });
       return true;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
     }
-    const cur = readProgress(theme);
-    if (cur && progressFresh(theme) && pidAlive(cur.pid)) return false;
-    fs.rmSync(progressFile(theme), { force: true });
+    if (progressIsLive(lock)) return false;
+    takeOverStale(lock, (f) => !progressIsLive(f));
   }
   return false;
 }
@@ -1679,7 +1775,11 @@ function applyDefaultFile(theme, file) {
 // Erreur propre à un fond (404, non SFW, trop lourd, signature) : dans failed, on continue. Erreur bloquante
 // (403, 429, réseau, délai) : le sync s'arrête proprement (stopped), ce qui est téléchargé reste.
 // Le fond actif ne change qu'à la fin du téléchargement du défaut, si applyDefaultFile l'accepte (defaultApplied).
+// Sans thème explicite et avec wallpapers.autoDownload à false : rien n'est fait. Un thème explicite reste une action manuelle.
 async function wallpapersSync(themeArg, api) {
+  if (themeArg === undefined && !autoDownloadOf(readConfig())) {
+    return { ok: true, theme: activeTheme(), skipped: true, reason: 'autoDownload désactivé' };
+  }
   const theme = knownTheme(themeArg === undefined ? activeTheme() : themeArg);
   const curated = curatedOf(theme);
   const defId = defaultFileId(theme);
@@ -1757,7 +1857,7 @@ const USAGE = [
   'node setup.js wallpapers list <theme>',
   'node setup.js wallpapers search <theme> [page]',
   'node setup.js wallpapers download <id> [theme]',
-  'node setup.js wallpapers sync [theme]',
+  'node setup.js wallpapers sync [theme]   (sans thème : rien si wallpapers.autoDownload vaut false)',
   'node setup.js wallpapers progress <theme>',
   'node setup.js wallpapers use <id|fichier> [theme]',
   'node setup.js wallpapers use theme|bundled',

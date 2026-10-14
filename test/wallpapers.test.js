@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const REPO = path.resolve(__dirname, '..');
 const SETUP = path.join(REPO, 'src', 'setup.js');
@@ -1105,6 +1105,290 @@ test('theme.json : ids sans doublon, format Wallhaven (bundled seulement pour na
     assert.ok(w.ids.includes(w.default), `${theme} : default absent de ids`);
   }
   assert.equal(curatedFile('naruto').default, 'bundled');
+});
+
+// ── Verrous (sync et index.json), source des fonds, option autoDownload ───────────────────────────
+const DEAD_PID = 2147483646; // pid qui ne correspond à aucun processus vivant
+const indexFileOf = () => path.join(bgRoot(), 'index.json');
+const indexLockOf = () => `${indexFileOf()}.lock`;
+const readIndexFile = () => JSON.parse(fs.readFileSync(indexFileOf(), 'utf8'));
+const ageFile = (file, ms) => { const old = new Date(Date.now() - ms); fs.utimesSync(file, old, old); };
+const dlPlan = { '8o99v2': 'jpg', mlq73y: 'png' };
+const dlFetch = () => fakeFetch(async (url) => {
+  if (url.startsWith(`${API}/w/`)) {
+    const id = url.split('/w/')[1];
+    return jsonRes(apiData(id, { path: `https://w.wallhaven.cc/full/ab/wallhaven-${id}.${dlPlan[id] || 'jpg'}` }));
+  }
+  return imgRes(url.endsWith('.png') ? PNG : JPEG, { 'content-length': '120' });
+});
+
+test('sync : reprise d un verrou périmé, le perdant reçoit ENOENT (rename déjà fait par un autre processus) : renonce sans toucher au verrou du gagnant', async () => {
+  fs.mkdirSync(bgDir('naruto'), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(progressOf('naruto'), JSON.stringify({ pid: DEAD_PID, total: 5, done: 0, current: null }), { mode: 0o600 });
+  ageFile(progressOf('naruto'), 200 * 1000);
+  const lock = progressOf('naruto');
+  const realRename = fs.renameSync;
+  let raced = false;
+  // Le gagnant prend le verrou juste avant nous : son rename réussit, il crée son verrou frais, et notre rename voit ENOENT.
+  fs.renameSync = (from, to) => {
+    if (from === lock && !raced) {
+      raced = true;
+      realRename(from, `${from}.stale-winner`);
+      fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, total: 5, done: 0, current: 'winner' }), { mode: 0o600, flag: 'wx' });
+      throw Object.assign(new Error('ENOENT simulé'), { code: 'ENOENT' });
+    }
+    return realRename(from, to);
+  };
+  const f = wallFetch();
+  let r;
+  try {
+    r = await wp(['sync', 'naruto'], { fetch: f.fetch, sleep: noSleep });
+  } finally {
+    fs.renameSync = realRename;
+  }
+  assert.equal(raced, true, 'la course a bien eu lieu');
+  assert.deepEqual(r, { ok: true, theme: 'naruto', alreadyRunning: true });
+  assert.equal(f.calls.length, 0);
+  assert.equal(JSON.parse(fs.readFileSync(lock, 'utf8')).current, 'winner', 'verrou du gagnant intact');
+});
+
+test('sync : verrou périmé remplacé entre la lecture et le rename : le verrou vivant du gagnant est remis en place, pas supprimé', async () => {
+  fs.mkdirSync(bgDir('naruto'), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(progressOf('naruto'), JSON.stringify({ pid: DEAD_PID, total: 5, done: 0, current: null }), { mode: 0o600 });
+  ageFile(progressOf('naruto'), 200 * 1000);
+  const lock = progressOf('naruto');
+  const realRename = fs.renameSync;
+  let raced = false;
+  // Entre notre lecture (verrou périmé) et notre rename, le gagnant reprend le verrou et crée le sien (frais, pid vivant).
+  fs.renameSync = (from, to) => {
+    if (from === lock && !raced) {
+      raced = true;
+      realRename(from, `${from}.stale-winner`);
+      fs.rmSync(`${from}.stale-winner`, { force: true });
+      fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, total: 5, done: 0, current: 'winner' }), { mode: 0o600, flag: 'wx' });
+    }
+    return realRename(from, to);
+  };
+  const f = wallFetch();
+  let r;
+  try {
+    r = await wp(['sync', 'naruto'], { fetch: f.fetch, sleep: noSleep });
+  } finally {
+    fs.renameSync = realRename;
+  }
+  assert.equal(raced, true, 'la course a bien eu lieu');
+  assert.deepEqual(r, { ok: true, theme: 'naruto', alreadyRunning: true }, 'nous ne prenons pas un verrou vivant');
+  assert.equal(f.calls.length, 0);
+  assert.equal(JSON.parse(fs.readFileSync(lock, 'utf8')).current, 'winner', 'verrou du gagnant remis en place');
+  assert.deepEqual(fs.readdirSync(bgDir('naruto')).filter((n) => n.startsWith('.sync-progress.json')).sort(), ['.sync-progress.json'], 'pas de .stale résiduel');
+});
+
+test('sync : deux processus reprennent le même verrou périmé en même temps : un seul sync, chaque fond téléchargé une fois', async () => {
+  const base = outsideDir(); // thème factice à 3 fonds, pour un test multi-processus rapide
+  fs.mkdirSync(path.join(base, 'themes', 'race'), { recursive: true });
+  fs.writeFileSync(path.join(base, 'themes', 'race', 'theme.json'), JSON.stringify({
+    id: 'race', name: 'Race', wallpapers: { provider: 'wallhaven', ids: ['aaaa111', 'bbbb222', 'cccc333'], default: null, query: 'race' },
+  }));
+  writeRawConfig({ theme: 'race' });
+  fs.mkdirSync(bgDir('race'), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(progressOf('race'), JSON.stringify({ pid: DEAD_PID, total: 3, done: 0, current: null }), { mode: 0o600 });
+  ageFile(progressOf('race'), 200 * 1000);
+  // Barrière par fichiers : chaque processus signale son départ avant d'appeler sync, et ses requêtes attendent le départ
+  // de l'autre. Le premier à prendre le verrou le garde donc pendant toute la tentative du second (pas de course au chronomètre).
+  const script = `
+    const fs = require('fs');
+    const setup = require(${JSON.stringify(SETUP)});
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    fs.writeFileSync(process.env.RACE_SELF, '');
+    const barrier = async () => { for (let i = 0; i < 1000 && !fs.existsSync(process.env.RACE_OTHER); i += 1) await wait(5); };
+    const fetch = async (url) => {
+      await barrier();
+      await wait(60);
+      if (url.includes('/api/v1/w/')) {
+        const id = url.split('/w/')[1];
+        const data = { id, url: 'https://wallhaven.cc/w/' + id, purity: 'sfw', resolution: '1920x1080',
+          path: 'https://w.wallhaven.cc/full/ab/wallhaven-' + id + '.jpg' };
+        return new Response(JSON.stringify({ data }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(120, 7)]), { status: 200 });
+    };
+    setup.main(['wallpapers', 'sync', 'race'], { fetch }).then((r) => process.stdout.write(JSON.stringify(r)));
+  `;
+  const mark = (name) => path.join(base, `started-${name}`);
+  const runChild = (self, other) => new Promise((resolve, reject) => {
+    const env = {
+      ...process.env, DOJO_THEMES_DIR: base, DOJO_WALLHAVEN_MIN_INTERVAL_MS: '0', RACE_SELF: mark(self), RACE_OTHER: mark(other),
+    };
+    const child = spawn(process.execPath, ['-e', script], { env });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code !== 0) reject(new Error(`processus enfant en échec (${code}) : ${err}`));
+      else resolve(JSON.parse(out));
+    });
+  });
+  const [a, b] = await Promise.all([runChild('a', 'b'), runChild('b', 'a')]);
+  const results = [a, b];
+  assert.equal(results.filter((x) => x.alreadyRunning === true).length, 1, 'un seul processus a pris le verrou');
+  assert.equal(results.reduce((n, x) => n + (x.downloaded || []).length, 0), 3, 'chaque fond téléchargé une seule fois');
+  assert.deepEqual(fs.readdirSync(bgDir('race')).filter((n) => n.startsWith('wallhaven-')).sort(),
+    ['wallhaven-aaaa111.jpg', 'wallhaven-bbbb222.jpg', 'wallhaven-cccc333.jpg']);
+  assert.equal(fs.existsSync(progressOf('race')), false, 'verrou libéré');
+});
+
+test('download : deux téléchargements concurrents : index.json contient les deux entrées, verrou libéré', async () => {
+  const f = dlFetch();
+  await Promise.all([wp(['download', '8o99v2', 'naruto'], { fetch: f.fetch }), wp(['download', 'mlq73y', 'naruto'], { fetch: f.fetch })]);
+  assert.deepEqual(readIndexFile().map((e) => e.id).sort(), ['8o99v2', 'mlq73y']);
+  assert.equal(fs.existsSync(indexLockOf()), false);
+  assert.deepEqual(fs.readdirSync(bgRoot()).sort(), ['index.json', 'naruto'], 'aucun verrou ni fichier temporaire résiduel');
+});
+
+test('download : verrou d index tenu par un autre processus : attend, relit l index sous verrou (son entrée n est pas perdue)', async () => {
+  fs.mkdirSync(bgRoot(), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(indexLockOf(), '99999\n', { mode: 0o600 });
+  const f = dlFetch();
+  const pending = wp(['download', '8o99v2', 'naruto'], { fetch: f.fetch });
+  // L'autre processus écrit son entrée, puis libère le verrou avant la fin de nos essais.
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  fs.writeFileSync(indexFileOf(), JSON.stringify([{ id: 'xxxx', theme: 'frieren', source: null, resolution: null, file: 'x', downloadedAt: '2026-10-02T00:00:00.000Z' }]), { mode: 0o600 });
+  fs.rmSync(indexLockOf(), { force: true });
+  await pending;
+  assert.deepEqual(readIndexFile().map((e) => e.id).sort(), ['8o99v2', 'xxxx']);
+  assert.equal(fs.existsSync(indexLockOf()), false);
+});
+
+test('download : verrou d index frais jamais libéré : erreur claire après 20 essais, verrou d autrui intact, aucune entrée', async () => {
+  fs.mkdirSync(bgRoot(), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(indexLockOf(), '99999\n', { mode: 0o600 });
+  const f = dlFetch();
+  await assert.rejects(wp(['download', '8o99v2', 'naruto'], { fetch: f.fetch }), /occupé par un autre téléchargement/);
+  assert.equal(fs.readFileSync(indexLockOf(), 'utf8'), '99999\n', 'verrou d autrui intact');
+  assert.equal(fs.existsSync(indexFileOf()), false, 'aucune entrée écrite');
+});
+
+test('download : verrou d index périmé (plus de 10 s) repris par rename, créé en wx 0600, puis libéré', async () => {
+  fs.mkdirSync(bgRoot(), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(indexLockOf(), '99999\n', { mode: 0o600 });
+  ageFile(indexLockOf(), 20 * 1000);
+  const realWrite = fs.writeFileSync;
+  const lockWrites = [];
+  fs.writeFileSync = (file, data, opts) => {
+    if (String(file) === indexLockOf()) lockWrites.push(opts);
+    return realWrite(file, data, opts);
+  };
+  let r;
+  try {
+    r = await wp(['download', '8o99v2', 'naruto'], { fetch: dlFetch().fetch });
+  } finally {
+    fs.writeFileSync = realWrite;
+  }
+  assert.equal(r.ok, true);
+  assert.ok(lockWrites.length >= 1);
+  for (const o of lockWrites) assert.deepEqual(o, { mode: 0o600, flag: 'wx' });
+  assert.deepEqual(readIndexFile().map((e) => e.id), ['8o99v2']);
+  assert.deepEqual(fs.readdirSync(bgRoot()).sort(), ['index.json', 'naruto'], 'pas de .stale résiduel');
+});
+
+test('source : seules les pages https de wallhaven.cc ou www.wallhaven.cc sont gardées, sinon null (download, index, search, local)', async () => {
+  const urls = {
+    '8o99v2': 'http://wallhaven.cc/w/8o99v2',
+    mlq73y: 'https://evil.example.com/w/mlq73y',
+    dpg97o: 'https://wallhaven.cc.evil.example/w/dpg97o',
+    gw5ypd: 'https://www.wallhaven.cc/w/gw5ypd',
+  };
+  const f = fakeFetch(async (url) => {
+    if (url.startsWith(`${API}/w/`)) {
+      const id = url.split('/w/')[1];
+      return jsonRes(apiData(id, { url: urls[id] }));
+    }
+    return imgRes(JPEG);
+  });
+  const bad = await wp(['download', '8o99v2', 'naruto'], { fetch: f.fetch });
+  assert.equal(bad.source, null, 'http refusé');
+  assert.equal(bad.file.endsWith('wallhaven-8o99v2.jpg'), true, 'le fond reste téléchargé');
+  assert.equal((await wp(['download', 'mlq73y', 'naruto'], { fetch: f.fetch })).source, null, 'hôte étranger refusé');
+  assert.equal((await wp(['download', 'dpg97o', 'naruto'], { fetch: f.fetch })).source, null, 'sous-domaine piégé refusé');
+  assert.equal((await wp(['download', 'gw5ypd', 'naruto'], { fetch: f.fetch })).source, 'https://www.wallhaven.cc/w/gw5ypd');
+  assert.deepEqual(readIndexFile().map((e) => [e.id, e.source]).sort(), [
+    ['8o99v2', null], ['dpg97o', null], ['gw5ypd', 'https://www.wallhaven.cc/w/gw5ypd'], ['mlq73y', null],
+  ]);
+
+  const searchBody = { data: [apiData('abc123', { url: 'http://wallhaven.cc/w/abc123' }).data, apiData('def456').data], meta: { last_page: 1 } };
+  const s = await wp(['search', 'naruto'], { fetch: fakeFetch(async () => jsonRes(searchBody)).fetch });
+  assert.deepEqual(s.wallpapers.map((w) => [w.id, w.source]), [['abc123', null], ['def456', 'https://wallhaven.cc/w/def456']]);
+
+  // index.json ancien (écrit avant la validation) : l'entrée invalide ressort à null en local.
+  writeRawConfig({});
+  fs.writeFileSync(indexFileOf(), JSON.stringify([
+    { id: 'aaaa', theme: 'naruto', source: 'https://evil.example.com/w/aaaa', resolution: '1x1', file: 'x', downloadedAt: 'd' },
+  ]), { mode: 0o600 });
+  const dir = bgDir('naruto');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(dir, 'wallhaven-aaaa.jpg'), JPEG, { mode: 0o600 });
+  const local = await wp(['local', 'naruto']);
+  assert.equal(local.wallpapers.find((w) => w.id === 'aaaa').source, null);
+});
+
+// autoDownload : config.json, wallpapers: { autoDownload } (défaut true). Ne pas confondre avec theme.json.
+test('autoDownload : write-config accepte true et false (fusion profonde), refuse le reste avec un message clair, sans rien écrire', async () => {
+  const r = await setup.main(['write-config', JSON.stringify({ wallpapers: { autoDownload: false } })]);
+  assert.equal(r.ok, true);
+  assert.deepEqual(readConfig().wallpapers, { autoDownload: false });
+  await setup.main(['write-config', JSON.stringify({ theme: 'frieren' })]);
+  assert.deepEqual(readConfig().wallpapers, { autoDownload: false }, 'clé conservée par la fusion');
+  const before = fs.readFileSync(configFile(), 'utf8');
+  await assert.rejects(setup.main(['write-config', JSON.stringify({ wallpapers: { autoDownload: 'no' } })]), /wallpapers\.autoDownload doit être un booléen/);
+  await assert.rejects(setup.main(['write-config', JSON.stringify({ wallpapers: { autoDownload: 0 } })]), /wallpapers\.autoDownload doit être un booléen/);
+  await assert.rejects(setup.main(['write-config', JSON.stringify({ wallpapers: { autoDownload: null } })]), /wallpapers\.autoDownload doit être un booléen/);
+  await assert.rejects(setup.main(['write-config', JSON.stringify({ wallpapers: 'oui' })]), /wallpapers doit être un objet/);
+  assert.equal(fs.readFileSync(configFile(), 'utf8'), before, 'config.json inchangé après refus');
+  await setup.main(['write-config', JSON.stringify({ wallpapers: { autoDownload: true } })]);
+  assert.equal(readConfig().wallpapers.autoDownload, true);
+});
+
+test('autoDownload : themes renvoie autoDownload (true par défaut, false si désactivé)', async () => {
+  assert.equal((await setup.main(['themes'])).autoDownload, true, 'absent : true');
+  writeRawConfig({ wallpapers: { autoDownload: false } });
+  assert.equal((await setup.main(['themes'])).autoDownload, false);
+});
+
+test('autoDownload : set-theme renvoie needsSync false si désactivé, vrai sinon (fonds curés manquants)', async () => {
+  writeRawConfig({ wallpapers: { autoDownload: false } });
+  assert.deepEqual(await setup.main(['set-theme', 'frieren']), { ok: true, theme: 'frieren', background: null, hasDownloads: false, needsSync: false });
+  await setup.main(['write-config', JSON.stringify({ wallpapers: { autoDownload: true } })]);
+  assert.equal((await setup.main(['set-theme', 'frieren'])).needsSync, true);
+});
+
+test('autoDownload : wallpapers sync sans thème ne fait rien si désactivé (retour skipped, aucune requête, aucun verrou)', async () => {
+  writeRawConfig({ theme: 'naruto', wallpapers: { autoDownload: false } });
+  const f = wallFetch();
+  const r = await wp(['sync'], { fetch: f.fetch, sleep: noSleep });
+  assert.deepEqual(r, { ok: true, theme: 'naruto', skipped: true, reason: 'autoDownload désactivé' });
+  assert.equal(f.calls.length, 0);
+  assert.equal(fs.existsSync(progressOf('naruto')), false);
+});
+
+test('autoDownload : sync sans thème repart quand c est activé ; sync <thème> explicite marche toujours quand c est désactivé', async () => {
+  writeRawConfig({ theme: 'frieren', wallpapers: { autoDownload: false } });
+  const manual = await wp(['sync', 'frieren'], { fetch: wallFetch().fetch, sleep: noSleep });
+  assert.equal(manual.theme, 'frieren');
+  assert.equal(manual.ok, true);
+  assert.equal(manual.downloaded.length, curatedIds('frieren').length, 'action manuelle : téléchargé');
+  fs.rmSync(bgDir('frieren'), { recursive: true, force: true });
+  writeRawConfig({ theme: 'frieren', wallpapers: { autoDownload: true } });
+  const auto = await wp(['sync'], { fetch: wallFetch().fetch, sleep: noSleep });
+  assert.equal(auto.theme, 'frieren');
+  assert.ok(Array.isArray(auto.skipped), 'sync sans thème : résultat normal (skipped = ids déjà présents), pas le retour de désactivation');
+  assert.equal(auto.downloaded.length, curatedIds('frieren').length);
+});
+
+test('autoDownload : USAGE mentionne la règle du sync sans thème', async () => {
+  const u = (await setup.main([])).usage.join('\n');
+  assert.match(u, /wallpapers sync \[theme\].*autoDownload/);
 });
 
 // ── Intégration réseau réelle (sautée sauf DOJO_NET_TESTS=1) ─────────────
