@@ -81,6 +81,18 @@ final class SetupModel: ObservableObject {
 
     // Zone de travail (windowZone de config.json) : enregistrée avec le reste à la dernière étape
     @Published var windowZone = WindowZoneConfig.defaults
+    // Options terminal : cases de l'étape Thème
+    /// Cases cochées (Ghostty, Terminal.app, message d'accueil zsh).
+    @Published var terminalChoice = TerminalOptions()
+    /// État réel (`terminal status`) : applications présentes, Terminal.app ouvert, profil importé. nil = non lu.
+    @Published var terminalStatus: TerminalStatus?
+    @Published var terminalLoadError: String?
+    @Published var terminalError: String?
+    @Published private(set) var terminalBusy = false
+    /// Options en vigueur (config.json) : base du calcul des ajouts et des retraits.
+    private var terminalInitial = TerminalOptions()
+    /// Profil Terminal à ouvrir après « Appliquer » (Terminal.app ouvert pendant l'installation).
+    private var terminalFileToOpen: String?
 
     // Démarrage et application
     @Published var autostart = true
@@ -145,6 +157,17 @@ final class SetupModel: ObservableObject {
         return themes.first { $0.id == themeChoice }?.name ?? themeChoice
     }
 
+    var selectedTheme: ThemeInfo? { themes.first { $0.id == themeChoice } }
+
+    /// Options terminal cochées, en clair (récapitulatif).
+    var terminalLabel: String {
+        var names: [String] = []
+        if terminalChoice.ghostty { names.append("Ghostty") }
+        if terminalChoice.terminalApp { names.append("Terminal") }
+        if terminalChoice.welcome { names.append("message d'accueil") }
+        return names.isEmpty ? "aucun" : names.joined(separator: ", ")
+    }
+
     /// Fond qui sera utilisé : le choix en attente, sinon le fond actuel.
     private var effectiveBackground: BackgroundChange {
         if let change = backgroundChange { return change }
@@ -184,6 +207,7 @@ final class SetupModel: ObservableObject {
             "Thème : " + (themeName ?? "non disponible"),
             "Fond : " + backgroundLabel,
             "Zone de travail : " + windowZoneLabel,
+            "Terminal : " + terminalLabel,
             "Claude Code : hooks Dojo \(hooks ? "oui" : "non"), barre de statut \(statusLineLabel), heavy-gate \(heavyGate ? "oui" : "non"), VITEST_MAX_WORKERS \(vitestWorkers ? "oui" : "non")",
             "Démarrage automatique : " + autostartLabel
         ]
@@ -216,6 +240,7 @@ final class SetupModel: ObservableObject {
         await refreshDetect()
         await loadThemes()
         await loadWindowZone()
+        await loadTerminal()
         loading = false
     }
 
@@ -241,6 +266,83 @@ final class SetupModel: ObservableObject {
         if let response: WindowZoneResponse = try? await runner.call("window-zone"), let zone = response.windowZone {
             windowZone = zone
         }
+    }
+
+    /// Options terminal enregistrées et état réel. Les cases reprennent les options en vigueur.
+    func loadTerminal() async {
+        guard liveMode else { return }
+        do {
+            let status: TerminalStatus = try await runner.call("terminal", ["status"])
+            terminalStatus = status
+            terminalInitial = status.options ?? TerminalOptions()
+            terminalChoice = terminalInitial
+            terminalLoadError = nil
+        } catch {
+            terminalLoadError = error.localizedDescription
+        }
+    }
+
+    /// Relit seulement l'état réel (présence, Terminal.app ouvert, profil importé). Les cases ne bougent pas.
+    func refreshTerminalStatus() async {
+        guard liveMode else { return }
+        do {
+            terminalStatus = try await runner.call("terminal", ["status"])
+            terminalLoadError = nil
+        } catch {
+            terminalLoadError = error.localizedDescription
+        }
+    }
+
+    /// Après un changement fait depuis le menu ⛩ (thème) : liste, thème et état terminal relus. Rien n'est écrit.
+    func refreshExternal() async {
+        guard liveMode, !applied else { return }
+        await loadThemes()
+        await refreshTerminalStatus()
+    }
+
+    /// Case cochée ou décochée par l'utilisateur. Réglages : appliquée tout de suite. Installation : à « Appliquer ».
+    func setTerminal(_ key: WritableKeyPath<TerminalOptions, Bool>, _ on: Bool) {
+        guard !terminalBusy else { return }
+        terminalChoice[keyPath: key] = on
+        guard editing else { return }
+        Task { await commitTerminal() }
+    }
+
+    /// Réglages : applique tout de suite les cases changées. Échec : la case revient à son état, avec le message.
+    func commitTerminal() async {
+        terminalBusy = true
+        terminalError = nil
+        defer { terminalBusy = false }
+        do {
+            let result = try await syncTerminal()
+            await refreshTerminalStatus()
+            if let file = result?.profileToOpen { TerminalProfile.offerOpen(file) }
+        } catch {
+            terminalChoice = terminalInitial
+            terminalError = error.localizedDescription
+        }
+    }
+
+    /// Écrit la différence entre les cases et les options en vigueur : retraits d'abord, puis application.
+    /// Renvoie le résultat d'apply (profil à ouvrir éventuel), nil si rien à appliquer.
+    private func syncTerminal() async throws -> TerminalApplyResult? {
+        let wanted = terminalChoice
+        let removed = terminalInitial.subtracting(wanted)
+        let added = wanted.subtracting(terminalInitial)
+        var result: TerminalApplyResult?
+        if !removed.isEmpty {
+            let removal: TerminalApplyResult = try await runner.call("terminal", ["remove", try DojoPaths.json(removed)], timeout: 180)
+            // setup.js retire l'option même quand Terminal.app ouvert garde son profil : on le dit à l'utilisateur.
+            if removal.terminalApp?.action == "skipped" {
+                terminalError = "Terminal est ouvert : son profil Dojo reste installé. Ferme Terminal, puis coche et décoche la case pour le retirer."
+            }
+            terminalInitial = terminalInitial.intersection(wanted)
+        }
+        if !added.isEmpty {
+            result = try await runner.call("terminal", ["apply", try DojoPaths.json(wanted)], timeout: 180)
+        }
+        terminalInitial = wanted
+        return result
     }
 
     /// Revient au fond du thème : annule un fichier choisi, sans rien écrire avant « Appliquer ».
@@ -434,6 +536,10 @@ final class SetupModel: ObservableObject {
             applied = true
             onApplied?()
             note("Terminé. Le fond d'écran est lancé.")
+            if let file = terminalFileToOpen {
+                TerminalProfile.offerOpen(file)
+                terminalFileToOpen = nil
+            }
         } catch {
             applyError = error.localizedDescription
             note("Échec : \(error.localizedDescription)")
@@ -444,7 +550,12 @@ final class SetupModel: ObservableObject {
     private func applyTheme() async throws {
         if !themeChoice.isEmpty, themeChoice != initialTheme {
             note("Thème : \(themeName ?? themeChoice)…")
-            let _: Ack = try await runner.call("set-theme", [themeChoice])
+            let result: ThemeChangeResult = try await runner.call("set-theme", [themeChoice])
+            terminalFileToOpen = result.terminal?.profileToOpen ?? terminalFileToOpen
+        }
+        if terminalChoice != terminalInitial {
+            note("Terminal : options…")
+            terminalFileToOpen = try await syncTerminal()?.profileToOpen ?? terminalFileToOpen
         }
         switch backgroundChange {
         case .theme?:

@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Window zone: a **Zone de travail** menu (checkbox, permission status, **Agrandir dans la zone**, **Moitié gauche**, **Moitié droite**), the global shortcuts ⌃⌥↩, ⌃⌥← and ⌃⌥→, and a step in the setup assistant.
 - Wallpaper page: `window.dojoReservedRects()` returns the rectangles of the panels, for the window zone.
 - Tests: the window zone geometry (zone computation, coordinate conversion, multiple and Retina screens, fitting a window) is plain Swift, tested by `scripts/test-swift.sh`, which CI runs.
+- Terminal themes: each theme can style Ghostty and Terminal.app (a palette, four cursor shaders, a Terminal profile) and show a welcome header with the theme's logo and two lines from its universe. Each part is optional and reversible, from the Theme step or with `terminal status|apply|remove` in `src/setup.js`. `DOJO_WELCOME=off` and `DOJO_ANIM=0` turn the header off or keep the still logo.
+- Terminal generator: `scripts/themes/terminal/gen.py` builds a theme's terminal files from a spec in `scripts/themes/terminal/specs/`.
 
 ## [0.1.0] - 2026-10-14
 

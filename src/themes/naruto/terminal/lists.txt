@@ -1,0 +1,30 @@
+key1|mission
+key2|jutsu
+accent|242;140;40
+value|248;248;242
+cols|30
+rows|12
+l1|Escorter le pont de Tazuna
+l1|Retrouver le chat Tora
+l1|Infiltrer Ame
+l1|Protéger le daimyō
+l1|Traquer un ninja déserteur
+l1|Livrer un parchemin scellé
+l1|Garder les portes de Konoha
+l1|Nettoyer la forêt de la mort
+l1|Escorter une caravane jusqu'à Suna
+l1|Sceller un démon au Pays de l'Eau
+l1|Patrouiller la frontière du Pays du Feu
+l1|Espionner un repaire de l'Akatsuki
+l1|Ramasser des herbes pour le médecin du village
+l1|Chasser les bandits du Pays des Vagues
+l2|Kage Bunshin · clones d'ombre
+l2|Rasengan · sphère de chakra
+l2|Chidori · mille oiseaux
+l2|Kawarimi · substitution
+l2|Shunshin · pas éclair
+l2|Katon · Gōkakyū, grande boule de feu
+l2|Doton · Doryūheki, mur de terre
+l2|Hiraishin · marque éclair
+l2|Tsukuyomi · monde d'illusion
+l2|Rasen Shuriken · tourbillon tranchant

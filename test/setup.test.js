@@ -372,6 +372,10 @@ test('install-files copie le runtime sans écraser config.json, refuse un dossie
   assert.ok(fs.existsSync(path.join(dest, 'wallpaper', 'index.html')), 'wallpaper/ copié');
   assert.ok(fs.existsSync(path.join(dest, 'cache')), 'cache/ créé');
   assert.ok(!r.out.copied.includes('config.json'));
+  // src/terminal : copié sous terminal-src/ (welcome.zsh), jamais sous terminal/ (fichiers générés)
+  assert.ok(r.out.copied.includes('terminal-src/'), 'terminal-src/ copié');
+  assert.ok(fs.existsSync(path.join(dest, 'terminal-src', 'welcome.zsh')), 'welcome.zsh installé');
+  assert.ok(!fs.existsSync(path.join(dest, 'terminal')), 'terminal/ (généré) non créé par install-files');
 
   // config.json existant : jamais écrasé
   writeJson(path.join(dest, 'config.json'), { weather: { name: 'Lyon', lat: 45.76, lon: 4.83, timezone: 'Europe/Paris' } });

@@ -29,6 +29,10 @@ const THEME_ID_RE = /^[a-z0-9-]+$/;
 const DEFAULT_THEME = 'naruto';
 const BG_EXT = ['.jpg', '.jpeg', '.png', '.heic', '.webp'];
 const BG_MAX_BYTES = 50 * 1024 * 1024;
+// Options terminal (config.json, clé terminal) : Ghostty, Terminal.app, zsh (welcome).
+const TERM_KEYS = ['ghostty', 'terminalApp', 'welcome'];
+// src/terminal/ (welcome.zsh) est copié sous ce nom dans la config : « terminal/ » y désigne les fichiers générés.
+const TERM_SRC_INSTALLED = 'terminal-src';
 
 class SetupError extends Error {}
 const fail = (msg) => { throw new SetupError(msg); };
@@ -51,6 +55,15 @@ const paths = {
   backgrounds: () => path.join(paths.dojo(), 'backgrounds'),
   // DOJO_THEMES_DIR ne sert qu'aux tests (dossier de thèmes factice) ; sinon ceux du runtime.
   themes: () => path.join(process.env.DOJO_THEMES_DIR || __dirname, 'themes'),
+  // Fichiers générés des options terminal (theme/, ghostty.conf, welcome.zsh).
+  terminal: () => path.join(paths.dojo(), 'terminal'),
+  // Source de welcome.zsh : copie installée (terminal-src/, voir installFiles) si elle existe, sinon terminal/ à côté
+  // de setup.js (dépôt, app). Jamais le dossier généré. DOJO_TERMINAL_DIR ne sert qu'aux tests.
+  terminalSrc: () => {
+    if (process.env.DOJO_TERMINAL_DIR) return process.env.DOJO_TERMINAL_DIR;
+    const installed = path.join(__dirname, TERM_SRC_INSTALLED);
+    return fs.existsSync(installed) ? installed : path.join(__dirname, 'terminal');
+  },
 };
 
 // ── Utilitaires ──────────────────────────────────────────────────────────
@@ -223,17 +236,19 @@ function managedVitest() {
   const m = readState().managed;
   return isObj(m) && typeof m.vitestMaxWorkers === 'string' ? m.vitestMaxWorkers : null;
 }
-// value : valeur posée par Dojo, ou null pour oublier la propriété.
-function setManagedVitest(value) {
+// key/value : propriété posée par Dojo dans state.managed ; value null = oubliée.
+function setManaged(key, value) {
   const state = readState();
   const managed = isObj(state.managed) ? { ...state.managed } : {};
-  if (value === null) delete managed.vitestMaxWorkers; else managed.vitestMaxWorkers = value;
+  if (value === null) delete managed[key]; else managed[key] = value;
   if (Object.keys(managed).length) state.managed = managed; else delete state.managed;
   const file = stateFile();
   if (Object.keys(state).length === 0) { fs.rmSync(file, { force: true }); return; }
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 });
 }
+// value : valeur posée par Dojo, ou null pour oublier la propriété.
+function setManagedVitest(value) { setManaged('vitestMaxWorkers', value); }
 
 async function detect() {
   const node = findNode();
@@ -604,6 +619,12 @@ function validateConfig(c) {
   if (c.background !== undefined && c.background !== null && !(typeof c.background === 'string' && path.isAbsolute(c.background))) {
     fail('background doit être null ou un chemin absolu.');
   }
+  if (c.terminal !== undefined && c.terminal !== null) {
+    if (!isObj(c.terminal)) fail('terminal doit être un objet {ghostty, terminalApp, welcome} de booléens.');
+    for (const k of TERM_KEYS) {
+      if (c.terminal[k] !== undefined && typeof c.terminal[k] !== 'boolean') fail(`terminal.${k} doit être un booléen.`);
+    }
+  }
   validateWindowZone(c.windowZone);
 }
 
@@ -752,6 +773,10 @@ function installFiles(srcDir) {
     if (st.isDirectory() && RUNTIME_DIRS.has(name)) {
       if (lst.isDirectory()) assertLinksInside(from, real);
       items.push({ name, from, dir: true });
+    } else if (st.isDirectory() && name === 'terminal') {
+      // welcome.zsh : sous terminal-src/ (et non terminal/, réservé aux fichiers générés des options terminal).
+      if (lst.isDirectory()) assertLinksInside(from, real);
+      items.push({ name: TERM_SRC_INSTALLED, from, dir: true });
     } else if (st.isFile() && (name.endsWith('.js') || RUNTIME_FILES.has(name))) {
       items.push({ name, from, dir: false });
     }
@@ -970,6 +995,13 @@ async function uninstall(opts = {}) {
   try { settings = unmergeSettings({ dryRun }); } catch (e) {
     settings = { changed: false, backup: null, diff: '', error: e.message || String(e) };
   }
+  // Options terminal : lignes Dojo retirées de Ghostty et de ~/.zshrc, profil Terminal, dossier terminal/.
+  let terminal;
+  try {
+    terminal = await terminalRemove({ ghostty: true, terminalApp: true, welcome: true }, { dryRun, dropDir: true });
+  } catch (e) {
+    terminal = { error: e.message || String(e) };
+  }
   const config = removeTree(paths.dojo(), opts.purge === true, dryRun);
   const states = removeTree(paths.stateDir(), opts.states === true, dryRun);
   return {
@@ -980,6 +1012,7 @@ async function uninstall(opts = {}) {
     appRemoved,
     appRemaining,
     settings: { changed: settings.changed, backup: settings.backup, diff: settings.diff, error: settings.error || null },
+    terminal,
     config,
     states,
   };
@@ -1010,6 +1043,7 @@ async function status() {
     launchAgents: { agent: agentLoaded, wallpaper: wallLoaded },
     installed: fs.existsSync(path.join(paths.dojo(), 'agent-mac.js')),
     port: AGENT_PORT,
+    terminal: await terminalStatus(),
   };
 }
 
@@ -1049,13 +1083,21 @@ function themesInfo() {
   return { ok: true, themes: listThemes(), theme, background };
 }
 
-function setTheme(arg) {
+async function setTheme(arg) {
   const id = String(arg ?? '');
   if (!THEME_ID_RE.test(id)) fail('identifiant de thème attendu (lettres minuscules, chiffres, tirets).');
   const known = listThemes().map((t) => t.id);
   if (!known.includes(id)) fail(`thème inconnu : ${id}. Thèmes disponibles : ${known.join(', ') || 'aucun'}.`);
+  // Options terminal actives : les données du nouveau thème sont vérifiées, puis régénérées AVANT d'écrire config.theme.
+  // Si la régénération échoue, config.json garde l'ancien thème.
+  const opts = terminalOptions();
+  const regenerated = TERM_KEYS.some((k) => opts[k]);
+  if (regenerated) terminalSources(id, opts);
+  const terminal = regenerated ? await terminalApply(null, id) : null;
   writeConfig({ theme: id });
-  return { ok: true, theme: id };
+  const out = { ok: true, theme: id };
+  if (regenerated) { out.regenerated = true; out.terminal = terminal; }
+  return out;
 }
 
 // Supprime l'ancienne copie si elle est dans backgrounds/ : un chemin choisi par l'utilisateur n'est jamais touché.
@@ -1108,6 +1150,509 @@ function setBackground(arg) {
   return { ok: true, background: dest, removed: dropOldBackground(prev, dest) };
 }
 
+// ── Terminal : Ghostty, Terminal.app et zsh (options indépendantes, toutes réversibles) ──
+// Options : config.json, clé terminal {ghostty, terminalApp, welcome}. Fichiers générés dans ~/.config/claude-dojo/terminal/ :
+// theme/ (copie de themes/<id>/terminal/), ghostty.conf, welcome.zsh. Dans les fichiers de l'utilisateur, Dojo ne gère
+// qu'un bloc : une ligne marqueur + une ligne, ajoutées en fin de fichier (fin de ligne dominante du fichier). Le retrait
+// supprime le marqueur et la ligne qui le suit seulement si celle-ci est une ligne gérée : le fichier retrouve ses octets
+// d'origine, y compris sans retour ligne final.
+const MARK_GHOSTTY = '# claude-dojo terminal theme (managed)';
+const MARK_WELCOME = '# claude-dojo welcome (managed)';
+const EMPTY_PLIST = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict/></plist>\n';
+// Exécutables externes : injectables pour les tests (defaults ne doit jamais toucher le vrai domaine en test).
+const termBin = {
+  defaults: () => process.env.DOJO_DEFAULTS_BIN || 'defaults',
+  pgrep: () => process.env.DOJO_PGREP_BIN || 'pgrep',
+  plutil: () => process.env.DOJO_PLUTIL_BIN || 'plutil',
+};
+const termPaths = () => {
+  const dir = paths.terminal();
+  return { dir, theme: path.join(dir, 'theme'), ghosttyConf: path.join(dir, 'ghostty.conf'), welcome: path.join(dir, 'welcome.zsh') };
+};
+const prefsFile = () => path.join(home(), 'Library', 'Preferences', 'com.apple.Terminal.plist');
+const isDirAt = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+const isFileAt = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
+const readText = (file) => { try { return fs.readFileSync(realFile(file), 'utf8'); } catch { return ''; } };
+// Ligne gérée par Dojo après un marqueur : seule celle-ci part avec lui au retrait (jamais une ligne utilisateur).
+const MANAGED_LINE_RE = /^(?:source |\[\[ -r |config-file = \?)/;
+// Ligne sans fin de ligne (\r\n, \n ou rien) : marqueurs et lignes se comparent ainsi, CRLF compris.
+const bare = (s) => s.replace(/\r?\n?$/, '');
+// Fin de ligne dominante d'un fichier (CRLF si la majorité de ses retours l'est) : celle des lignes ajoutées.
+const dominantEol = (text) => {
+  const all = (text.match(/\n/g) || []).length;
+  const crlf = (text.match(/\r\n/g) || []).length;
+  return crlf > all - crlf ? '\r\n' : '\n';
+};
+// Bloc en place : marqueur suivi d'une ligne gérée (sous n'importe quelle version de la ligne).
+function hasBlock(text, marker) {
+  const lines = text.split('\n');
+  return lines.some((l, i) => bare(l) === marker && i + 1 < lines.length && MANAGED_LINE_RE.test(bare(lines[i + 1])));
+}
+const fileHash = (file) => crypto.createHash('sha1').update(fs.readFileSync(file)).digest('hex');
+// Application présente : dossiers d'applications (DOJO_APPS_DIRS en tests) ; /System/Applications sinon.
+const appPresent = (name) => {
+  const extra = process.env.DOJO_APPS_DIRS ? [] : ['/System/Applications', '/System/Applications/Utilities'];
+  return [...appDirs(), ...extra].some((d) => fs.existsSync(path.join(d, name)));
+};
+
+// Ghostty : ~/.config/ghostty/config si présent, sinon config.ghostty d'Application Support si présent, sinon le premier (créé).
+const ghosttyCandidates = () => [
+  path.join(home(), '.config', 'ghostty', 'config'),
+  path.join(home(), 'Library', 'Application Support', 'com.mitchellh.ghostty', 'config.ghostty'),
+];
+function ghosttyConfigFile() {
+  const [a, b] = ghosttyCandidates();
+  if (fs.existsSync(a)) return a;
+  if (fs.existsSync(b)) return b;
+  return a;
+}
+// Valeur Ghostty : brute si elle est sûre, sinon entre guillemets doubles (espaces, guillemets, antislash).
+const ghosttyVal = (p) => (/[\s"\\]/.test(p) ? '"' + p.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' : p);
+
+// ZDOTDIR tel que zsh le lit : variable d'environnement, sinon affectation dans ~/.zshenv (lu par zsh avant .zshrc).
+// Lecture simple : dernière affectation ZDOTDIR=… (export facultatif, guillemets simples ou doubles), ~ et $HOME seuls
+// sont développés. Une valeur plus complexe n'est pas devinée : dir vaut null.
+function zdotdirInfo() {
+  const fromEnv = (process.env.ZDOTDIR || '').trim();
+  if (fromEnv) return { dir: expandHome(fromEnv), raw: fromEnv };
+  const zshenv = path.join(home(), '.zshenv');
+  const decls = readText(zshenv).split('\n').map(bare)
+    .filter((l) => !/^\s*#/.test(l) && /(^|[\s;])ZDOTDIR=/.test(l));
+  if (decls.length === 0) return { dir: home(), raw: null };
+  const raw = decls[decls.length - 1].match(/ZDOTDIR=(.*)$/)[1].trim();
+  const single = /^'([^']*)'$/.exec(raw);
+  const double = /^"([^"]*)"$/.exec(raw);
+  let v = single ? single[1] : double ? double[1] : raw.replace(/\s+#.*$/, '').trim();
+  // Guillemets simples : aucune expansion. Guillemets doubles : pas d'expansion de ~ (comme zsh).
+  if (!single) {
+    v = v.replace(/\$\{HOME\}|\$HOME(?!\w)/g, home());
+    if (!double) v = v.replace(/^~(?=\/|$)/, home());
+  }
+  if (v === '') return { dir: home(), raw };
+  if (!path.isAbsolute(v) || /[$`]/.test(v)) return { dir: null, raw };
+  return { dir: v, raw };
+}
+// Fichier .zshrc que zsh lira, et s'il est bien celui que Dojo modifie (effective) ; warning : texte si ça diverge.
+function zshrcInfo() {
+  const z = zdotdirInfo();
+  if (z.dir === null) {
+    return {
+      file: path.join(home(), '.zshrc'),
+      effective: false,
+      warning: `ZDOTDIR est défini dans ~/.zshenv (${z.raw}) sans que Dojo puisse le lire : le bloc est écrit dans ~/.zshrc, que zsh ne lira peut-être pas. Vérifie la valeur avec « zsh -c 'echo $ZDOTDIR' ».`,
+    };
+  }
+  return { file: path.join(z.dir, '.zshrc'), effective: true, warning: null };
+}
+const zshrcFile = () => zshrcInfo().file;
+const zshrcCandidates = () => [...new Set([zshrcFile(), path.join(home(), '.zshrc')])];
+
+// Retire chaque marqueur (toutes les occurrences). La ligne gérée qui le suit part avec lui ; une ligne utilisateur reste.
+// Bloc en fin de fichier sans fin de ligne : le retour ajouté avant le marqueur part aussi (retrait octet pour octet).
+// Sans marqueur, le texte est renvoyé à l'identique.
+function stripBlock(text, marker) {
+  if (text === '') return text;
+  const parts = text.split(/(?<=\n)/);
+  const out = [];
+  for (let i = 0; i < parts.length; i++) {
+    if (bare(parts[i]) !== marker) { out.push(parts[i]); continue; }
+    const next = parts[i + 1];
+    if (next === undefined || !MANAGED_LINE_RE.test(bare(next))) continue;
+    i++;
+    if (!next.endsWith('\n') && out.length) out[out.length - 1] = out[out.length - 1].replace(/\r?\n$/, '');
+  }
+  return out.join('');
+}
+// Ajoute ou remet à jour le bloc en fin de fichier. Bloc unique et déjà à jour : texte inchangé.
+function setBlock(text, marker, line) {
+  const lines = text.split('\n');
+  const at = lines.flatMap((l, i) => (bare(l) === marker ? [i] : []));
+  if (at.length === 1 && at[0] + 1 < lines.length && bare(lines[at[0] + 1]) === line) return text;
+  const eol = dominantEol(text);
+  const base = stripBlock(text, marker);
+  const block = marker + eol + line;
+  if (base === '') return block + eol;
+  return base.endsWith('\n') ? base + block + eol : base + eol + block;
+}
+
+// Sauvegarde horodatée, jamais écrasée (deux sauvegardes dans la même seconde : suffixe -2, -3...).
+function backupFile(real) {
+  const base = `${real}.bak-${stampNow()}`;
+  for (let n = 1; ; n++) {
+    const dest = n === 1 ? base : `${base}-${n}`;
+    try { fs.copyFileSync(real, dest, fs.constants.COPYFILE_EXCL); return dest; } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+  }
+}
+// Modifie un fichier de config : sauvegarde puis écriture atomique. Rien si le texte ne change ; rien en dryRun.
+function editConfigFile(file, transform, dryRun = false) {
+  const real = realFile(file);
+  const exists = fs.existsSync(real);
+  const before = exists ? fs.readFileSync(real, 'utf8') : '';
+  const after = transform(before);
+  if (after === before) return { changed: false, backup: null };
+  let backup = null;
+  if (!dryRun) {
+    if (exists) backup = backupFile(real);
+    writeAtomic(file, after);
+  }
+  return { changed: true, backup };
+}
+// Retire le bloc de chaque fichier candidat qui le contient.
+function removeBlocks(files, marker, dryRun) {
+  let changed = false;
+  let backup = null;
+  for (const f of files) {
+    const r = editConfigFile(f, (t) => stripBlock(t, marker), dryRun);
+    if (r.changed) { changed = true; backup = backup || r.backup; }
+  }
+  return { changed, backup };
+}
+// Bloc géré : ajout ou mise à jour dans file, retrait de tous les autres candidats. action : added, updated, unchanged, removed, none.
+function wireBlock(on, { file, candidates, marker, line }, dryRun = false) {
+  if (!on) {
+    const r = removeBlocks(candidates, marker, dryRun);
+    return { file, action: r.changed ? 'removed' : 'none', changed: r.changed, backup: r.backup };
+  }
+  const existed = hasBlock(readText(file), marker);
+  const others = removeBlocks(candidates.filter((f) => f !== file), marker, dryRun);
+  const r = editConfigFile(file, (t) => setBlock(t, marker, line), dryRun);
+  const changed = others.changed || r.changed;
+  return { file, action: !changed ? 'unchanged' : existed ? 'updated' : 'added', changed, backup: r.backup || others.backup };
+}
+const ghosttyWire = (T) => ({ file: ghosttyConfigFile(), candidates: ghosttyCandidates(), marker: MARK_GHOSTTY, line: `config-file = ?${ghosttyVal(T.ghosttyConf)}` });
+// Ligne gardée : zsh ignore la ligne (sans message) tant que welcome.zsh n'existe pas.
+const welcomeLine = (file) => `[[ -r ${q(file)} ]] && source ${q(file)}`;
+const welcomeWire = (T) => ({ file: zshrcFile(), candidates: zshrcCandidates(), marker: MARK_WELCOME, line: welcomeLine(T.welcome) });
+const wireResult = (r, key) => ({ [key]: r.file, action: r.action, changed: r.changed, backup: r.backup });
+
+// Shaders du thème installé (theme/shaders/*.glsl), triés. Ghostty : une ligne custom-shader par fichier.
+// Un lien vers un .glsl compte (isFileAt suit le lien) : Dirent.isFile() serait faux pour lui.
+function shaderFiles(theme) {
+  const dir = path.join(theme, 'shaders');
+  try {
+    return fs.readdirSync(dir)
+      .filter((n) => n.endsWith('.glsl') && isFileAt(path.join(dir, n)))
+      .sort();
+  } catch { return []; }
+}
+function ghosttyConfText(T) {
+  return [
+    `theme = ${ghosttyVal(path.join(T.theme, 'ghostty.theme'))}`,
+    ...shaderFiles(T.theme).map((f) => `custom-shader = ${ghosttyVal(path.join(T.theme, 'shaders', f))}`),
+    // true (valeur par défaut) : la boucle d'animation tourne quand la fenêtre a le focus ; « always » la ferait tourner aussi hors focus.
+    'custom-shader-animation = true',
+    'background-opacity = 0.88',
+    'background-blur = 20',
+    'window-colorspace = display-p3',
+    'minimum-contrast = 1.1',
+  ].join('\n') + '\n';
+}
+
+// Options : config.json (booléens manquants = false).
+function terminalOptions() {
+  const t = (readConfig() || {}).terminal;
+  const o = isObj(t) ? t : {};
+  return Object.fromEntries(TERM_KEYS.map((k) => [k, o[k] === true]));
+}
+// Profil Terminal importé par Dojo (state.json, managed.terminalApp), ou null.
+function managedTerminal() {
+  const m = readState().managed;
+  return isObj(m) && isObj(m.terminalApp) ? m.terminalApp : null;
+}
+// Terminal.app lancé ? (pgrep -x : jamais de kill)
+const terminalRunning = async () => (await run(termBin.pgrep(), ['-x', 'Terminal'], { timeout: 5000 })).ok;
+// Un config.json existant mais illisible bloque tout : on ne touche à rien avant.
+function checkConfigReadable() {
+  if (fs.existsSync(path.join(paths.dojo(), 'config.json')) && readConfig() === null) {
+    fail('config.json existant illisible : corrige-le ou déplace-le.');
+  }
+}
+
+// Données nécessaires aux options demandées (vérifiées avant toute écriture).
+function terminalSources(theme, want) {
+  const out = { themeSrc: null, welcomeSrc: null, profile: null };
+  if (want.ghostty || want.terminalApp) {
+    const dir = path.join(paths.themes(), theme, 'terminal');
+    if (!isDirAt(dir)) fail(`thème ${theme} : dossier terminal/ absent (${dir}).`);
+    out.themeSrc = fs.realpathSync(dir);
+    assertLinksInside(out.themeSrc, out.themeSrc);
+    if (want.ghostty && !isFileAt(path.join(out.themeSrc, 'ghostty.theme'))) fail(`thème ${theme} : ghostty.theme absent.`);
+    if (want.terminalApp && !isFileAt(path.join(out.themeSrc, 'Terminal.terminal'))) fail(`thème ${theme} : Terminal.terminal absent.`);
+  }
+  if (want.terminalApp) {
+    const meta = listThemes().find((t) => t.id === theme);
+    // Les points sont retirés : ils sépareraient les niveaux d'une clé plist.
+    out.profile = ('Dojo ' + (meta ? meta.name : theme)).replace(/\./g, '');
+  }
+  if (want.welcome) {
+    const w = path.join(paths.terminalSrc(), 'welcome.zsh');
+    if (!isFileAt(w)) fail(`welcome.zsh introuvable : ${w}`);
+    out.welcomeSrc = w;
+  }
+  return out;
+}
+
+// Préférences Terminal dans un fichier temporaire. Absentes : modèle vide. Renvoie true si elles existaient.
+async function loadPrefs(plist) {
+  if (!fs.existsSync(prefsFile())) { fs.writeFileSync(plist, EMPTY_PLIST); return false; }
+  const r = await run(termBin.defaults(), ['export', 'com.apple.Terminal', plist]);
+  if (!r.ok) fail(`defaults export com.apple.Terminal a échoué : ${r.stderr.trim() || 'erreur inconnue'}`);
+  return true;
+}
+async function importPrefs(plist) {
+  const r = await run(termBin.defaults(), ['import', 'com.apple.Terminal', plist]);
+  if (!r.ok) fail(`defaults import com.apple.Terminal a échoué : ${r.stderr.trim() || 'erreur inconnue'}`);
+}
+async function withPrefsTmp(fn) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dojo-terminal-'));
+  try { return await fn(path.join(tmp, 'prefs.plist')); } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+// Sauvegarde des préférences exportées dans ~/.config/claude-dojo/backup/. Jamais écrasée : suffixe -2, -3...
+function saveBackup(exported) {
+  const dir = path.join(paths.dojo(), 'backup');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const data = fs.readFileSync(exported);
+  const base = `com.apple.Terminal.${stampNow()}`;
+  for (let n = 1; ; n++) {
+    const dest = path.join(dir, `${base}${n === 1 ? '' : '-' + n}.plist`);
+    try { fs.writeFileSync(dest, data, { mode: 0o600, flag: 'wx' }); return dest; } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+  }
+}
+const plutil = (args) => run(termBin.plutil(), args, { timeout: 20000, maxBuffer: 16 << 20 });
+// Valeur brute d'une clé de plist, ou null si absente.
+async function plistRaw(file, key) {
+  const r = await plutil(['-extract', key, 'raw', '-o', '-', file]);
+  return r.ok ? r.stdout.replace(/\n$/, '') : null;
+}
+const keyExists = async (file, key) => (await plistRaw(file, key)) !== null;
+// plutil qui doit réussir : erreur claire sinon (avant tout import).
+async function plutilOk(args, what) {
+  const r = await plutil(args);
+  if (!r.ok) fail(`${what} : écriture impossible (${r.stderr.trim() || 'plutil'}).`);
+}
+// Après un échec à partir de l'import : préférences réimportées depuis la sauvegarde, puis erreur relancée (toujours).
+async function restorePrefs(backup, err) {
+  const r = await run(termBin.defaults(), ['import', 'com.apple.Terminal', backup]);
+  if (!r.ok) fail(`${err.message} ; restauration impossible depuis ${backup} : ${r.stderr.trim() || 'defaults'}.`);
+  fail(`${err.message} (préférences Terminal restaurées depuis ${backup}).`);
+}
+// Dictionnaire racine d'un fichier .terminal (plist XML), nom du profil remplacé.
+function profileFragment(file, profile) {
+  const m = fs.readFileSync(file, 'utf8').match(/<plist[^>]*>\s*(<dict>[\s\S]*<\/dict>)\s*<\/plist>/);
+  if (!m) fail(`${file} : profil Terminal illisible (plist XML attendu).`);
+  return m[1].replace(/(<key>name<\/key>\s*<string>)[^<]*(<\/string>)/, (_, a, b) => a + xmlEsc(profile) + b);
+}
+
+// Importe le profil dans Window Settings et le règle en fenêtre par défaut et au démarrage. Terminal lancé : rien n'est écrit,
+// le fichier .terminal est renvoyé pour un double-clic (Terminal réécrit ses préférences à la fermeture).
+// Les préférences exportées sont sauvegardées AVANT tout import (chemin dans state.managed.terminalApp.backup). Une erreur
+// à partir de l'import (ou de l'écriture de l'état qui le suit) réimporte la sauvegarde puis relance l'erreur. Une erreur de
+// plutil avant l'import ne touche pas au domaine : rien n'est importé.
+async function terminalImport(file, profile) {
+  const rec = managedTerminal();
+  const hash = fileHash(file);
+  const running = await terminalRunning();
+  const out = (action, extra = {}) => ({ action, profile, file: null, running, changed: false, backup: null, ...extra });
+  if (rec && rec.profile === profile && rec.hash === hash) return out('unchanged');
+  if (running) return out('open-file', { file });
+  return withPrefsTmp(async (plist) => {
+    await loadPrefs(plist);
+    const backup = saveBackup(plist);
+    // Réimport : les défauts d'avant le premier import restent la référence, pour le retrait.
+    const prevDefault = rec ? (rec.previousDefault ?? null) : await plistRaw(plist, 'Default Window Settings');
+    const prevStartup = rec ? (rec.previousStartup ?? null) : await plistRaw(plist, 'Startup Window Settings');
+    let touched = false;
+    try {
+      // -remove et -insert échouent (code 1) si la clé manque, resp. existe déjà : on ne les lance que s'ils sont utiles.
+      if (rec && rec.profile !== profile && await keyExists(plist, `Window Settings.${rec.profile}`)) {
+        await plutilOk(['-remove', `Window Settings.${rec.profile}`, plist], `profil Terminal « ${rec.profile} » (retrait)`);
+      }
+      if (!(await keyExists(plist, 'Window Settings'))) {
+        await plutilOk(['-insert', 'Window Settings', '-dictionary', plist], 'Window Settings');
+      }
+      const rep = await plutil(['-replace', `Window Settings.${profile}`, '-xml', profileFragment(file, profile), plist]);
+      if (!rep.ok) fail(`profil Terminal « ${profile} » : écriture impossible (${rep.stderr.trim() || 'plutil'}).`);
+      for (const key of ['Default Window Settings', 'Startup Window Settings']) {
+        const r = await plutil(['-replace', key, '-string', profile, plist]);
+        if (!r.ok) fail(`${key} : écriture impossible (${r.stderr.trim() || 'plutil'}).`);
+      }
+      touched = true;
+      await importPrefs(plist);
+      setManaged('terminalApp', { profile, hash, previousDefault: prevDefault, previousStartup: prevStartup, backup });
+    } catch (e) {
+      if (touched) await restorePrefs(backup, e);
+      throw e;
+    }
+    return out('imported', { changed: true });
+  });
+}
+
+// Retire le profil importé et remet les défauts d'avant, seulement s'ils pointent encore vers lui.
+async function terminalRemoveProfile(rec, dryRun) {
+  const running = await terminalRunning();
+  const out = (action, changed = false) => ({ action, profile: rec ? rec.profile : null, file: null, running, changed, backup: null });
+  if (!rec) return out('none');
+  if (running) return out('skipped');
+  if (dryRun) return out('removed', true);
+  return withPrefsTmp(async (plist) => {
+    const existed = await loadPrefs(plist);
+    if (existed) {
+      // -remove échoue si la clé manque : on ne le lance que pour une clé présente. Un échec est une erreur (rien n'est importé).
+      if (await keyExists(plist, `Window Settings.${rec.profile}`)) {
+        await plutilOk(['-remove', `Window Settings.${rec.profile}`, plist], `profil Terminal « ${rec.profile} » (retrait)`);
+      }
+      const defaults = [
+        ['Default Window Settings', rec.previousDefault ?? null],
+        ['Startup Window Settings', rec.previousStartup ?? null],
+      ];
+      for (const [key, prev] of defaults) {
+        if ((await plistRaw(plist, key)) !== rec.profile) continue; // changé par l'utilisateur : intouché
+        if (prev === null) await plutilOk(['-remove', key, plist], `${key} (retrait)`);
+        else {
+          const r = await plutil(['-replace', key, '-string', prev, plist]);
+          if (!r.ok) fail(`${key} : restauration impossible (${r.stderr.trim() || 'plutil'}).`);
+        }
+      }
+      await importPrefs(plist);
+    }
+    setManaged('terminalApp', null);
+    return out('removed', existed);
+  });
+}
+
+// theme/ remplacé par une copie complète : copie dans theme.tmp-<pid>, puis renameSync. Une erreur pendant la copie laisse
+// l'ancien theme/ en place : il n'est jamais à moitié copié.
+function replaceThemeDir(src, dest) {
+  const tmp = `${dest}.tmp-${process.pid}`;
+  const old = `${dest}.old-${process.pid}`;
+  fs.rmSync(tmp, { recursive: true, force: true });
+  try {
+    fs.cpSync(src, tmp, { recursive: true, dereference: false, verbatimSymlinks: true });
+  } catch (e) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    throw e;
+  }
+  const had = fs.existsSync(dest);
+  if (had) fs.renameSync(dest, old);
+  try {
+    fs.renameSync(tmp, dest);
+  } catch (e) {
+    if (had) fs.renameSync(old, dest);
+    throw e;
+  }
+  fs.rmSync(old, { recursive: true, force: true });
+}
+
+// Régénère tout ce qui est installé pour les options demandées, puis enregistre ces options. Options manquantes = celles enregistrées.
+// theme : thème à appliquer (set-theme, avant d'écrire config.theme) ; sans lui, celui de config.json.
+async function terminalApply(arg, theme = null) {
+  checkConfigReadable();
+  const recorded = terminalOptions();
+  const want = arg === null ? recorded : { ...recorded, ...arg };
+  const id = theme ?? themesInfo().theme;
+  const src = terminalSources(id, want);
+  const T = termPaths();
+  const anyOn = TERM_KEYS.some((k) => want[k]);
+  if (anyOn) {
+    fs.mkdirSync(T.dir, { recursive: true, mode: 0o700 });
+    if (want.ghostty || want.terminalApp) replaceThemeDir(src.themeSrc, T.theme);
+    else fs.rmSync(T.theme, { recursive: true, force: true });
+    if (want.ghostty) writeAtomic(T.ghosttyConf, ghosttyConfText(T));
+    else fs.rmSync(T.ghosttyConf, { force: true });
+    if (want.welcome) writeAtomic(T.welcome, fs.readFileSync(src.welcomeSrc));
+    else fs.rmSync(T.welcome, { force: true });
+  }
+  const ghostty = wireResult(wireBlock(want.ghostty, ghosttyWire(T)), 'configPath');
+  const z = zshrcInfo();
+  // warning : seulement quand l'option zsh est active (sinon rien n'est écrit dans zsh).
+  const welcome = {
+    ...wireResult(wireBlock(want.welcome, welcomeWire(T)), 'zshrc'),
+    effective: z.effective,
+    warning: want.welcome ? z.warning : null,
+  };
+  if (!anyOn) fs.rmSync(T.dir, { recursive: true, force: true });
+  // Options écrites avant l'import Terminal : si celui-ci échoue, config.json dit ce qui est déjà posé (Ghostty, zsh).
+  writeConfig({ terminal: want });
+  const terminalApp = want.terminalApp
+    ? await terminalImport(path.join(T.theme, 'Terminal.terminal'), src.profile)
+    : await terminalRemoveProfile(managedTerminal(), false);
+  return { ok: true, theme: id, options: want, dir: T.dir, ghostty, terminalApp, welcome };
+}
+
+// Retire les composants sélectionnés (sel) : lignes, profil, fichiers. dropDir : retire aussi le dossier terminal/ (uninstall).
+// Le dossier reste tant qu'une option reste active. Les options retirées sont marquées false dans config.json.
+async function terminalRemove(sel, opts = {}) {
+  const dryRun = opts.dryRun === true;
+  const T = termPaths();
+  const ghostty = sel.ghostty ? wireResult(wireBlock(false, ghosttyWire(T), dryRun), 'configPath') : null;
+  const welcome = sel.welcome ? wireResult(wireBlock(false, welcomeWire(T), dryRun), 'zshrc') : null;
+  const terminalApp = sel.terminalApp ? await terminalRemoveProfile(managedTerminal(), dryRun) : null;
+  const was = terminalOptions();
+  const left = { ...was };
+  for (const k of TERM_KEYS) if (sel[k]) left[k] = false;
+  if (!dryRun) {
+    if (sel.ghostty) fs.rmSync(T.ghosttyConf, { force: true });
+    if (sel.welcome) fs.rmSync(T.welcome, { force: true });
+    if (!left.ghostty && !left.terminalApp) fs.rmSync(T.theme, { recursive: true, force: true });
+    // Seules les options réellement actives passent à false : un retrait sans rien d'installé ne touche pas config.json.
+    const patch = {};
+    for (const k of TERM_KEYS) if (sel[k] && was[k]) patch[k] = false;
+    if (Object.keys(patch).length && readConfig() !== null) writeConfig({ terminal: patch });
+  }
+  const dropDir = opts.dropDir === true || TERM_KEYS.every((k) => !left[k]);
+  const dir = removeTree(T.dir, dropDir, dryRun);
+  return { ok: true, dryRun, ghostty, terminalApp, welcome, dir, options: left };
+}
+async function terminalRemoveCli(raw) {
+  const o = terminalArg(raw);
+  const sel = {};
+  for (const k of TERM_KEYS) sel[k] = o === null ? true : o[k] === true;
+  return terminalRemove(sel);
+}
+
+// Argument terminal : objet {ghostty?, terminalApp?, welcome?} de booléens. Vide ou absent = null.
+function terminalArg(raw) {
+  const text = readArg(raw);
+  if (text.trim() === '') return null;
+  let o;
+  try { o = JSON.parse(text); } catch (e) { fail(`JSON invalide en argument : ${e.message}`); }
+  if (!isObj(o)) fail('options terminal : un objet JSON est attendu.');
+  const out = {};
+  for (const [k, v] of Object.entries(o)) {
+    if (!TERM_KEYS.includes(k)) fail(`option terminal inconnue : ${k} (attendu ghostty, terminalApp ou welcome).`);
+    if (typeof v !== 'boolean') fail(`terminal.${k} doit être un booléen.`);
+    out[k] = v;
+  }
+  return out;
+}
+
+// Lecture seule : options, état réel des fichiers et de Terminal.app.
+async function terminalStatus() {
+  const rec = managedTerminal();
+  const z = zshrcInfo();
+  return {
+    ok: true,
+    theme: themesInfo().theme,
+    options: terminalOptions(),
+    ghostty: {
+      configPath: ghosttyConfigFile(),
+      applied: ghosttyCandidates().some((f) => hasBlock(readText(f), MARK_GHOSTTY)),
+      available: appPresent('Ghostty.app'),
+    },
+    terminalApp: { applied: rec !== null, running: await terminalRunning(), available: appPresent('Terminal.app') },
+    welcome: {
+      zshrc: z.file,
+      applied: zshrcCandidates().some((f) => hasBlock(readText(f), MARK_WELCOME)),
+      effective: z.effective,
+      warning: z.warning,
+    },
+  };
+}
+
 // ── Dispatch CLI ─────────────────────────────────────────────────────────
 const USAGE = [
   'node setup.js detect',
@@ -1116,6 +1661,9 @@ const USAGE = [
   'node setup.js set-theme <id>',
   'node setup.js window-zone',
   'node setup.js set-background <chemin|default>',
+  'node setup.js terminal status',
+  'node setup.js terminal apply [{ghostty,terminalApp,welcome}|-]   (sans argument : options enregistrées)',
+  'node setup.js terminal remove [{ghostty,terminalApp,welcome}|-]  (sans argument : tout)',
   'node setup.js geocode <ville>',
   'node setup.js install-files <srcdir>',
   'node setup.js npm-install [node]',
@@ -1137,6 +1685,13 @@ async function main(argv) {
     case 'set-theme': return setTheme(a1);
     case 'window-zone': return windowZoneInfo();
     case 'set-background': return setBackground(a1);
+    case 'terminal': {
+      if (a1 === 'status') return terminalStatus();
+      if (a1 === 'apply') return terminalApply(terminalArg(a2));
+      if (a1 === 'remove') return terminalRemoveCli(a2);
+      fail('terminal attend status, apply ou remove.');
+      break;
+    }
     case 'geocode': return geocode(readArg(a1));
     case 'install-files': return installFiles(readArg(a1));
     case 'npm-install': return npmInstall(a1 || null);
@@ -1169,4 +1724,5 @@ if (require.main === module) {
 module.exports = {
   main, detect, mergeSettings, unmergeSettings, writeConfig, installFiles,
   launchAgentsInstall, launchAgentsUninstall, uninstall, lineDiff, deepMerge, validateConfig,
+  terminalStatus, terminalApply, terminalRemove,
 };

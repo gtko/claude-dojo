@@ -213,8 +213,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let id = sender.representedObject as? String else { return }
         Task { @MainActor in
             do {
-                let _: Ack = try await runner.call("set-theme", [id])
+                let result: ThemeChangeResult = try await runner.call("set-theme", [id])
                 await reloadThemes()
+                // Réglages ouverts : l'étape Thème suit le même thème (rien n'est écrit par ce rafraîchissement).
+                await setupWindow?.model.refreshExternal()
+                // Terminal.app ouvert : le profil du nouveau thème s'importe par double-clic.
+                if let file = result.terminal?.profileToOpen { TerminalProfile.offerOpen(file) }
             } catch {
                 showFailure("Thème non appliqué", error)
             }

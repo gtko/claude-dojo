@@ -73,6 +73,49 @@ CI covers the geometry of the window zone (`scripts/test-swift.sh`) but cannot g
 6. Stage Manager on: its left strip is reserved and the settings say so.
 7. Change the theme, the size, or **Inverser gauche / droite**: the zone follows within a few seconds.
 8. ⌃⌥↩, ⌃⌥← and ⌃⌥→ act on the window in front.
+## Adding the terminal part of a theme
+
+The terminal part of a theme lives in `src/themes/<id>/terminal/`. A generator builds most of it from a spec, and the shaders are written by hand. The [terminal README](scripts/themes/terminal/README.md) has the full contract of a spec.
+
+1. **Write the spec.** Create `scripts/themes/terminal/specs/<spec>.py`, where `<spec>` is the theme id with `_` instead of `-`, for example `stargate_sg1.py` for `stargate-sg1`. Start from `specs/naruto.py`. The spec sets `ID`, the header titles and labels, the accent and value colours, the two lists of universe lines and `draw_logo(t, size)`, which returns the logo as an RGBA image for `t` from 0 to 1, where `t = 1` is the final logo. The palette comes from `src/themes/<id>/theme.json`, so the theme must exist first.
+2. **Generate the files.** Run `python3 scripts/themes/terminal/gen.py <id>` (Python 3 and Pillow 10 or later). It writes `ghostty.theme`, `Terminal.terminal`, the two fastfetch configs, `logo.png`, the frames, `logo.txt` and `lists.txt` into `src/themes/<id>/terminal/`. `Terminal.terminal` needs macOS and Swift; `--no-profile` skips it. Do not edit the generated files by hand. Change the spec or `theme.json`, then run the generator again.
+3. **Write the shaders.** Put them in `src/themes/<id>/terminal/shaders/` as `.glsl` files, each defining `mainImage(out vec4 fragColor, in vec2 fragCoord)`. Dojo adds one `custom-shader` line per file, sorted by name. The Ghostty uniforms used by the shipped shaders are `iResolution`, `iTime`, `iChannel0` (the terminal content), `iCurrentCursor` and `iPreviousCursor` (`xy` is the top-left corner of the cursor, `zw` its width and height), `iTimeCursorChange`, `iFocus` and `iTimeFocus`. Look at `src/themes/stargate-sg1/terminal/shaders/` for examples. Keep each effect short (under one second) and faint, so the text stays readable.
+4. **Check the shaders and the configuration.** Ghostty may add uniforms of its own, so run both checks. `glslangValidator` comes from `brew install glslang`.
+
+   ```sh
+   TMP="$(mktemp -d)"
+   cat > "$TMP/prelude.glsl" <<'EOF'
+   #version 330 core
+   uniform sampler2D iChannel0;
+   uniform vec3 iResolution;
+   uniform float iTime;
+   uniform float iTimeCursorChange;
+   uniform float iTimeFocus;
+   uniform int iFocus;
+   uniform vec4 iCurrentCursor;
+   uniform vec4 iPreviousCursor;
+   out vec4 fragColor_out;
+   EOF
+   for f in src/themes/<id>/terminal/shaders/*.glsl; do
+     { cat "$TMP/prelude.glsl" "$f"; echo 'void main() { mainImage(fragColor_out, gl_FragCoord.xy); }'; } > "$TMP/check.frag"
+     glslangValidator -S frag "$TMP/check.frag"
+   done
+   {
+     echo "theme = $PWD/src/themes/<id>/terminal/ghostty.theme"
+     for f in "$PWD"/src/themes/<id>/terminal/shaders/*.glsl; do echo "custom-shader = $f"; done
+   } > "$TMP/ghostty.conf"
+   HOME="$TMP" ghostty +validate-config --config-file="$TMP/ghostty.conf"
+   ```
+
+   `glslangValidator` must print no error, and `ghostty +validate-config` must exit with 0. The temporary `HOME` keeps Ghostty from reading your own configuration. `ghostty` is `/Applications/Ghostty.app/Contents/MacOS/ghostty` if it is not on your `PATH`.
+5. **Run the tests.** `node --test test/` checks that each theme's terminal folder is complete, with at least 8 frames and 3 shaders, that each shader defines `mainImage`, that `ghostty.theme` has 16 palette lines and no `background-image`, that the foreground contrast is at least 7:1, that the folder is under 6 MB, and that it contains no personal term or absolute path.
+
+Before you open a pull request, check the following:
+
+- The contrast adjustments printed by `gen.py` are acceptable. Open a new window with the header in Ghostty and in Terminal.app, and look at it.
+- The logo is original artwork drawn with Pillow or by code. Do not use official artwork, screenshots or trademarks, as for the other themes.
+- No personal term, user name or absolute path appears in the files. The CI scan checks this.
+- The checks in step 4 pass.
 
 ## Rules
 

@@ -1,0 +1,98 @@
+key1|destination
+key2|adresse
+accent|224;168;74
+value|238;242;246
+cols|30
+rows|12
+l1|P3X-112 · forêt de cristal, brume bleue
+l1|P3X-238 · désert ocre, tempête de sable
+l1|P3X-377 · océan sans rive, marées hautes
+l1|P4X-441 · jungle humide, ruines sous les lianes
+l1|P3X-505 · glaciers et aurores boréales
+l1|P4X-618 · cité pyramidale abandonnée
+l1|M4C-022 · station minière, équipe réduite
+l1|P3X-729 · plaines d'herbe, vent constant
+l1|P4X-853 · volcans actifs, cendres au ciel
+l1|P3X-964 · village de pêcheurs, marché au poisson
+l1|M4C-137 · lune sans air, dôme scellé
+l1|P3X-281 · marais toxiques, brume verte
+l1|P4X-396 · temple doré, gardes en armure
+l1|P3X-450 · canyons rouges, falaises sculptées
+l1|P3X-573 · archipel de glace, navires gelés
+l1|M4C-300 · épave de vaisseau, gravité faible
+l1|P4X-684 · steppes froides, nomades à cheval
+l1|P3X-717 · vallée des mégalithes
+l1|P3X-802 · mer de sel, cristaux blancs
+l1|P4X-905 · forêt de bambous géants
+l1|P3X-939 · cité flottante sur un lac
+l1|M4C-416 · relais orbital, réseau de capteurs
+l1|P3X-058 · champs de maïs, ciel d'orage
+l1|P4X-172 · mines abandonnées, galeries effondrées
+l1|P3X-233 · récif de corail, lagons calmes
+l1|P3X-348 · toundra, aurores vertes
+l1|P4X-487 · cité de verre, reflets au soleil
+l1|M4C-551 · astéroïde creux, base de réparation
+l1|P3X-612 · désert de sel, mirages
+l1|P4X-739 · forêt de brumes, sentinelles muettes
+l1|P3X-868 · plateau de basalte, sources chaudes
+l1|P3X-993 · colline de pierre, ruines de tours
+l2|Gemini · Boötes · Fornax · Corvus · Taurus · Lynx · point d'origine
+l2|Lepus · Orion · Gemini · Fornax · Auriga · Lyra · point d'origine
+l2|Hydra · Cygnus · Aries · Lyra · Sculptor · Cetus · point d'origine
+l2|Fornax · Leo · Lepus · Grus · Auriga · Aries · point d'origine
+l2|Draco · Orion · Eridanus · Phoenix · Fornax · Serpens · point d'origine
+l2|Columba · Phoenix · Hydra · Leo · Cetus · Sculptor · point d'origine
+l2|Pegasus · Taurus · Gemini · Aries · Draco · Corvus · point d'origine
+l2|Aries · Aquarius · Norma · Auriga · Grus · Vela · point d'origine
+l2|Pegasus · Lupus · Grus · Scorpius · Lynx · Aquarius · point d'origine
+l2|Octans · Lynx · Draco · Dorado · Fornax · Pisces · point d'origine
+l2|Lepus · Norma · Grus · Aquila · Columba · Pegasus · point d'origine
+l2|Serpens · Lacerta · Crater · Phoenix · Lupus · Lynx · point d'origine
+l2|Perseus · Libra · Leo · Columba · Hercules · Pavo · point d'origine
+l2|Columba · Crater · Lupus · Hydra · Libra · Pisces · point d'origine
+l2|Taurus · Sextans · Aquila · Hydra · Puppis · Dorado · point d'origine
+l2|Corvus · Cancer · Sextans · Lyra · Cetus · Lepus · point d'origine
+l2|Sagitta · Perseus · Pegasus · Columba · Fornax · Cetus · point d'origine
+l2|Lupus · Sagitta · Boötes · Eridanus · Libra · Lyra · point d'origine
+l2|Crater · Aquila · Perseus · Lyra · Hercules · Lynx · point d'origine
+l2|Lepus · Grus · Draco · Aries · Cygnus · Dorado · point d'origine
+l2|Eridanus · Taurus · Aries · Lupus · Aquarius · Pisces · point d'origine
+l2|Corvus · Cancer · Aries · Hydra · Lacerta · Aquila · point d'origine
+l2|Lupus · Sagitta · Gemini · Lepus · Vela · Hercules · point d'origine
+l2|Orion · Perseus · Grus · Fornax · Scorpius · Octans · point d'origine
+l2|Pisces · Aquila · Taurus · Sextans · Lacerta · Auriga · point d'origine
+l2|Sculptor · Aquila · Scorpius · Virgo · Auriga · Boötes · point d'origine
+l2|Aquila · Dorado · Sculptor · Eridanus · Grus · Crater · point d'origine
+l2|Taurus · Cetus · Corvus · Lepus · Pisces · Sculptor · point d'origine
+l2|Sculptor · Boötes · Lepus · Cygnus · Lupus · Taurus · point d'origine
+l2|Columba · Norma · Virgo · Lepus · Draco · Octans · point d'origine
+l2|Taurus · Norma · Phoenix · Crater · Pisces · Aries · point d'origine
+l2|Pegasus · Cetus · Aquarius · Hydra · Pisces · Libra · point d'origine
+l2|Cancer · Vela · Lyra · Crater · Pavo · Dorado · point d'origine
+l2|Corvus · Hydra · Dorado · Auriga · Lyra · Lupus · point d'origine
+l2|Pavo · Lepus · Serpens · Cygnus · Phoenix · Crater · point d'origine
+l2|Draco · Octans · Sagitta · Lynx · Corvus · Hydra · point d'origine
+l2|Aquila · Puppis · Vela · Eridanus · Hercules · Libra · point d'origine
+l2|Leo · Cetus · Lepus · Lacerta · Orion · Hercules · point d'origine
+l2|Aries · Scorpius · Vela · Draco · Grus · Dorado · point d'origine
+l2|Hydra · Cetus · Leo · Corvus · Auriga · Hercules · point d'origine
+l2|Draco · Corvus · Boötes · Hercules · Gemini · Grus · point d'origine
+l2|Grus · Aries · Hydra · Boötes · Lupus · Sextans · point d'origine
+l2|Draco · Eridanus · Serpens · Pegasus · Lepus · Sagitta · point d'origine
+l2|Sagitta · Sextans · Lupus · Taurus · Orion · Lynx · point d'origine
+l2|Sextans · Vela · Pisces · Eridanus · Cetus · Lynx · point d'origine
+l2|Sagitta · Perseus · Lupus · Phoenix · Gemini · Octans · point d'origine
+l2|Lupus · Cetus · Octans · Corvus · Aquila · Puppis · point d'origine
+l2|Draco · Cancer · Libra · Perseus · Crater · Puppis · point d'origine
+l2|Lynx · Pisces · Aries · Taurus · Gemini · Cancer · point d'origine
+l2|Cetus · Cygnus · Aquila · Columba · Eridanus · Serpens · point d'origine
+l2|Lupus · Lepus · Norma · Pegasus · Draco · Aquarius · point d'origine
+l2|Lacerta · Aquarius · Corvus · Virgo · Crater · Libra · point d'origine
+l2|Aquila · Phoenix · Cetus · Lyra · Puppis · Grus · point d'origine
+l2|Aquarius · Octans · Pavo · Lynx · Cancer · Leo · point d'origine
+l2|Scorpius · Aries · Vela · Pavo · Pegasus · Pisces · point d'origine
+l2|Vela · Corvus · Lyra · Columba · Leo · Hydra · point d'origine
+l2|Phoenix · Sculptor · Draco · Aries · Pisces · Corvus · point d'origine
+l2|Aquila · Taurus · Leo · Libra · Lupus · Orion · point d'origine
+l2|Hydra · Pisces · Orion · Crater · Pavo · Lupus · point d'origine
+l2|Lepus · Crater · Aquarius · Boötes · Sculptor · Octans · point d'origine

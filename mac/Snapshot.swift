@@ -80,17 +80,17 @@ extension SetupModel {
         model.liveMode = false
 
         let detectJSON = """
-        {"node":{"path":"/Users/exemple/.config/claude-dojo/node/bin/node","version":"v22.11.0","ok":true},
+        {"node":{"path":"~/.config/claude-dojo/node/bin/node","version":"v22.11.0","ok":true},
          "brew":{"path":"/opt/homebrew/bin/brew"},
          "macmon":null,
          "mediaControl":{"path":"/opt/homebrew/bin/media-control"},
          "gh":{"path":"/opt/homebrew/bin/gh","authed":false},
          "claude":{"path":"/opt/homebrew/bin/claude"},
-         "settings":{"path":"/Users/exemple/.claude/settings.json","exists":true,
+         "settings":{"path":"~/.claude/settings.json","exists":true,
                      "statusLine":{"type":"command","command":"ancienne-barre.js"},
                      "heavyGatePerso":false,"hooksDojo":false},
-         "install":{"installed":false,"configDir":"/Users/exemple/.config/claude-dojo","configExists":false,"launchAgents":false},
-         "config":null,"home":"/Users/exemple","arch":"arm64"}
+         "install":{"installed":false,"configDir":"~/.config/claude-dojo","configExists":false,"launchAgents":false},
+         "config":null,"home":"~","arch":"arm64"}
         """
         model.detect = try? JSONDecoder().decode(DetectResult.self, from: Data(detectJSON.utf8))
 
@@ -130,7 +130,7 @@ extension SetupModel {
         +         "hooks": [
         +           {
         +             "type": "command",
-        +             "command": "\"/Users/exemple/.local/bin/node\" \"/Users/exemple/.config/claude-dojo/hook.js\"",
+        +             "command": "\"~/.local/bin/node\" \"~/.config/claude-dojo/hook.js\"",
         +             "async": true
         +           }
         +         ]
@@ -152,6 +152,13 @@ extension SetupModel {
         model.themesLoaded = true
         model.themeChoice = "stargate-sg1"
         model.windowZone = WindowZoneConfig(enabled: true, margin: 8, reserveTop: true, exclude: ["com.apple.Safari"])
+        // Options terminal : Terminal.app ouvert avec une option demandée (message « Terminal est ouvert »).
+        model.terminalStatus = TerminalStatus(
+            options: TerminalOptions(),
+            ghostty: TerminalTarget(applied: false, available: true, running: nil),
+            terminalApp: TerminalTarget(applied: false, available: true, running: true),
+            welcome: TerminalTarget(applied: false, available: nil, running: nil))
+        model.terminalChoice = TerminalOptions(ghostty: true, terminalApp: true, welcome: true)
         return model
     }
 }
