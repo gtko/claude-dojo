@@ -1,9 +1,9 @@
-// État de l'assistant (9 étapes) et ses actions : détection, géocodage, aperçu des réglages, application.
+// État de l'assistant (10 étapes) et ses actions : détection, géocodage, aperçu des réglages, application.
 import Foundation
 import Combine
 
 enum SetupStep: Int, CaseIterable {
-    case welcome, dependencies, weather, github, projects, calendars, claude, autostart, done
+    case welcome, dependencies, weather, github, projects, calendars, claude, autostart, theme, done
 
     var title: String {
         switch self {
@@ -15,6 +15,7 @@ enum SetupStep: Int, CaseIterable {
         case .calendars: return "Calendriers"
         case .claude: return "Claude Code"
         case .autostart: return "Démarrage automatique"
+        case .theme: return "Thème"
         case .done: return "Terminé"
         }
     }
@@ -66,6 +67,17 @@ final class SetupModel: ObservableObject {
     @Published var previewError: String?
     @Published var heavyLimits: HeavyLimits?
 
+    // Thème et fond d'écran : choix appliqués à la validation, avec le reste
+    @Published var themes: [ThemeInfo] = []
+    @Published var themesLoaded = false
+    @Published var themesError: String?
+    /// Id du thème sélectionné dans la grille.
+    @Published var themeChoice = ""
+    /// Fond personnalisé actuel (config.json) : nil = fond du thème.
+    @Published private(set) var currentBackground: String?
+    /// Fond choisi dans l'assistant ; nil = inchangé.
+    @Published var backgroundChange: BackgroundChange?
+
     // Démarrage et application
     @Published var autostart = true
     @Published var applying = false
@@ -74,6 +86,8 @@ final class SetupModel: ObservableObject {
     @Published var applyError: String?
 
     private var sentry: JSONValue?
+    /// Thème à l'ouverture de l'assistant : seul un choix différent déclenche set-theme.
+    private var initialTheme = ""
     private var hadAutostart = false
     private var prefilled = false
     private var cancellables = Set<AnyCancellable>()
@@ -121,6 +135,32 @@ final class SetupModel: ObservableObject {
         }
     }
 
+    /// Nom du thème sélectionné (son id si le nom est inconnu).
+    var themeName: String? {
+        guard !themeChoice.isEmpty else { return nil }
+        return themes.first { $0.id == themeChoice }?.name ?? themeChoice
+    }
+
+    /// Fond qui sera utilisé : le choix en attente, sinon le fond actuel.
+    private var effectiveBackground: BackgroundChange {
+        if let change = backgroundChange { return change }
+        guard let current = currentBackground else { return .theme }
+        return .file(current)
+    }
+
+    /// Libellé du fond : « fond du thème » ou « image « nom.jpg » ».
+    var backgroundLabel: String {
+        switch effectiveBackground {
+        case .theme: return "fond du thème"
+        case .file(let path): return "image « \((path as NSString).lastPathComponent) »"
+        }
+    }
+
+    var backgroundUsesTheme: Bool {
+        if case .theme = effectiveBackground { return true }
+        return false
+    }
+
     var summary: [String] {
         let validOwners = owners.filter { !$0.trimmed.isEmpty }.count
         let validRoots = roots.filter { !$0.trimmed.isEmpty }.count
@@ -137,6 +177,8 @@ final class SetupModel: ObservableObject {
             "GitHub : \(validOwners) propriétaire(s)",
             "Projets : \(validRoots) dossier(s), " + (onlyOwners ? "dépôts des propriétaires seulement" : "tous les dépôts"),
             "Calendriers : \(validCalendars)",
+            "Thème : " + (themeName ?? "non disponible"),
+            "Fond : " + backgroundLabel,
             "Claude Code : hooks Dojo \(hooks ? "oui" : "non"), barre de statut \(statusLineLabel), heavy-gate \(heavyGate ? "oui" : "non"), VITEST_MAX_WORKERS \(vitestWorkers ? "oui" : "non")",
             "Démarrage automatique : " + autostartLabel
         ]
@@ -160,7 +202,29 @@ final class SetupModel: ObservableObject {
     func load() async {
         loading = true
         await refreshDetect()
+        await loadThemes()
         loading = false
+    }
+
+    /// Liste des thèmes, thème courant et fond actuel (`setup.js themes`). Appelée à l'ouverture de l'assistant.
+    func loadThemes() async {
+        guard liveMode else { return }
+        defer { themesLoaded = true }
+        do {
+            let response: ThemesResponse = try await runner.call("themes")
+            themes = response.themes ?? []
+            initialTheme = response.theme ?? ""
+            themeChoice = initialTheme
+            currentBackground = response.background
+            themesError = nil
+        } catch {
+            themesError = error.localizedDescription
+        }
+    }
+
+    /// Revient au fond du thème : annule un fichier choisi, sans rien écrire avant « Appliquer ».
+    func resetBackground() {
+        backgroundChange = currentBackground == nil ? nil : .theme
     }
 
     /// Relit `detect`. Pré-remplit l'assistant la première fois seulement, pour ne pas écraser une saisie.
@@ -324,6 +388,8 @@ final class SetupModel: ObservableObject {
             let config = try DojoPaths.json(buildConfig())
             let _: Ack = try await runner.call("write-config", ["-"], stdin: Data(config.utf8))
 
+            try await applyTheme()
+
             note("Mise à jour de settings.json…")
             let merge = try DojoPaths.json(mergeOptions(dryRun: false))
             let _: MergeResult = try await runner.call("merge-settings", ["-"], timeout: 120, stdin: Data(merge.utf8))
@@ -349,6 +415,24 @@ final class SetupModel: ObservableObject {
         } catch {
             applyError = error.localizedDescription
             note("Échec : \(error.localizedDescription)")
+        }
+    }
+
+    /// Thème et fond choisis. Après write-config : config.json existe et garde ces champs. Rien n'est appelé si le choix est inchangé.
+    private func applyTheme() async throws {
+        if !themeChoice.isEmpty, themeChoice != initialTheme {
+            note("Thème : \(themeName ?? themeChoice)…")
+            let _: Ack = try await runner.call("set-theme", [themeChoice])
+        }
+        switch backgroundChange {
+        case .theme?:
+            note("Fond d'écran : fond du thème…")
+            let _: Ack = try await runner.call("set-background", ["default"])
+        case .file(let path)?:
+            note("Fond d'écran : copie de l'image choisie…")
+            let _: Ack = try await runner.call("set-background", [path], timeout: 120)
+        case nil:
+            break
         }
     }
 
