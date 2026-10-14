@@ -5,7 +5,7 @@ import SwiftUI
 
 @MainActor
 enum SnapshotRenderer {
-    static let names = ["welcome", "dependencies", "weather", "github", "projects", "calendars", "claude", "autostart", "theme", "done"]
+    static let names = ["welcome", "dependencies", "weather", "github", "projects", "calendars", "claude", "autostart", "theme", "window-zone", "done"]
 
     static func run(into dir: String) -> Int32 {
         let out = URL(fileURLWithPath: dir, isDirectory: true)
@@ -151,6 +151,7 @@ extension SetupModel {
         ]
         model.themesLoaded = true
         model.themeChoice = "stargate-sg1"
+        model.windowZone = WindowZoneConfig(enabled: true, margin: 8, reserveTop: true, exclude: ["com.apple.Safari"])
         return model
     }
 }

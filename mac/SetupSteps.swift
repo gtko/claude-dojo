@@ -15,6 +15,7 @@ struct SetupStepView: View {
         case .claude: ClaudeStep(model: model)
         case .autostart: AutostartStep(model: model)
         case .theme: ThemeStep(model: model)
+        case .windowZone: WindowZoneStep(model: model)
         case .done: DoneStep(model: model)
         }
     }

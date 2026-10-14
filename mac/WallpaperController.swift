@@ -41,6 +41,11 @@ final class WallpaperController: NSObject, WKNavigationDelegate {
     private var timer: Timer?
     private var lastSafe: [String] = []
 
+    // Zone de travail : fenêtres des autres apps tenues hors des panneaux (voir WindowZoneManager)
+    let zoneManager = WindowZoneManager()
+    private(set) var windowZone = WindowZoneConfig.defaults
+    private var zoneGeneration = 0
+
     // Miroir : panneau système à gauche (à côté de Stage Manager), grande colonne à droite
     var mirror: Bool {
         get { WallpaperPrefs.mirror }
@@ -77,6 +82,73 @@ final class WallpaperController: NSObject, WKNavigationDelegate {
         if !force && cur == lastSafe { return }
         lastSafe = cur
         for (w, js) in zip(windows, cur) { (w.contentView as? WKWebView)?.evaluateJavaScript("window.setSafe && setSafe(\(js))") }
+        // Miroir, taille, Stage Manager : la page se remet en page, les zones réservées suivent.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.refreshZones() }
+    }
+
+    // MARK: Zone de travail
+
+    /// Applique la configuration windowZone (relue de config.json) : active ou arrête le gestionnaire, remesure les panneaux.
+    func applyWindowZone(_ config: WindowZoneConfig) {
+        windowZone = config
+        zoneManager.configure(enabled: config.enabled, exclude: config.exclude)
+        refreshZones()
+    }
+
+    /// Stage Manager actif ? Sa bande gauche est alors réservée en plus des panneaux.
+    static var stageManagerActive: Bool {
+        UserDefaults(suiteName: "com.apple.WindowManager")?.bool(forKey: "GloballyEnabled") ?? false
+    }
+
+    /// Mesure les panneaux de chaque page (window.dojoReservedRects) puis publie les zones de travail.
+    /// Asynchrone, sur le fil principal : evaluateJavaScript ne bloque pas. Les réponses d'une mesure périmée sont ignorées.
+    func refreshZones() {
+        guard windowZone.enabled, WindowZoneManager.isTrusted else { return }
+        zoneGeneration += 1
+        let generation = zoneGeneration
+        let walls = windows
+        guard !walls.isEmpty else { return }
+        var measured = [ReservedCSSRects?](repeating: nil, count: walls.count)
+        var remaining = walls.count
+        for (index, wall) in walls.enumerated() {
+            let finish = { [weak self] (rects: ReservedCSSRects?) in
+                guard let self, generation == self.zoneGeneration else { return }
+                measured[index] = rects
+                remaining -= 1
+                if remaining == 0 { self.publishZones(walls: walls, measured: measured) }
+            }
+            guard let web = wall.contentView as? WKWebView else { finish(nil); continue }
+            web.evaluateJavaScript("window.dojoReservedRects ? JSON.stringify(window.dojoReservedRects()) : null") { result, _ in
+                finish(Self.parseRects(result as? String))
+            }
+        }
+    }
+
+    /// {"viewport":{w,h},"left":{x,y,w,h}|null,"right":…,"top":…} -> rectangles CSS.
+    static func parseRects(_ json: String?) -> ReservedCSSRects? {
+        struct Box: Decodable { let x, y, w, h: Double }
+        struct Reply: Decodable { struct Size: Decodable { let w, h: Double }; let viewport: Size; let left, right, top: Box? }
+        guard let data = json?.data(using: .utf8), let reply = try? JSONDecoder().decode(Reply.self, from: data) else { return nil }
+        func rect(_ b: Box?) -> CGRect? { b.map { CGRect(x: $0.x, y: $0.y, width: $0.w, height: $0.h) } }
+        return ReservedCSSRects(viewport: CGSize(width: reply.viewport.w, height: reply.viewport.h),
+                                left: rect(reply.left), right: rect(reply.right), top: rect(reply.top))
+    }
+
+    private func publishZones(walls: [Wall], measured: [ReservedCSSRects?]) {
+        guard let primary = NSScreen.screens.first else { return }
+        let stage = Self.stageManagerActive
+        var zones: [ScreenZone] = []
+        for (wall, rects) in zip(walls, measured) {
+            guard let screen = wall.screen else { continue }
+            let frame = WindowZoneGeometry.axRect(fromCocoa: screen.frame, primaryHeight: primary.frame.height)
+            let visible = WindowZoneGeometry.axRect(fromCocoa: screen.visibleFrame, primaryHeight: primary.frame.height)
+            let zone = WindowZoneGeometry.screenZone(
+                screen: frame, visible: visible, reserved: rects, margin: CGFloat(windowZone.margin),
+                reserveTop: windowZone.reserveTop, stageStrip: stage ? 165 : 0)
+            // Zone inutilisable (panneaux énormes) : on ne recadre rien sur cet écran, mais il reste connu pour attribuer les fenêtres.
+            zones.append(zone ?? ScreenZone(screen: frame, visible: visible, zone: visible, bands: []))
+        }
+        zoneManager.update(zones: zones)
     }
 
     /// Lance le fond d'écran (une seule fois) : fenêtres, observateurs, zone sûre périodique.
@@ -87,13 +159,18 @@ final class WallpaperController: NSObject, WKNavigationDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(rebuild), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(reloadAll), name: NSWorkspace.didWakeNotification, object: nil)
         // Stage Manager, Dock, barre de menus peuvent changer à tout moment : on renvoie la zone sûre si elle a bougé
-        timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.pushSafe(force: false) }
+        timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            self?.pushSafe(force: false)
+            self?.refreshZones()      // mesure légère (un appel JS par écran) : suit les changements de thème, de taille, de miroir
+        }
     }
 
     @objc private func rebuild() {
         windows.forEach { $0.close() }
         windows = []
         build()
+        // La mise en page est refaite par les nouvelles pages : on remesure une fois qu'elles ont eu le temps de charger.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.refreshZones() }
     }
 
     private func build() {
@@ -146,7 +223,10 @@ final class WallpaperController: NSObject, WKNavigationDelegate {
 
     // MARK: WKNavigationDelegate
 
-    func webView(_ v: WKWebView, didFinish _: WKNavigation!) { pushSafe(force: true) }
+    func webView(_ v: WKWebView, didFinish _: WKNavigation!) {
+        pushSafe(force: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.refreshZones() }
+    }
 
     // L'agent n'est pas encore prêt (démarrage de session) : on réessaie.
     func webView(_ v: WKWebView, didFailProvisionalNavigation _: WKNavigation!, withError _: Error) {
