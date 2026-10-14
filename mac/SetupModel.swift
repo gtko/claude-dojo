@@ -515,7 +515,10 @@ final class SetupModel: ObservableObject {
             applied = true
             onApplied?()
             note("Terminé. Le fond d'écran est lancé.")
-            if let file = terminalFileToOpen { TerminalProfile.offerOpen(file) }
+            if let file = terminalFileToOpen {
+                TerminalProfile.offerOpen(file)
+                terminalFileToOpen = nil
+            }
         } catch {
             applyError = error.localizedDescription
             note("Échec : \(error.localizedDescription)")

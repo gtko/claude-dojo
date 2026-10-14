@@ -82,7 +82,7 @@ struct TerminalOptionsSection: View {
                 get: { model.terminalChoice[keyPath: key] },
                 set: { model.setTerminal(key, $0) }))
                 .toggleStyle(.checkbox)
-                .disabled(missing != nil || model.terminalBusy || model.terminalStatus == nil)
+                .disabled((missing != nil && !model.terminalChoice[keyPath: key]) || model.terminalBusy || model.terminalStatus == nil)
             if let missing {
                 Text(missing).font(.caption).foregroundColor(.secondary)
             }
