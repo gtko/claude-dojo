@@ -5,6 +5,7 @@
 // en points (jamais en pixels : l'échelle Retina n'intervient pas). Les rectangles de la page sont en px CSS,
 // dans le repère de la fenêtre du fond d'écran (qui couvre exactement un écran).
 import CoreGraphics
+import Foundation
 
 /// Rectangles occupés par les panneaux de la page, en px CSS (réponse de `window.dojoReservedRects()`).
 struct ReservedCSSRects: Equatable {
@@ -29,6 +30,15 @@ struct ScreenZone: Equatable {
 enum WindowZoneGeometry {
     /// En dessous, la zone libre est jugée inutilisable : on ne recadre rien sur cet écran.
     static let minZoneSize = CGSize(width: 320, height: 240)
+    /// Part maximale de la largeur visible réservée par une colonne, et de la hauteur par le bandeau haut : la page
+    /// (donc un thème) ne peut pas confisquer l'écran.
+    static let maxColumnShare: CGFloat = 0.5
+    static let maxTopShare: CGFloat = 0.4
+    /// La zone finale doit garder au moins cette part de la largeur et de la hauteur visibles, sinon on ne recadre rien.
+    static let minZoneShare: CGFloat = 0.5
+    /// Bornes d'une réponse de la page (px CSS) : au-delà, la mesure est rejetée.
+    static let maxViewport: CGFloat = 20_000
+    static let viewportSlack: CGFloat = 8
     /// Chevauchement toléré (pt) avant de parler de débordement.
     static let tolerance: CGFloat = 1
 
@@ -46,6 +56,41 @@ enum WindowZoneGeometry {
         return CGRect(x: screen.minX + r.minX * sx, y: screen.minY + r.minY * sy, width: r.width * sx, height: r.height * sy)
     }
 
+    /// Une mesure de la page est-elle plausible ? Valeurs finies, viewport entre 1 et 20000 px, rectangles non vides
+    /// et contenus dans le viewport (à quelques px près).
+    static func isPlausible(_ r: ReservedCSSRects) -> Bool {
+        let v = r.viewport
+        guard v.width.isFinite, v.height.isFinite, v.width > 0, v.height > 0, v.width <= maxViewport, v.height <= maxViewport else { return false }
+        for box in [r.left, r.right, r.top] {
+            guard let b = box else { continue }
+            let values = [b.minX, b.minY, b.width, b.height]
+            guard values.allSatisfy({ $0.isFinite }), b.width > 0, b.height > 0,
+                  b.minX >= -viewportSlack, b.minY >= -viewportSlack,
+                  b.maxX <= v.width + viewportSlack, b.maxY <= v.height + viewportSlack else { return false }
+        }
+        return true
+    }
+
+    /// Taille maximale d'une réponse de la page (octets) : au-delà, elle est rejetée sans être lue.
+    static let maxReplyBytes = 2048
+
+    /// Réponse JSON de `window.dojoReservedRects()` : {"viewport":{w,h},"left":{x,y,w,h}|null,"right":…,"top":…}.
+    /// nil si le texte est absent, trop long, mal formé, ou si une valeur est non finie, un rectangle vide ou hors viewport.
+    static func parseRects(_ json: String?) -> ReservedCSSRects? {
+        struct Box: Decodable { let x, y, w, h: Double }
+        struct Reply: Decodable { struct Size: Decodable { let w, h: Double }; let viewport: Size; let left, right, top: Box? }
+        guard let data = json?.data(using: .utf8), data.count <= maxReplyBytes,
+              let reply = try? JSONDecoder().decode(Reply.self, from: data) else { return nil }
+        // Largeur et hauteur lues telles quelles : un CGRect remplacerait une hauteur négative par sa valeur absolue.
+        for b in [reply.left, reply.right, reply.top] {
+            if let b, !(b.w > 0 && b.h > 0) { return nil }
+        }
+        func rect(_ b: Box?) -> CGRect? { b.map { CGRect(x: $0.x, y: $0.y, width: $0.w, height: $0.h) } }
+        let result = ReservedCSSRects(viewport: CGSize(width: reply.viewport.w, height: reply.viewport.h),
+                                      left: rect(reply.left), right: rect(reply.right), top: rect(reply.top))
+        return isPlausible(result) ? result : nil
+    }
+
     /// Zone de travail d'un écran : la zone visible moins les colonnes de panneaux (gauche, droite), le bandeau du haut
     /// si `reserveTop`, la bande de Stage Manager (`stageStrip`, à gauche) et `margin` autour des panneaux.
     /// Les colonnes sont réservées sur toute la hauteur : la zone reste un seul rectangle.
@@ -57,17 +102,20 @@ enum WindowZoneGeometry {
         var x1 = visible.maxX
         var y0 = visible.minY
         let y1 = visible.maxY
-        if let reserved {
+        // Mesure aberrante (valeurs non finies, hors viewport) : rien n'est réservé de ce côté, on ne devine pas.
+        if let reserved, isPlausible(reserved) {
             func toScreen(_ r: CGRect?) -> CGRect? {
                 guard let r, r.width > 0, r.height > 0 else { return nil }
                 let s = screenRect(fromCSS: r, viewport: reserved.viewport, screen: screen)
                 return s.isNull ? nil : s
             }
-            if let l = toScreen(reserved.left) { x0 = max(x0, min(l.maxX + m, visible.maxX)) }
-            if let r = toScreen(reserved.right) { x1 = min(x1, max(r.minX - m, visible.minX)) }
-            if reserveTop, let t = toScreen(reserved.top) { y0 = max(y0, min(t.maxY + m, y1)) }
+            let colLimit = visible.width * maxColumnShare
+            if let l = toScreen(reserved.left) { x0 = max(x0, min(l.maxX + m, visible.minX + colLimit)) }
+            if let r = toScreen(reserved.right) { x1 = min(x1, max(r.minX - m, visible.maxX - colLimit)) }
+            if reserveTop, let t = toScreen(reserved.top) { y0 = max(y0, min(t.maxY + m, visible.minY + visible.height * maxTopShare)) }
         }
-        guard x1 - x0 >= minZoneSize.width, y1 - y0 >= minZoneSize.height else { return nil }
+        guard x1 - x0 >= minZoneSize.width, y1 - y0 >= minZoneSize.height,
+              x1 - x0 >= visible.width * minZoneShare, y1 - y0 >= visible.height * minZoneShare else { return nil }
         let zone = CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
         var bands: [CGRect] = []
         if x0 > visible.minX { bands.append(CGRect(x: visible.minX, y: visible.minY, width: x0 - visible.minX, height: visible.height)) }

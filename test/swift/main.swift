@@ -75,9 +75,50 @@ check(stage.bands.count == 1, "Stage Manager : une bande")
 let free = G.screenZone(screen: mbp, visible: mbpVisible, reserved: nil, margin: 8, reserveTop: true)!
 eq(free.zone, mbpVisible, "aucune mesure : zone = zone visible")
 check(free.bands.isEmpty, "aucune mesure : aucune bande")
-// Colonnes trop larges : zone inutilisable, donc nil (aucun recadrage).
-let wide = ReservedCSSRects(viewport: viewport, left: CGRect(x: 0, y: 0, width: 2300, height: 100), right: nil, top: nil)
-check(G.screenZone(screen: mbp, visible: mbpVisible, reserved: wide, margin: 8, reserveTop: true) == nil, "zone trop petite : nil")
+// Thème malveillant : colonnes de 90 % de l'écran. Chacune est plafonnée à 50 % de la largeur visible, donc la zone
+// tombe sous le seuil de 50 % et on ne recadre rien (nil).
+let wide = ReservedCSSRects(viewport: viewport, left: CGRect(x: 0, y: 0, width: 2300, height: 100), right: CGRect(x: 300, y: 0, width: 2200, height: 100), top: nil)
+check(G.screenZone(screen: mbp, visible: mbpVisible, reserved: wide, margin: 8, reserveTop: true) == nil, "colonnes de 90 % : nil")
+// Une seule colonne énorme (90 %) : plafonnée à 50 %, la zone garde la moitié droite.
+let oneWide = ReservedCSSRects(viewport: viewport, left: CGRect(x: 0, y: 0, width: 2300, height: 100), right: nil, top: nil)
+eq(G.screenZone(screen: mbp, visible: mbpVisible, reserved: oneWide, margin: 8, reserveTop: true)!.zone,
+   CGRect(x: 864, y: 38, width: 864, height: 1079), "colonne de 90 % plafonnée à 50 %")
+// Bandeau haut énorme (95 % de la hauteur) : plafonné à 40 % de la hauteur visible.
+let tallTop = ReservedCSSRects(viewport: viewport, left: nil, right: nil, top: CGRect(x: 100, y: 0, width: 800, height: 1560))
+eq(G.screenZone(screen: mbp, visible: mbpVisible, reserved: tallTop, margin: 8, reserveTop: true)!.zone,
+   CGRect(x: 0, y: 38 + 1079 * 0.4, width: 1728, height: 1079 * 0.6), "bandeau plafonné à 40 %")
+// Stage Manager + colonne : la zone doit rester au moins à moitié de l'écran.
+check(G.screenZone(screen: mbp, visible: mbpVisible, reserved: nil, margin: 8, reserveTop: true, stageStrip: 1000) == nil, "bande de 1000 pt : nil")
+
+// Mesures aberrantes de la page : jamais plausibles.
+func rects(_ viewport: CGSize = viewport, left: CGRect? = leftCol, right: CGRect? = nil, top: CGRect? = nil) -> ReservedCSSRects {
+    ReservedCSSRects(viewport: viewport, left: left, right: right, top: top)
+}
+check(G.isPlausible(reserved), "mesure normale plausible")
+check(G.isPlausible(rects(left: nil)), "aucun panneau : plausible")
+check(!G.isPlausible(rects(CGSize(width: 0, height: 800))), "viewport nul")
+check(!G.isPlausible(rects(CGSize(width: 25_000, height: 800))), "viewport > 20000")
+check(!G.isPlausible(rects(CGSize(width: CGFloat.nan, height: 800))), "viewport NaN")
+check(!G.isPlausible(rects(left: CGRect(x: 0, y: 0, width: 0, height: 100))), "largeur nulle")
+check(!G.isPlausible(rects(left: CGRect(x: CGFloat.infinity, y: 0, width: 100, height: 100))), "x infini")
+check(!G.isPlausible(rects(left: CGRect(x: 0, y: 0, width: CGFloat.nan, height: 100))), "largeur NaN")
+check(!G.isPlausible(rects(left: CGRect(x: 2000, y: 0, width: 1000, height: 100))), "rectangle hors viewport")
+check(!G.isPlausible(rects(left: CGRect(x: -500, y: 0, width: 600, height: 100))), "rectangle à gauche du viewport")
+// Réponse JSON de la page : bornes de taille et de valeurs.
+let okJSON = #"{"viewport":{"w":2541,"h":1642},"left":{"x":18,"y":18,"w":500,"h":659},"right":null,"top":{"x":920,"y":18,"w":700,"h":138}}"#
+check(G.parseRects(okJSON)?.left == CGRect(x: 18, y: 18, width: 500, height: 659), "JSON valide")
+check(G.parseRects(okJSON)?.right == nil, "null = panneau absent")
+check(G.parseRects(nil) == nil && G.parseRects("") == nil && G.parseRects("pas du json") == nil, "texte absent ou invalide")
+check(G.parseRects(okJSON + String(repeating: " ", count: 3000)) == nil, "réponse > 2 Ko")
+check(G.parseRects(#"{"viewport":{"w":2541,"h":1642},"left":{"x":18,"y":18,"w":500,"h":-5}}"#) == nil, "hauteur négative")
+check(G.parseRects(#"{"viewport":{"w":2541,"h":1642},"left":{"x":18,"y":18,"w":0,"h":50}}"#) == nil, "largeur nulle")
+check(G.parseRects(#"{"viewport":{"w":0,"h":1642}}"#) == nil, "viewport nul")
+check(G.parseRects(#"{"viewport":{"w":30000,"h":1642}}"#) == nil, "viewport > 20000")
+check(G.parseRects(#"{"viewport":{"w":2541,"h":1642},"left":{"x":2000,"y":0,"w":900,"h":50}}"#) == nil, "hors viewport")
+check(G.parseRects(#"{"viewport":{"w":2541,"h":1642},"left":{"x":1e999,"y":0,"w":10,"h":50}}"#) == nil, "valeur non finie")
+// screenZone ignore une mesure aberrante : rien n'est réservé.
+eq(G.screenZone(screen: mbp, visible: mbpVisible, reserved: rects(left: CGRect(x: 0, y: 0, width: CGFloat.infinity, height: 100)), margin: 8, reserveTop: true)!.zone,
+   mbpVisible, "mesure aberrante ignorée")
 // Rectangle de page vide ou à largeur nulle (panneau masqué) : ignoré.
 let hidden = ReservedCSSRects(viewport: viewport, left: CGRect(x: 0, y: 0, width: 0, height: 0), right: nil, top: nil)
 eq(G.screenZone(screen: mbp, visible: mbpVisible, reserved: hidden, margin: 8, reserveTop: true)!.zone, mbpVisible, "panneau masqué ignoré")

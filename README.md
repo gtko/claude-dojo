@@ -241,21 +241,21 @@ What is never touched: windows of apps in native full screen, windows that canno
 | Setting (`windowZone` in `config.json`) | Purpose |
 |---|---|
 | `enabled` | `false` by default. Turns the window zone on |
-| `margin` | Space in points between the panels and the windows, from 0 to 100 (8 by default) |
+| `margin` | Space in points between the panels and the windows, from 0 to 64 (8 by default) |
 | `reserveTop` | `true` (default) also reserves the clock and weather band: **Côtés + haut**. `false` reserves only the side columns: **Côtés seulement** |
 | `exclude` | Bundle ids of the apps that are never moved, for example `["com.apple.Safari"]`. Empty by default |
 
-**Shortcuts**, while the option is on, apply to the window in front: ⌃⌥↩ (**Agrandir dans la zone**) fills the free zone, ⌃⌥← and ⌃⌥→ put the window on the left or right half of it. If another tool already uses a shortcut, Dojo skips it, and the same actions stay in the menu.
+**Shortcuts**, while the option is on, apply to the window in front: ⌃⌥↩ (**Agrandir dans la zone**) fills the free zone, ⌃⌥← and ⌃⌥→ put the window on the left or right half of it. If another tool already uses a shortcut (Rectangle, Magnet, Raycast…), macOS refuses it: Dojo skips it, lists the refused shortcuts in the **Zone de travail** menu and in the settings, and the same actions stay in the menu.
 
 ### Accessibility permission
 
-Moving the windows of other apps needs the **Accessibility** permission. Without it Dojo does nothing to any window: the option shows **Autorisation requise**, in the menu and in the settings, with a button that opens System Settings > Privacy & Security > Accessibility. Turn on DojoWallpaper in that list. The option starts working within a couple of seconds, with no restart. Dojo never asks for more than this, and sends nothing outside your Mac.
+Moving the windows of other apps needs the **Accessibility** permission. Without it Dojo does nothing to any window: the option shows **Autorisation requise**, in the menu and in the settings, with a button that opens System Settings > Privacy & Security > Accessibility. Turn on DojoWallpaper in that list. The option starts working within a couple of seconds, with no restart. If you revoke the permission later, Dojo notices within about ten seconds and stops touching windows. Dojo never asks for more than this, and sends nothing outside your Mac.
 
 If you move DojoWallpaper.app or replace it with a new build, macOS may list it as a new entry: remove the old one and turn the new one on.
 
 ### Stage Manager
 
-Stage Manager has its own idea of where windows go. When it is on, Dojo also reserves its left strip (the thumbnails of the other stages) and says so in the settings. Stage Manager groups windows itself, so the two can fight over a window's position. If a window jumps around, turn off the window zone or Stage Manager. Dojo stops touching a window that resists (more than four moves in three seconds) until you move it again.
+Stage Manager has its own idea of where windows go. When it is on, Dojo also reserves its left strip (the thumbnails of the other stages) and says so in the settings. Detection is a best effort: macOS has no public API for it, so Dojo reads the private `GloballyEnabled` key of the `com.apple.WindowManager` preferences, and reserves a fixed 165 pt strip on the left of each screen, whatever the real width of the strip. A future macOS version may rename the key or change the strip, in which case Dojo no longer sees Stage Manager and the strip is not reserved: lower the window zone margin or turn Stage Manager off. Stage Manager groups windows itself, so the two can fight over a window's position. If a window jumps around, turn off the window zone or Stage Manager. Dojo stops touching a window that resists (more than four moves in three seconds) until you move it again.
 
 ### Limits
 

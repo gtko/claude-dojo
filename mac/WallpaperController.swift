@@ -45,6 +45,9 @@ final class WallpaperController: NSObject, WKNavigationDelegate {
     let zoneManager = WindowZoneManager()
     private(set) var windowZone = WindowZoneConfig.defaults
     private var zoneGeneration = 0
+    /// Dernière zone valide de chaque écran (clé : identifiant d'affichage). Une mesure ratée (page en rechargement,
+    /// changement de thème, réponse aberrante) la garde au lieu d'élargir la zone.
+    private var lastValidZones: [Int: ScreenZone] = [:]
 
     // Miroir : panneau système à gauche (à côté de Stage Manager), grande colonne à droite
     var mirror: Bool {
@@ -90,6 +93,7 @@ final class WallpaperController: NSObject, WKNavigationDelegate {
 
     /// Applique la configuration windowZone (relue de config.json) : active ou arrête le gestionnaire, remesure les panneaux.
     func applyWindowZone(_ config: WindowZoneConfig) {
+        if config.margin != windowZone.margin || config.reserveTop != windowZone.reserveTop { lastValidZones = [:] }
         windowZone = config
         zoneManager.configure(enabled: config.enabled, exclude: config.exclude)
         refreshZones()
@@ -119,35 +123,39 @@ final class WallpaperController: NSObject, WKNavigationDelegate {
             }
             guard let web = wall.contentView as? WKWebView else { finish(nil); continue }
             web.evaluateJavaScript("window.dojoReservedRects ? JSON.stringify(window.dojoReservedRects()) : null") { result, _ in
-                finish(Self.parseRects(result as? String))
+                finish(WindowZoneGeometry.parseRects(result as? String))
             }
         }
-    }
-
-    /// {"viewport":{w,h},"left":{x,y,w,h}|null,"right":…,"top":…} -> rectangles CSS.
-    static func parseRects(_ json: String?) -> ReservedCSSRects? {
-        struct Box: Decodable { let x, y, w, h: Double }
-        struct Reply: Decodable { struct Size: Decodable { let w, h: Double }; let viewport: Size; let left, right, top: Box? }
-        guard let data = json?.data(using: .utf8), let reply = try? JSONDecoder().decode(Reply.self, from: data) else { return nil }
-        func rect(_ b: Box?) -> CGRect? { b.map { CGRect(x: $0.x, y: $0.y, width: $0.w, height: $0.h) } }
-        return ReservedCSSRects(viewport: CGSize(width: reply.viewport.w, height: reply.viewport.h),
-                                left: rect(reply.left), right: rect(reply.right), top: rect(reply.top))
     }
 
     private func publishZones(walls: [Wall], measured: [ReservedCSSRects?]) {
         guard let primary = NSScreen.screens.first else { return }
         let stage = Self.stageManagerActive
         var zones: [ScreenZone] = []
+        var seen = Set<Int>()
         for (wall, rects) in zip(walls, measured) {
             guard let screen = wall.screen else { continue }
+            let displayID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.intValue ?? -1
+            seen.insert(displayID)
             let frame = WindowZoneGeometry.axRect(fromCocoa: screen.frame, primaryHeight: primary.frame.height)
             let visible = WindowZoneGeometry.axRect(fromCocoa: screen.visibleFrame, primaryHeight: primary.frame.height)
-            let zone = WindowZoneGeometry.screenZone(
-                screen: frame, visible: visible, reserved: rects, margin: CGFloat(windowZone.margin),
-                reserveTop: windowZone.reserveTop, stageStrip: stage ? 165 : 0)
-            // Zone inutilisable (panneaux énormes) : on ne recadre rien sur cet écran, mais il reste connu pour attribuer les fenêtres.
-            zones.append(zone ?? ScreenZone(screen: frame, visible: visible, zone: visible, bands: []))
+            // Mesure ratée (nil) : on ne calcule rien de neuf. Sinon, zone calculée ; refusée (panneaux énormes) : même repli.
+            let computed = rects.flatMap {
+                WindowZoneGeometry.screenZone(
+                    screen: frame, visible: visible, reserved: $0, margin: CGFloat(windowZone.margin),
+                    reserveTop: windowZone.reserveTop, stageStrip: stage ? 165 : 0)
+            }
+            if let computed {
+                lastValidZones[displayID] = computed
+                zones.append(computed)
+            } else if let previous = lastValidZones[displayID], previous.screen == frame, previous.visible == visible {
+                zones.append(previous)      // la zone reste celle d'avant, elle ne s'élargit pas
+            } else {
+                // Rien de valide encore : aucun recadrage sur cet écran, mais il reste connu pour attribuer les fenêtres.
+                zones.append(ScreenZone(screen: frame, visible: visible, zone: visible, bands: []))
+            }
         }
+        lastValidZones = lastValidZones.filter { seen.contains($0.key) }
         zoneManager.update(zones: zones)
     }
 

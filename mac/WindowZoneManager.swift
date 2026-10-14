@@ -6,6 +6,7 @@
 //   écriture d'attribut Accessibilité (échange avec l'app visée, qui peut bloquer) se fait sur une file dédiée.
 // - Une fenêtre n'est recadrée qu'après 150 ms sans mouvement, jamais pendant que le bouton de la souris est enfoncé,
 //   et ses propres déplacements sont ignorés (plus un coupe-circuit si une app résiste).
+// - Chaque appel Accessibilité a un timeout de 0,25 s : une app bloquée ne retarde pas les autres.
 // - La géométrie (zone, recadrage) est dans WindowZoneGeometry.swift, testée en CI.
 import Cocoa
 import ApplicationServices
@@ -51,6 +52,12 @@ final class WindowZoneManager: @unchecked Sendable {
 
     private let hotKeys = WindowZoneHotKeys()
     private var trustTimer: Timer?
+    private var trustTimerInterval: TimeInterval = 0
+    /// Délai de chaque appel Accessibilité : une app bloquée ne retarde pas les autres de plus de ce délai par appel.
+    private static let axTimeout: Float = 0.25
+
+    /// Raccourcis ⌃⌥ refusés par le système (déjà utilisés par un autre outil). Vide si tout est en place.
+    var refusedHotKeys: [String] { hotKeys.refused }
     private var observers: [NSObjectProtocol] = []
 
     init() {
@@ -82,7 +89,11 @@ final class WindowZoneManager: @unchecked Sendable {
     func configure(enabled: Bool, exclude: [String]) {
         isEnabled = enabled
         let set = Set(exclude)
-        queue.async { self.excluded = set }
+        queue.async {
+            let changed = set != self.excluded
+            self.excluded = set
+            if changed && self.running { self.sweep() }     // une app retirée de la liste est recadrée tout de suite
+        }
         reconcile()
     }
 
@@ -122,12 +133,16 @@ final class WindowZoneManager: @unchecked Sendable {
             isActive = active
             let apps = active ? NSWorkspace.shared.runningApplications : []
             queue.async { active ? self.start(apps) : self.stop() }
-            hotKeys.setActive(active)
         }
-        // Option cochée mais pas encore autorisée : on surveille l'autorisation (la notification système peut manquer).
-        if isEnabled && !trusted {
-            if trustTimer == nil {
-                trustTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.reconcile() }
+        hotKeys.setActive(active)      // ne retente que les raccourcis manquants
+        // Option cochée : on surveille l'autorisation (la notification système peut manquer), vite tant qu'elle manque,
+        // puis plus lentement pour voir une révocation. Sans autorisation, tout s'arrête (stop) au prochain passage.
+        if isEnabled {
+            let interval: TimeInterval = trusted ? 8 : 2
+            if trustTimer == nil || trustTimerInterval != interval {
+                trustTimer?.invalidate()
+                trustTimerInterval = interval
+                trustTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in self?.reconcile() }
             }
         } else {
             trustTimer?.invalidate()
@@ -184,16 +199,16 @@ final class WindowZoneManager: @unchecked Sendable {
     }
 
     private func attach(_ app: NSRunningApplication, evaluateExisting: Bool = false) {
-        guard running, eligible(app), apps[app.processIdentifier] == nil else { return }
+        guard running, Self.isTrusted, eligible(app), apps[app.processIdentifier] == nil else { return }
         let pid = app.processIdentifier
         var created: AXObserver?
         guard AXObserverCreate(pid, axCallback, &created) == .success, let observer = created else { return }
         let element = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(element, 1)
+        AXUIElementSetMessagingTimeout(element, Self.axTimeout)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         // App pas prête (ou sans Accessibilité) : on n'enregistre rien, une prochaine activation réessaiera.
         guard AXObserverAddNotification(observer, element, kAXWindowCreatedNotification as CFString, refcon) == .success else { return }
-        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
         let watch = AppWatch(pid: pid, observer: observer, element: element)
         apps[pid] = watch
         watchWindows(of: watch, evaluateNew: evaluateExisting)
@@ -201,7 +216,7 @@ final class WindowZoneManager: @unchecked Sendable {
 
     private func detach(pid: pid_t) {
         guard let watch = apps.removeValue(forKey: pid) else { return }
-        CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(watch.observer), .defaultMode)
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(watch.observer), .commonModes)
         for key in watch.windows {
             pending.removeValue(forKey: key)?.cancel()
             ignoreUntil.removeValue(forKey: key)
@@ -220,7 +235,7 @@ final class WindowZoneManager: @unchecked Sendable {
     private func follow(_ window: AXUIElement, in watch: AppWatch) {
         let key = AXKey(element: window)
         guard watch.windows.insert(key).inserted else { return }
-        AXUIElementSetMessagingTimeout(window, 1)
+        AXUIElementSetMessagingTimeout(window, Self.axTimeout)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         for name in [kAXMovedNotification, kAXResizedNotification, kAXUIElementDestroyedNotification] {
             _ = AXObserverAddNotification(watch.observer, window, name as CFString, refcon)
@@ -265,6 +280,7 @@ final class WindowZoneManager: @unchecked Sendable {
     // MARK: Évaluation et recadrage
 
     private func sweep() {
+        guard running, Self.isTrusted else { return }
         for watch in Array(apps.values) {
             for window in windows(of: watch.element) { evaluate(AXKey(element: window), sweeping: true) }
         }
@@ -281,7 +297,7 @@ final class WindowZoneManager: @unchecked Sendable {
             schedule(key, delay: 0.15)
             return
         }
-        AXUIElementSetMessagingTimeout(window, 1)
+        AXUIElementSetMessagingTimeout(window, Self.axTimeout)
         guard isManageable(window), let frame = frame(of: window),
               let index = WindowZoneGeometry.zoneIndex(for: frame, in: zones), WindowZoneGeometry.needsFit(frame, in: zones[index])
         else { return }
@@ -316,7 +332,7 @@ final class WindowZoneManager: @unchecked Sendable {
     private func arrange(_ action: WindowZoneAction, pid: pid_t) {
         guard running, !zones.isEmpty else { return }
         let appElement = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(appElement, 1)
+        AXUIElementSetMessagingTimeout(appElement, Self.axTimeout)
         guard let window = element(appElement, kAXFocusedWindowAttribute), isManageable(window),
               let frame = frame(of: window), let index = WindowZoneGeometry.zoneIndex(for: frame, in: zones) else { return }
         let zone = zones[index].zone

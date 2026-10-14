@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var zoneToggleItem: NSMenuItem?
     private var zoneStatusItem: NSMenuItem?
     private var zoneAccessItem: NSMenuItem?
+    private var zoneHotKeysItem: NSMenuItem?
     private var zoneActionItems: [NSMenuItem] = []
     private var themeMenu: NSMenu?
     private var themeItems: [NSMenuItem] = []
@@ -98,6 +99,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let access = action("Autoriser dans Réglages Système…", #selector(requestZoneAccess))
         zoneAccessItem = access
         sub.addItem(access)
+        let hotKeys = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        hotKeys.isEnabled = false
+        hotKeys.isHidden = true
+        zoneHotKeysItem = hotKeys
+        sub.addItem(hotKeys)
         sub.addItem(.separator())
         let actions: [(String, WindowZoneAction, String)] = [
             ("Agrandir dans la zone", .maximize, "\r"),
@@ -134,6 +140,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         zoneStatusItem?.isHidden = !needsAccess
         zoneAccessItem?.isHidden = !needsAccess
         for entry in zoneActionItems { entry.isEnabled = zone.isActive }
+        let refused = zone.refusedHotKeys
+        zoneHotKeysItem?.isHidden = refused.isEmpty
+        zoneHotKeysItem?.title = "Raccourcis déjà pris par une autre app : " + refused.joined(separator: " ")
     }
 
     @objc private func toggleInteractive() { wallpaper.interactive.toggle() }
@@ -348,7 +357,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
-        if menu === zoneMenu { refreshMenu() }
+        if menu === zoneMenu { wallpaper.zoneManager.reconcile() }      // relit l'autorisation, réessaie les raccourcis, met le menu à jour
         guard menu === themeMenu else { return }
         Task { @MainActor in await reloadThemes() }
     }

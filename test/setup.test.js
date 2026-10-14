@@ -657,6 +657,15 @@ test('write-config windowZone : écrite, fusion profonde, relue avec les défaut
   assert.equal(cli(home, ['window-zone']).out.windowZone.enabled, false);
 });
 
+test('write-config windowZone : marge 0 et 64 acceptées, mêmes bornes que l app', () => {
+  const home = tmpHome();
+  for (const margin of [0, 64]) {
+    const r = cli(home, ['write-config', JSON.stringify({ windowZone: { margin } })]);
+    assert.equal(r.code, 0, r.raw);
+    assert.equal(cli(home, ['window-zone']).out.windowZone.margin, margin);
+  }
+});
+
 test('write-config windowZone : valeurs invalides refusées, config.json inchangé', () => {
   const home = tmpHome();
   cli(home, ['write-config', JSON.stringify({ windowZone: { enabled: true } })]);
@@ -667,7 +676,7 @@ test('write-config windowZone : valeurs invalides refusées, config.json inchang
     { windowZone: { enabled: 'true' } },
     { windowZone: { reserveTop: 1 } },
     { windowZone: { margin: -1 } },
-    { windowZone: { margin: 101 } },
+    { windowZone: { margin: 65 } },
     { windowZone: { margin: 'abc' } },
     { windowZone: { exclude: 'com.apple.Safari' } },
     { windowZone: { exclude: [42] } },

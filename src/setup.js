@@ -610,7 +610,7 @@ function validateConfig(c) {
 // Zone de travail : { enabled, margin (pt), reserveTop, exclude: [bundle ids] }. Tous les champs sont facultatifs.
 const BUNDLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/;
 const WINDOW_ZONE_DEFAULTS = { enabled: false, margin: 8, reserveTop: true, exclude: [] };
-const WINDOW_ZONE_MAX_MARGIN = 100;
+const WINDOW_ZONE_MAX_MARGIN = 64;   // même borne que WindowZoneConfig.marginRange (Swift)
 const WINDOW_ZONE_MAX_EXCLUDE = 200;
 
 function validateWindowZone(z) {

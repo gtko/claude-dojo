@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct WindowZoneStep: View {
     @ObservedObject var model: SetupModel
     @State private var trusted = WindowZoneManager.isTrusted
+    @State private var refusedKeys = WindowZoneHotKeys.currentRefused
     private let poll = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -27,6 +28,10 @@ struct WindowZoneStep: View {
             }
             if WallpaperController.stageManagerActive {
                 Notice(text: "Stage Manager est actif : sa bande gauche est réservée en plus des panneaux. Il regroupe lui-même les fenêtres : si les deux se gênent, désactive l'un des deux.")
+            }
+
+            if model.windowZone.enabled && !refusedKeys.isEmpty {
+                Notice(text: "Raccourcis déjà utilisés par une autre app (Rectangle, Magnet, Raycast…) : \(refusedKeys.joined(separator: " ")). Les actions restent dans le menu Zone de travail.")
             }
 
             Group {
@@ -59,7 +64,10 @@ struct WindowZoneStep: View {
                 Notice(text: "Aucune app exclue. Raccourcis une fois l'option active : ⌃⌥↩ agrandit la fenêtre dans la zone, ⌃⌥← et ⌃⌥→ la placent sur sa moitié gauche ou droite.")
             }
         }
-        .onReceive(poll) { _ in trusted = WindowZoneManager.isTrusted }
+        .onReceive(poll) { _ in
+            trusted = WindowZoneManager.isTrusted
+            refusedKeys = WindowZoneHotKeys.currentRefused
+        }
     }
 
     private func chooseApp() {
