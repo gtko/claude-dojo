@@ -1,0 +1,65 @@
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+  "logo": {
+    "width": 30,
+    "height": 12,
+    "padding": {
+      "top": 0,
+      "left": 2,
+      "right": 4
+    }
+  },
+  "display": {
+    "separator": "  ",
+    "color": {
+      "keys": "38;2;176;108;255",
+      "output": "38;2;241;236;251"
+    }
+  },
+  "modules": [
+    "break",
+    {
+      "type": "custom",
+      "format": "\u001b[38;2;176;108;255m◢◤ LYCÉE D'EXORCISME ◥◣\u001b[0m"
+    },
+    {
+      "type": "custom",
+      "format": "\u001b[38;2;156;196;255m── Terminal du Jujutsu · domaine déployé ──\u001b[0m"
+    },
+    "break",
+    {
+      "type": "title",
+      "key": "✦ exorciste    ",
+      "format": "{user-name}"
+    },
+    {
+      "type": "title",
+      "key": "✦ lycée        ",
+      "format": "{host-name}"
+    },
+    {
+      "type": "os",
+      "key": "✦ grimoire     ",
+      "format": "{name} {version}"
+    },
+    {
+      "type": "cpu",
+      "key": "✦ énergie      ",
+      "format": "{name} · {cores-physical} cœurs"
+    },
+    {
+      "type": "memory",
+      "key": "✦ réserve      "
+    },
+    {
+      "type": "uptime",
+      "key": "✦ en exorcisme "
+    },
+    // @DYNAMIC@
+    "break",
+    {
+      "type": "custom",
+      "format": "\u001b[38;2;159;240;196m● énergie maudite stable · domaine ouvert\u001b[0m"
+    }
+  ]
+}

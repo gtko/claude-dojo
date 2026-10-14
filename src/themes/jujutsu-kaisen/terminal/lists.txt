@@ -1,0 +1,34 @@
+key1|technique
+key2|fléau
+accent|176;108;255
+value|241;236;251
+cols|30
+rows|12
+l1|Expansion de domaine · sphère close
+l1|Poing divergent · frappe retardée
+l1|Lame de ténèbres · coupe sans bruit
+l1|Frappe inversée · énergie retournée
+l1|Sceau du silence · mot interdit
+l1|Corde d'ombre · entrave au sol
+l1|Marque maudite · traceur d'énergie
+l1|Bouclier de cendres · barrière dense
+l1|Vrille du néant · spirale de fond
+l1|Chaîne de sang · liens tendus
+l1|Projection d'âme · esprit à distance
+l1|Lanterne funèbre · lumière qui guide
+l1|Écho de malédiction · ricochet
+l1|Fissure spatiale · couper l'espace
+l2|Fléau de grade 4 · murmure de couloir
+l2|Fléau de grade 4 · ombre de cantine
+l2|Fléau de grade 3 · esprit de chantier
+l2|Fléau de grade 3 · masque de carnaval
+l2|Fléau de grade 2 · possédé de quartier
+l2|Fléau de grade 2 · rituel raté
+l2|Fléau de grade semi-1 · gardien de gare
+l2|Fléau de grade 1 · malédiction d'hôpital
+l2|Fléau de grade 1 · sceau de temple
+l2|Fléau de grade 1 · brume de lycée
+l2|Fléau de grade spécial · cauchemar urbain
+l2|Fléau de grade spécial · calamité de Tokyo
+l2|Fléau de grade spécial · fléau sans nom
+l2|Grade spécial · fléau au-delà des rangs

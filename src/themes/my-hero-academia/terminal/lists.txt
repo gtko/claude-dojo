@@ -1,0 +1,36 @@
+key1|alter
+key2|mission de héros
+accent|60;245;154
+value|238;244;248
+cols|30
+rows|12
+l1|Cowl · puissance démultipliée
+l1|Flammes · la chaleur déforme l'air
+l1|Vent · un souffle qui écarte les nuages
+l1|Gel · cristaux sur tout ce qu'il touche
+l1|Gravité · les objets flottent autour de lui
+l1|Ombre · se fondre dans la nuit
+l1|Miroir · copie les gestes à distance
+l1|Lianes · des plantes poussent en un clin d'œil
+l1|Ondes sonores · les vitres tremblent
+l1|Flash · une lumière qui aveugle un instant
+l1|Eau · jets sous pression et vagues
+l1|Peau d'acier · impossible à entailler
+l1|Mémoire · retient tout ce qu'il lit
+l1|Éponge · absorbe les liquides autour de lui
+l2|Secourir un chat coincé dans un arbre
+l2|Évacuer un immeuble en feu
+l2|Escorter des touristes perdus en ville
+l2|Arrêter un cambrioleur qui court trop vite
+l2|Sécuriser un pont après un séisme
+l2|Retrouver un sac à dos égaré dans le métro
+l2|Rassurer les habitants après un orage
+l2|Porter les courses d'une grand-mère au 5e
+l2|Surveiller le tournoi sportif du quartier
+l2|Dégager une route bloquée par la neige
+l2|Éteindre un feu de forêt avant la nuit
+l2|Sortir une personne d'un ascenseur bloqué
+l2|Calmer un monstre de boue qui boude
+l2|Patrouiller le marché de nuit
+l2|Guider une classe de maternelle à la sortie
+l2|Réparer un réverbère qui clignote depuis 3 ans

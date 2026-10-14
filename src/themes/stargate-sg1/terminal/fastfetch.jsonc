@@ -1,0 +1,65 @@
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+  "logo": {
+    "width": 30,
+    "height": 12,
+    "padding": {
+      "top": 0,
+      "left": 2,
+      "right": 4
+    }
+  },
+  "display": {
+    "separator": "  ",
+    "color": {
+      "keys": "38;2;224;168;74",
+      "output": "38;2;238;242;246"
+    }
+  },
+  "modules": [
+    "break",
+    {
+      "type": "custom",
+      "format": "\u001b[38;2;224;168;74m◢◤ STARGATE COMMAND ◥◣\u001b[0m"
+    },
+    {
+      "type": "custom",
+      "format": "\u001b[38;2;167;196;230m── Terminal du SGC · Cheyenne Mountain ──\u001b[0m"
+    },
+    "break",
+    {
+      "type": "title",
+      "key": "✦ opérateur   ",
+      "format": "{user-name}"
+    },
+    {
+      "type": "title",
+      "key": "✦ cheyenne    ",
+      "format": "{host-name}"
+    },
+    {
+      "type": "os",
+      "key": "✦ système     ",
+      "format": "{name} {version}"
+    },
+    {
+      "type": "cpu",
+      "key": "✦ processeur  ",
+      "format": "{name} · {cores-physical} cœurs"
+    },
+    {
+      "type": "memory",
+      "key": "✦ réserve ZPM "
+    },
+    {
+      "type": "uptime",
+      "key": "✦ en service  "
+    },
+    // @DYNAMIC@
+    "break",
+    {
+      "type": "custom",
+      "format": "\u001b[38;2;144;234;146m● horizon stable · 9 chevrons verrouillés\u001b[0m"
+    }
+  ]
+}

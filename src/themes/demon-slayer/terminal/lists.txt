@@ -1,0 +1,43 @@
+key1|souffle
+key2|forme
+accent|185;162;236
+value|243;238;250
+cols|30
+rows|12
+l1|Eau
+l1|Flamme
+l1|Foudre
+l1|Vent
+l1|Pierre
+l1|Brume
+l1|Amour
+l1|Serpent
+l1|Insecte
+l1|Son
+l1|Soleil
+l1|Fleur
+l1|Bête
+l2|Première forme · Tranche de surface
+l2|Deuxième forme · Roue d'eau
+l2|Troisième forme · Danse fluide
+l2|Quatrième forme · Marée déferlante
+l2|Cinquième forme · Tourbillon
+l2|Sixième forme · Pluie bénie
+l2|Première forme · Feu inconscient
+l2|Deuxième forme · Soleil ardent
+l2|Troisième forme · Univers flamboyant
+l2|Quatrième forme · Tigre de feu
+l2|Première forme · Éclair et foudre
+l2|Deuxième forme · Éclair multiple
+l2|Première forme · Tourbillon de poussière
+l2|Deuxième forme · Griffe de vent
+l2|Première forme · Peau de pierre
+l2|Deuxième forme · Mur de roc
+l2|Première forme · Brume aveuglante
+l2|Deuxième forme · Voile de brouillard
+l2|Première forme · Cercle de l'amour
+l2|Première forme · Bête déchaînée
+l2|Deuxième forme · Mâchoire sauvage
+l2|Première forme · Danse du dieu du feu
+l2|Deuxième forme · Vague de chaleur
+l2|Première forme · Fleur de cerisier

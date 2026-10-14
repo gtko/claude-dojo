@@ -1,0 +1,36 @@
+key1|prime
+key2|île
+accent|247;214;112
+value|244;241;230
+cols|30
+rows|12
+l1|Sourire-de-Glace · 1 200 000 000 ฿
+l1|Capitaine Coquille · 80 000 000 berrys
+l1|Mousse Bancal · 15 000 000 berrys
+l1|Vigie Sans-Nom · 500 000 000 berrys
+l1|Cuistot Flamme-Bleue · 330 000 000 ฿
+l1|Épéiste Tranchemer · 1 000 000 000 berrys
+l1|Navigatrice Ondine · 3 000 000 000 ฿
+l1|Tireur Cent-Balles · 120 000 000 berrys
+l1|Médecin Cul-de-Rhum · 60 000 000 ฿
+l1|Charpentier Marteau-Doux · 45 000 000 berrys
+l1|Archère Aile-de-Corbeau · 210 000 000 ฿
+l1|Musicien Chant-du-Flot · 88 000 000 berrys
+l1|Ex-Marine Sabre-Gris · 25 000 000 berrys
+l1|Pilote Vent-d'Ouest · 2 000 000 000 ฿
+l2|Île du Ciel · cité suspendue aux nuages
+l2|Archipel des Tempêtes
+l2|Mer des Brumes · sans fond connu
+l2|Récif du Tonnerre
+l2|Mer Calme · pas un souffle de vent
+l2|Île des Géants · tables de pierre
+l2|Baie du Requin Blanc
+l2|Îles Dorées · ruines d'un ancien royaume
+l2|Mer de Sable · dunes de cendre
+l2|Île Glacée · au bout du monde
+l2|Port-Frappe · marché noir et contrebande
+l2|Archipel des Mille Voiles
+l2|Îlot des Sirènes
+l2|Cap Sans-Retour · courants mortels
+l2|Volcan Cœur-de-Feu
+l2|Île aux Fleurs Mouvantes
