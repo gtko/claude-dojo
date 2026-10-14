@@ -75,6 +75,8 @@ jobs:
           console.log(`DOJO_HOOKS=${total}`);
           EOF
 
+          ./install.sh --yes --no-launchd
+
           first="$(node "$CHECK" "$HOME" | tee /dev/stderr | sed -n 's/^DOJO_HOOKS=//p')"
 
           ./install.sh --yes --no-launchd
