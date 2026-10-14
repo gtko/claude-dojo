@@ -412,7 +412,7 @@ Options:
 - `--purge`: also deletes `~/.config/claude-dojo` (configuration, cache and custom backgrounds) without asking;
 - `--help`: shows the help.
 
-The uninstaller stops and removes the LaunchAgents, deletes `~/Applications/DojoWallpaper.app`, and removes the Dojo entries from `~/.claude/settings.json` (hooks, status line, heavy-gate, and `VITEST_MAX_WORKERS` when it was set by the installer). Before changing `settings.json`, it saves a backup as `settings.json.bak-<timestamp>`. It asks separately before deleting the session state in `~/.claude/dojo`. Nothing else is changed.
+The uninstaller stops and removes the LaunchAgents, deletes `~/Applications/DojoWallpaper.app`, and removes the Dojo entries from `~/.claude/settings.json` (hooks, status line, heavy-gate, and `VITEST_MAX_WORKERS` when it was set by the installer). Before changing `settings.json`, it saves a backup as `settings.json.bak-<timestamp>`. It asks separately before deleting the session state in `~/.claude/dojo`. Without `--purge`, your personal background stays in `~/.config/claude-dojo/backgrounds` after uninstalling. Nothing else is changed.
 
 ## Troubleshooting
 

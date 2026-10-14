@@ -606,9 +606,23 @@ function validateConfig(c) {
   }
 }
 
+// config.background (si fourni, non null) : même règle que set-background, c.-à-d. un fichier directement dans backgrounds/,
+// extension autorisée, jamais un lien symbolique. Vérifié sur la seule valeur envoyée, pas sur config.json entier.
+function checkBackgroundPath(p) {
+  const file = path.resolve(p);
+  const dir = paths.backgrounds();
+  if (path.dirname(file) !== dir || !BG_EXT.includes(path.extname(file).toLowerCase())) {
+    fail(`background doit être null ou une image copiée dans ${dir} (jpg, jpeg, png, heic ou webp). Utilisez set-background.`);
+  }
+  let lst = null;
+  try { lst = fs.lstatSync(file); } catch {}
+  if (lst && lst.isSymbolicLink()) fail(`background : lien symbolique refusé : ${file}`);
+}
+
 // Écrit config.json (0600, dossier 0700). Ne renvoie jamais les valeurs (le jeton Sentry en fait partie).
 function writeConfig(input) {
   const patch = normalizePatch(input);
+  if (typeof patch.background === 'string') checkBackgroundPath(patch.background);
   const dir = paths.dojo();
   const file = path.join(dir, 'config.json');
   let existing = {};
@@ -1017,6 +1031,17 @@ function dropOldBackground(prev, keep) {
   return prev;
 }
 
+// Signature (magic bytes) de chaque format accepté : le contenu doit correspondre à l'extension.
+const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const BG_KIND_OF_EXT = { '.jpg': 'jpeg', '.jpeg': 'jpeg', '.png': 'png', '.webp': 'webp', '.heic': 'heic' };
+function bgKind(buf) {
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpeg';
+  if (buf.length >= 8 && buf.subarray(0, 8).equals(PNG_SIG)) return 'png';
+  if (buf.length >= 12 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') return 'webp';
+  if (buf.length >= 12 && buf.toString('latin1', 4, 8) === 'ftyp' && ['heic', 'heix', 'mif1', 'msf1'].includes(buf.toString('latin1', 8, 12))) return 'heic';
+  return null;
+}
+
 // set-background <chemin|default> : l'image est copiée dans backgrounds/ (nom = sha1 court + extension).
 function setBackground(arg) {
   const value = String(arg ?? '');
@@ -1030,10 +1055,12 @@ function setBackground(arg) {
   const ext = path.extname(src).toLowerCase();
   if (!BG_EXT.includes(ext)) fail(`format refusé (${ext || 'sans extension'}) : jpg, jpeg, png, heic ou webp attendu.`);
   let st;
-  try { st = fs.statSync(src); } catch { fail(`fichier introuvable : ${src}`); }
+  try { st = fs.lstatSync(src); } catch { fail(`fichier introuvable : ${src}`); }
+  if (st.isSymbolicLink()) fail(`lien symbolique refusé : ${src}. Indiquez le fichier réel.`);
   if (!st.isFile()) fail(`fichier attendu, pas un dossier : ${src}`);
   if (st.size > BG_MAX_BYTES) fail('image trop lourde : 50 Mo maximum.');
   const buf = fs.readFileSync(src);
+  if (bgKind(buf) !== BG_KIND_OF_EXT[ext]) fail(`contenu incohérent avec l'extension ${ext} : ce fichier n'est pas une image ${BG_KIND_OF_EXT[ext].toUpperCase()} valide.`);
   const dir = paths.backgrounds();
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   fs.chmodSync(dir, 0o700);

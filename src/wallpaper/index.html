@@ -1430,8 +1430,10 @@ function drawPost(x, px, colors = []) {
 // Objet d'entraînement du thème (champ prop) : les objets autres que le poteau sont dans props.js
 // (window.DOJO_PROPS[kind]) ; absent, le poteau est dessiné
 function drawProp(x, kind, px, colors) {
-  const fn = window.DOJO_PROPS && window.DOJO_PROPS[kind];
-  if (fn) return fn(x, px, colors, GROUND);
+  // propriété propre seulement : « constructor », « toString »… tombent sur le poteau (Object.hasOwn exige Safari 15.4, macOS 12.0 est le minimum)
+  const props = window.DOJO_PROPS || {};
+  const fn = Object.prototype.hasOwnProperty.call(props, kind) ? props[kind] : null;
+  if (typeof fn === 'function') return fn(x, px, colors, GROUND);
   drawPost(x, px, colors);
 }
 
@@ -1704,8 +1706,10 @@ let themeKey = null, themeLoading = false;   // clé du thème appliqué (themeK
 
 function applyTheme(t) {
   const root = document.documentElement.style, pal = t.palette || {};
+  // une couleur valide seulement, jamais une url() : theme.json ne peut pas charger de ressource
+  const isColor = (v) => typeof v === 'string' && !/url\s*\(/i.test(v) && CSS.supports('color', v);
   for (const k of PALETTE_KEYS) {
-    if (pal[k]) root.setProperty('--' + k, pal[k]); else root.removeProperty('--' + k);   // absent : défaut de :root
+    if (isColor(pal[k])) root.setProperty('--' + k, pal[k]); else root.removeProperty('--' + k);   // absent ou refusé : défaut de :root
   }
   root.setProperty('--accent-font', t.accentFont || 'var(--sans)');
   document.body.style.backgroundImage = t.background ? `url("${ORIGIN}${t.background}")` : '';

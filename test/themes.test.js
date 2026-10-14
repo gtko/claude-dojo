@@ -54,6 +54,15 @@ const backgroundsOf = (home) => path.join(home, '.config', 'claude-dojo', 'backg
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
 const jpegFile = (dir, name, tag = 'x') => writeFile(path.join(dir, name), Buffer.concat([JPEG, Buffer.from(tag)]));
 
+// Image dont les premiers octets correspondent à l'extension (jpg/jpeg, png, webp, heic).
+const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const WEBP_HEAD = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WEBP')]);
+const HEIC_HEAD = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypheic')]);
+function imageFile(dir, name, tag = 'x') {
+  const head = { '.png': PNG_HEAD, '.webp': WEBP_HEAD, '.heic': HEIC_HEAD }[path.extname(name).toLowerCase()] || JPEG;
+  return writeFile(path.join(dir, name), Buffer.concat([head, Buffer.from(tag)]));
+}
+
 // Dossier de thèmes factice (valeur de DOJO_THEMES_DIR). entries : { id, name?, dir?, raw?, files? }.
 function fixtureThemes(entries = [
   { id: 'naruto', name: 'Naruto', files: ['thumbnail.jpg'] },
@@ -179,7 +188,7 @@ test('set-background : jpeg, png, heic, webp (casse indifférente) acceptés ; g
   const home = tmpDir();
   const dir = tmpDir();
   for (const name of ['a.jpeg', 'b.PNG', 'c.heic', 'd.WebP', 'e.Jpg']) {
-    const r = cli(home, ['set-background', jpegFile(dir, name, name)]);
+    const r = cli(home, ['set-background', imageFile(dir, name, name)]);
     assert.equal(r.code, 0, `${name} : ${r.raw}`);
     assert.match(path.basename(r.out.background), /\.(jpeg|png|heic|webp|jpg)$/, 'extension en minuscules');
   }
@@ -219,7 +228,7 @@ test('set-background : plus de 50 Mo refusé ; exactement 50 Mo accepté', () =>
   assert.match(refused.out.error, /50 Mo/);
   assert.equal(fs.existsSync(backgroundsOf(home)), false);
 
-  const limit = writeFile(path.join(dir, 'limite.jpg'), '');
+  const limit = jpegFile(dir, 'limite.jpg', '');
   fs.truncateSync(limit, MAX);
   const accepted = cli(home, ['set-background', limit]);
   assert.equal(accepted.code, 0, accepted.raw);
@@ -259,6 +268,56 @@ test('set-background : remplacer le fond supprime l ancienne copie et garde la n
   assert.deepEqual(fs.readdirSync(backgroundsOf(home)), [path.basename(second.out.background)]);
 });
 
+test('set-background : faux .jpg (texte, ou PNG nommé .jpg) refusé, rien copié ni référencé', () => {
+  const home = tmpDir();
+  const dir = tmpDir();
+  const text = writeFile(path.join(dir, 'faux.jpg'), '<html>pas une image</html>');
+  const r = cli(home, ['set-background', text]);
+  assert.equal(r.code, 1, r.raw);
+  assert.equal(r.out.ok, false);
+  assert.match(r.out.error, /incohérent avec l'extension \.jpg/);
+
+  const pngAsJpg = writeFile(path.join(dir, 'png-deguise.jpg'), Buffer.concat([PNG_HEAD, Buffer.from('x')]));
+  assert.equal(cli(home, ['set-background', pngAsJpg]).code, 1, 'signature PNG dans un .jpg refusée');
+  assert.equal(fs.existsSync(backgroundsOf(home)), false, 'aucune copie');
+  assert.equal(fs.existsSync(configFile(home)), false, 'config intacte');
+});
+
+test('set-background : lien symbolique refusé, même vers une vraie image', () => {
+  const home = tmpDir();
+  const real = jpegFile(tmpDir(), 'reel.jpg', 'reel');
+  const link = path.join(tmpDir(), 'lien.jpg');
+  fs.symlinkSync(real, link);
+  const r = cli(home, ['set-background', link]);
+  assert.equal(r.code, 1, r.raw);
+  assert.match(r.out.error, /lien symbolique refusé/);
+  assert.equal(fs.existsSync(backgroundsOf(home)), false, 'aucune copie');
+  assert.equal(fs.existsSync(configFile(home)), false, 'config intacte');
+});
+
+test('set-background : .svg refusé même avec un contenu d image', () => {
+  const home = tmpDir();
+  const svg = writeFile(path.join(tmpDir(), 'fond.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+  const r = cli(home, ['set-background', svg]);
+  assert.equal(r.code, 1, r.raw);
+  assert.match(r.out.error, /format refusé \(\.svg\)/);
+  assert.equal(fs.existsSync(backgroundsOf(home)), false, 'aucune copie');
+});
+
+test('write-config : background hors backgrounds/, symlink dans backgrounds/ ou .svg refusés', () => {
+  const home = tmpDir();
+  const bg = backgroundsOf(home);
+  fs.mkdirSync(bg, { recursive: true });
+  const outside = jpegFile(tmpDir(), 'dehors.jpg');
+  fs.symlinkSync(outside, path.join(bg, 'lien.jpg'));
+  const svg = writeFile(path.join(bg, 'fond.svg'), '<svg/>');
+  for (const p of [outside, path.join(bg, '..', 'x.jpg'), path.join(bg, 'lien.jpg'), svg]) {
+    const r = cli(home, ['write-config', JSON.stringify({ background: p })]);
+    assert.equal(r.code, 1, `${p} refusé : ${r.raw}`);
+  }
+  assert.equal(fs.existsSync(configFile(home)), false, 'rien écrit');
+});
+
 // ── write-config : theme et background ───────────────────────────────────
 test('write-config : theme et background validés, null efface la clé, ~ développé', () => {
   const home = tmpDir();
@@ -268,11 +327,14 @@ test('write-config : theme et background validés, null efface la clé, ~ dével
   assert.equal(r.code, 1, 'background relatif refusé');
   assert.equal(fs.existsSync(configFile(home)), false, 'rien écrit en cas d erreur');
 
+  // ~ est développé, mais le fond doit être une image de backgrounds/ (comme set-background)
   r = cli(home, ['write-config', JSON.stringify({ theme: 'frieren', background: '~/fond.jpg' })]);
+  assert.equal(r.code, 1, 'fichier hors backgrounds/ refusé');
+  r = cli(home, ['write-config', JSON.stringify({ theme: 'frieren', background: '~/.config/claude-dojo/backgrounds/fond.jpg' })]);
   assert.equal(r.code, 0, r.raw);
   let cfg = readJson(configFile(home));
   assert.equal(cfg.theme, 'frieren');
-  assert.equal(cfg.background, path.join(home, 'fond.jpg'));
+  assert.equal(cfg.background, path.join(home, '.config', 'claude-dojo', 'backgrounds', 'fond.jpg'));
 
   r = cli(home, ['write-config', JSON.stringify({ background: null, theme: null })]);
   assert.equal(r.code, 0, r.raw);
