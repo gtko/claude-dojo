@@ -6,6 +6,8 @@ struct ThemeStep: View {
     @ObservedObject var model: SetupModel
     /// Changement automatique du fond : lu et écrit dans UserDefaults (WallpaperAutoChange), pas dans l'assistant.
     @State private var autoChange = WallpaperAutoChange.seconds
+    /// Téléchargement automatique du pack : l'état et son écriture (config.json) sont dans WallpaperSyncController.
+    @ObservedObject private var sync = WallpaperSyncController.shared
 
     private let columns = [GridItem(.adaptive(minimum: 150), spacing: 12)]
 
@@ -16,6 +18,12 @@ struct ThemeStep: View {
                 autoChange = value
                 WallpaperAutoChange.seconds = value
             })
+    }
+
+    private var autoDownloadBinding: Binding<Bool> {
+        Binding(
+            get: { sync.autoDownload },
+            set: { value in sync.setAutoDownload(value, runner: model.runner) })
     }
 
     var body: some View {
@@ -66,6 +74,11 @@ struct ThemeStep: View {
                     Spacer()
                 }
                 Notice(text: "Passe au fond suivant parmi les fonds téléchargés du thème actif. Sans fond téléchargé, rien ne change.")
+                Toggle("Télécharger automatiquement le pack du thème", isOn: autoDownloadBinding)
+                    .toggleStyle(.checkbox)
+                if let message = sync.autoDownloadMessage {
+                    Notice(text: message, isError: true)
+                }
             }
         }
     }

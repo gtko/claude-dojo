@@ -192,7 +192,7 @@ extension SetupModel {
         ]
         model.packWallpapers = pack.map { entry in
             let path = "/fixture/stargate-sg1/\(entry.id).jpg"
-            PackThumbnails.store(fixtureThumbnail(from: entry.colors.0, to: entry.colors.1), for: path)
+            PackThumbnails.store(fixtureThumbnail(from: entry.colors.0, to: entry.colors.1), for: path, builtin: entry.builtin)
             return LocalWallpaper(id: entry.id, file: path, source: nil, resolution: entry.resolution,
                                   current: entry.current, builtin: entry.builtin)
         }

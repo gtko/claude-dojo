@@ -9,11 +9,15 @@ struct ThemeInfo: Decodable, Identifiable, Equatable {
     let thumbnail: String?
 }
 
-/// Réponse de `setup.js themes` : liste, thème courant et fond personnalisé (nil = fond du thème).
+/// Réponse de `setup.js themes` : liste, thème courant, fond personnalisé (nil = fond du thème) et option
+/// `wallpapers.autoDownload` (absente = vraie).
 struct ThemesResponse: Decodable {
     let themes: [ThemeInfo]?
     let theme: String?
     let background: String?
+    let autoDownload: Bool?
+
+    var autoDownloadEnabled: Bool { autoDownload ?? true }
 }
 
 /// Réponse de `setup.js set-theme <id>` : thème, fond après bascule, présence de fonds téléchargés pour ce thème,

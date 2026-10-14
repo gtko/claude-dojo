@@ -234,6 +234,7 @@ final class SetupModel: ObservableObject {
             initialTheme = response.theme ?? ""
             themeChoice = initialTheme
             currentBackground = response.background
+            WallpaperSyncController.shared.adoptAutoDownload(response.autoDownloadEnabled)
             themesError = nil
         } catch {
             themesError = error.localizedDescription

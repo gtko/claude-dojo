@@ -130,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func reloadThemes() async {
         guard let response: ThemesResponse = try? await runner.call("themes") else { return }
         activeThemeId = response.theme ?? ""
+        WallpaperSyncController.shared.adoptAutoDownload(response.autoDownloadEnabled)
         let list = response.themes ?? []
         if list.map(\.id) != themeItems.compactMap({ $0.representedObject as? String }) {
             rebuildThemeItems(list)
@@ -348,6 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             guard let themes: ThemesResponse = try? await runner.call("themes"), let theme = themes.theme else { return }
             activeThemeId = theme
+            WallpaperSyncController.shared.adoptAutoDownload(themes.autoDownloadEnabled)
             WallpaperSyncController.shared.ensureSynced(theme, runner: runner)
         }
     }

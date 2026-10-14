@@ -28,6 +28,33 @@ enum GalleryLinks {
     }
 }
 
+/// Fichiers locaux d'un fond. Seuls les chemins réels situés dans le dossier des fonds (DojoPaths.configDir/backgrounds)
+/// sont lus ; le fond embarqué d'un thème (builtin) doit se trouver dans DojoPaths.runtimeDir/themes. Les liens
+/// symboliques sont résolus avant ce contrôle, et la lecture se fait sur ce chemin réel.
+enum LocalWallpaperFiles {
+    /// Chemin réel à lire, ou nil si le fichier est absent ou hors du dossier autorisé.
+    static func readablePath(_ path: String, builtin: Bool) -> String? {
+        guard path.hasPrefix("/"), let real = realPath(path) else { return nil }
+        let root = builtin
+            ? DojoPaths.runtimeDir.appendingPathComponent("themes", isDirectory: true)
+            : DojoPaths.configDir.appendingPathComponent("backgrounds", isDirectory: true)
+        guard let rootReal = realPath(root.path), real.hasPrefix(rootReal + "/") else { return nil }
+        return real
+    }
+
+    /// Chemin canonique (liens symboliques et « .. » résolus), nil si le chemin n'existe pas.
+    static func realPath(_ path: String) -> String? {
+        guard let resolved = realpath(path, nil) else { return nil }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
+    /// Clé du cache pour un fichier local : le fond embarqué et un fichier téléchargé ne partagent jamais une entrée.
+    static func cacheKey(_ path: String, builtin: Bool) -> NSString {
+        ((builtin ? "theme:" : "file:") + path) as NSString
+    }
+}
+
 /// Ce dont la fenêtre a besoin. GalleryService l'implémente avec setup.js ; MockGalleryProvider sans réseau.
 @MainActor
 protocol GalleryProviding: AnyObject {
@@ -116,20 +143,102 @@ final class GalleryService: GalleryProviding {
     }
 }
 
+/// Réception d'une miniature, sur une session dédiée dont les rappels passent par une file série.
+/// Redirection : suivie seulement vers une miniature Wallhaven en https (GalleryLinks.thumbnailURL), sinon refusée.
+/// Taille : une réponse hors 2xx, un Content-Length au-delà de 5 Mo ou des données reçues au-delà de 5 Mo arrêtent le flux.
+final class ThumbnailDelegate: NSObject, URLSessionDataDelegate {
+    /// Plafond par miniature.
+    static let maxBytes = 5 * 1024 * 1024
+
+    private final class Job {
+        let continuation: CheckedContinuation<Data?, Never>
+        var data = Data()
+        var rejected = false
+
+        init(_ continuation: CheckedContinuation<Data?, Never>) {
+            self.continuation = continuation
+        }
+    }
+
+    /// La table est lue depuis le fil principal (register) et depuis la file de la session : verrou.
+    private let lock = NSLock()
+    private var jobs: [Int: Job] = [:]
+
+    /// Enregistre une tâche avant son démarrage : son résultat (octets, ou nil) est renvoyé à la fin.
+    func register(_ task: URLSessionDataTask, _ continuation: CheckedContinuation<Data?, Never>) {
+        lock.lock()
+        defer { lock.unlock() }
+        jobs[task.taskIdentifier] = Job(continuation)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        // nil : redirection refusée. La réponse 3xx devient la réponse finale, rejetée ensuite (statut hors 2xx).
+        let allowed = GalleryLinks.thumbnailURL(request.url?.absoluteString) != nil
+        completionHandler(allowed ? request : nil)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        let successful = (response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
+        // expectedContentLength vaut -1 sans Content-Length : le plafond est alors vérifié sur les octets reçus.
+        let tooLarge = response.expectedContentLength > Int64(Self.maxBytes)
+        if successful && !tooLarge {
+            completionHandler(.allow)
+            return
+        }
+        withJob(dataTask) { $0.rejected = true }
+        completionHandler(.cancel)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        var overflow = false
+        withJob(dataTask) { job in
+            job.data.append(data)
+            if job.data.count > Self.maxBytes {
+                job.rejected = true
+                job.data = Data()
+                overflow = true
+            }
+        }
+        // Arrêt du flux hors verrou : l'annulation renvoie ensuite didCompleteWithError.
+        if overflow { dataTask.cancel() }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        lock.lock()
+        let job = jobs.removeValue(forKey: task.taskIdentifier)
+        lock.unlock()
+        guard let job else { return }
+        job.continuation.resume(returning: error == nil && !job.rejected ? job.data : nil)
+    }
+
+    private func withJob(_ task: URLSessionTask, _ body: (Job) -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let job = jobs[task.taskIdentifier] { body(job) }
+    }
+}
+
 /// Vignettes : cache mémoire (NSCache) seulement. Téléchargement https via une session éphémère (aucun cache disque),
-/// délai 15 s. Un fond déjà téléchargé sans vignette valide est lu depuis son fichier, réduit à 480 px.
+/// délai 15 s, 5 Mo au plus par miniature. Un fond déjà téléchargé sans vignette valide est lu depuis son fichier, réduit à 480 px.
 @MainActor
 final class ThumbnailCache {
     private let cache = NSCache<NSString, NSImage>()
+    private let delegate: ThumbnailDelegate
     private let session: URLSession
     private var pending: [String: Task<Data?, Never>] = [:]
 
     init() {
         cache.countLimit = 200
+        let delegate = ThumbnailDelegate()
+        self.delegate = delegate
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 15
-        session = URLSession(configuration: configuration)
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+        session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: queue)
     }
 
     func image(for item: WallpaperItem) async -> NSImage? {
@@ -137,7 +246,7 @@ final class ThumbnailCache {
             return await remote(url)
         }
         if let path = item.file, path.hasPrefix("/") {
-            return await local(path)
+            return await local(path, builtin: item.isBuiltin)
         }
         return nil
     }
@@ -148,7 +257,7 @@ final class ThumbnailCache {
             return cache.object(forKey: url.absoluteString as NSString)
         }
         if let path = item.file, path.hasPrefix("/") {
-            return cache.object(forKey: ("file:" + path) as NSString)
+            return cache.object(forKey: LocalWallpaperFiles.cacheKey(path, builtin: item.isBuiltin))
         }
         return nil
     }
@@ -162,17 +271,7 @@ final class ThumbnailCache {
         if let running = pending[key] {
             task = running
         } else {
-            let session = self.session
-            task = Task<Data?, Never> {
-                let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
-                do {
-                    let (data, response) = try await session.data(for: request)
-                    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
-                    return data
-                } catch {
-                    return nil
-                }
-            }
+            task = Task<Data?, Never> { await self.download(url) }
             pending[key] = task
         }
         let data = await task.value
@@ -182,14 +281,25 @@ final class ThumbnailCache {
         return image
     }
 
-    private func local(_ path: String) async -> NSImage? {
-        let key = "file:" + path
-        if let hit = cache.object(forKey: key as NSString) { return hit }
-        guard let cgImage = await Task.detached(priority: .utility, operation: { ThumbnailCache.downsampled(path: path) }).value else {
+    /// Octets de la miniature, ou nil : erreur réseau, statut hors 2xx, redirection refusée, plus de 5 Mo.
+    private func download(_ url: URL) async -> Data? {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Data?, Never>) in
+            let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+            let task = session.dataTask(with: request)
+            delegate.register(task, continuation)
+            task.resume()
+        }
+    }
+
+    private func local(_ path: String, builtin: Bool) async -> NSImage? {
+        let key = LocalWallpaperFiles.cacheKey(path, builtin: builtin)
+        if let hit = cache.object(forKey: key) { return hit }
+        guard let real = LocalWallpaperFiles.readablePath(path, builtin: builtin) else { return nil }
+        guard let cgImage = await Task.detached(priority: .utility, operation: { ThumbnailCache.downsampled(path: real) }).value else {
             return nil
         }
         let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-        cache.setObject(image, forKey: key as NSString)
+        cache.setObject(image, forKey: key)
         return image
     }
 

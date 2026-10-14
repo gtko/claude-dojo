@@ -3,7 +3,7 @@
 import Cocoa
 import SwiftUI
 
-/// Miniatures des fonds présents : lues depuis le fichier local, réduites à 320 px. Cache mémoire (NSCache) seulement.
+/// Miniatures des fonds présents : lues depuis le fichier local (LocalWallpaperFiles), réduites à 320 px. Cache mémoire (NSCache) seulement.
 enum PackThumbnails {
     private static let cache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
@@ -12,25 +12,27 @@ enum PackThumbnails {
     }()
 
     /// Image déjà en cache (aucun chargement).
-    static func cached(_ path: String?) -> NSImage? {
+    static func cached(_ path: String?, builtin: Bool) -> NSImage? {
         guard let path else { return nil }
-        return cache.object(forKey: path as NSString)
+        return cache.object(forKey: LocalWallpaperFiles.cacheKey(path, builtin: builtin))
     }
 
-    /// Image en cache, ou lue en arrière-plan puis gardée. nil si le fichier manque ou n'est pas une image.
-    static func load(_ path: String?) async -> NSImage? {
+    /// Image en cache, ou lue en arrière-plan puis gardée. nil si le fichier manque, est hors du dossier autorisé
+    /// ou n'est pas une image.
+    static func load(_ path: String?, builtin: Bool) async -> NSImage? {
         guard let path, !path.isEmpty else { return nil }
-        if let hit = cached(path) { return hit }
-        let decoded = await Task.detached(priority: .utility) { ThumbnailCache.downsampled(path: path, maxPixel: 320) }.value
+        if let hit = cached(path, builtin: builtin) { return hit }
+        guard let real = LocalWallpaperFiles.readablePath(path, builtin: builtin) else { return nil }
+        let decoded = await Task.detached(priority: .utility) { ThumbnailCache.downsampled(path: real, maxPixel: 320) }.value
         guard let decoded else { return nil }
         let image = NSImage(cgImage: decoded, size: NSSize(width: decoded.width, height: decoded.height))
-        cache.setObject(image, forKey: path as NSString)
+        cache.setObject(image, forKey: LocalWallpaperFiles.cacheKey(path, builtin: builtin))
         return image
     }
 
     /// Image fabriquée (captures) gardée sous un chemin : aucun fichier n'est lu.
-    static func store(_ image: NSImage, for path: String) {
-        cache.setObject(image, forKey: path as NSString)
+    static func store(_ image: NSImage, for path: String, builtin: Bool) {
+        cache.setObject(image, forKey: LocalWallpaperFiles.cacheKey(path, builtin: builtin))
     }
 }
 
@@ -96,7 +98,7 @@ struct PackCell: View {
     @State private var loaded: NSImage?
 
     /// Lecture synchrone du cache d'abord : une image déjà chargée s'affiche sans attendre la tâche.
-    private var image: NSImage? { loaded ?? PackThumbnails.cached(wallpaper.file) }
+    private var image: NSImage? { loaded ?? PackThumbnails.cached(wallpaper.file, builtin: wallpaper.isBuiltin) }
     private var current: Bool { wallpaper.current == true }
 
     var body: some View {
@@ -132,7 +134,7 @@ struct PackCell: View {
         .opacity(enabled ? 1 : 0.6)
         .accessibilityAddTraits(current ? .isSelected : [])
         .task(id: wallpaper.file) {
-            loaded = await PackThumbnails.load(wallpaper.file)
+            loaded = await PackThumbnails.load(wallpaper.file, builtin: wallpaper.isBuiltin)
         }
     }
 

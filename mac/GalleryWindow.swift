@@ -612,7 +612,7 @@ final class MockGalleryProvider: GalleryProviding {
     private var thumbnails: [String: NSImage] = [:]
 
     func themes() async throws -> ThemesResponse {
-        ThemesResponse(themes: Self.themeList, theme: "demo-nuit", background: nil)
+        ThemesResponse(themes: Self.themeList, theme: "demo-nuit", background: nil, autoDownload: true)
     }
 
     func list(theme: String) async throws -> WallpaperListResponse {

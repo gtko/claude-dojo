@@ -13,6 +13,8 @@ struct WallpaperItem: Decodable, Identifiable, Equatable {
     let purity: String?
     let downloaded: Bool?
     let file: String?
+    /// Fond embarqué du thème : son fichier est lu dans le runtime, pas dans le dossier des fonds.
+    let builtin: Bool?
 
     init(
         id: String,
@@ -21,7 +23,8 @@ struct WallpaperItem: Decodable, Identifiable, Equatable {
         source: String? = nil,
         purity: String? = nil,
         downloaded: Bool? = nil,
-        file: String? = nil
+        file: String? = nil,
+        builtin: Bool? = nil
     ) {
         self.id = id
         self.resolution = resolution
@@ -30,9 +33,11 @@ struct WallpaperItem: Decodable, Identifiable, Equatable {
         self.purity = purity
         self.downloaded = downloaded
         self.file = file
+        self.builtin = builtin
     }
 
     var isDownloaded: Bool { downloaded == true }
+    var isBuiltin: Bool { builtin == true }
 }
 
 /// Entrée ignorée par `wallpapers list`, avec sa raison.
@@ -73,7 +78,7 @@ struct LocalWallpaper: Decodable, Identifiable, Equatable {
 
     /// Même forme que WallpaperItem, pour afficher les téléchargés dans la grille.
     var item: WallpaperItem {
-        WallpaperItem(id: id, resolution: resolution, source: source, downloaded: true, file: file)
+        WallpaperItem(id: id, resolution: resolution, source: source, downloaded: true, file: file, builtin: builtin)
     }
 
     /// Libellés des fonds d'un thème, dans l'ordre reçu : « Fond du thème » pour le fond embarqué, « Fond 1 », « Fond 2 »… sinon.
