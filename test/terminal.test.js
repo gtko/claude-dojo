@@ -1,8 +1,9 @@
 // Tests des options terminal de src/setup.js (Ghostty, Terminal.app, zsh/welcome, set-theme, uninstall) et
 // cohérence des bundles terminal/ de chaque thème (src/themes/<id>/terminal/). node:test.
-// Chaque test travaille dans un HOME temporaire sous os.tmpdir(). defaults et pgrep sont remplacés par des faux
-// (DOJO_DEFAULTS_BIN, DOJO_PGREP_BIN) : le vrai defaults n'est jamais appelé. L'environnement des processus est
-// reconstruit à partir de zéro (ni ZDOTDIR ni variable DOJO_* de la machine ne fuient dans les tests).
+// Chaque test travaille dans un HOME temporaire sous os.tmpdir(). defaults, pgrep et plutil sont remplacés par des faux
+// (DOJO_DEFAULTS_BIN, DOJO_PGREP_BIN, DOJO_PLUTIL_BIN) : le vrai defaults n'est jamais appelé ; le faux plutil délègue au
+// vrai, sauf pour l'échec demandé. L'environnement des processus est reconstruit à partir de zéro (ni ZDOTDIR ni
+// variable DOJO_* de la machine ne fuient dans les tests).
 'use strict';
 const test = require('node:test');
 const { after } = require('node:test');
@@ -45,14 +46,28 @@ const XML_STORE = `<?xml version="1.0" encoding="UTF-8"?>
 </dict></plist>
 `;
 // Faux defaults : export copie le magasin dans le fichier demandé, import le remplace. Journal dans FAKE_LOG.
+// FAKE_IMPORT_FAIL : « always » = tout import échoue ; un chemin = seul le premier import échoue (ce fichier le marque).
 const FAKE_DEFAULTS = `#!/bin/sh
 echo "defaults $*" >> "$FAKE_LOG"
 case "$1" in
   export) cp "$FAKE_STORE" "$3" || exit 1 ;;
-  import) cp "$3" "$FAKE_STORE" || exit 1; mkdir -p "$(dirname "$FAKE_PREFS")"; : > "$FAKE_PREFS" ;;
+  import)
+    case "$FAKE_IMPORT_FAIL" in
+      "") ;;
+      always) exit 1 ;;
+      *) if [ ! -f "$FAKE_IMPORT_FAIL" ]; then : > "$FAKE_IMPORT_FAIL"; exit 1; fi ;;
+    esac
+    cp "$3" "$FAKE_STORE" || exit 1; mkdir -p "$(dirname "$FAKE_PREFS")"; : > "$FAKE_PREFS" ;;
   *) exit 2 ;;
 esac
 `;
+// Faux plutil : délègue au vrai plutil (REAL_PLUTIL) ; FAKE_PLUTIL_FAIL=insert fait échouer toute sous-commande -insert.
+const FAKE_PLUTIL = `#!/bin/sh
+if [ -n "$FAKE_PLUTIL_FAIL" ] && [ "$1" = "-$FAKE_PLUTIL_FAIL" ]; then echo "plutil factice : échec de -$FAKE_PLUTIL_FAIL" >&2; exit 1; fi
+exec "$REAL_PLUTIL" "$@"
+`;
+const REAL_PLUTIL = (spawnSync('/bin/sh', ['-c', 'command -v plutil'], { encoding: 'utf8' }).stdout || '').trim();
+const IS_ROOT = typeof process.getuid === 'function' && process.getuid() === 0;
 // Faux pgrep : Terminal « lancé » tant que le fichier FAKE_RUNNING existe. Jamais de kill.
 const FAKE_PGREP = `#!/bin/sh
 echo "pgrep $*" >> "$FAKE_LOG"
@@ -82,8 +97,10 @@ function makeEnv({ prefs = true } = {}) {
   mk(path.join(root, 'store.plist'), prefs ? XML_STORE : '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict/></plist>\n');
   mk(path.join(root, 'bin', 'defaults'), FAKE_DEFAULTS);
   mk(path.join(root, 'bin', 'pgrep'), FAKE_PGREP);
+  mk(path.join(root, 'bin', 'plutil'), FAKE_PLUTIL);
   fs.chmodSync(path.join(root, 'bin', 'defaults'), 0o755);
   fs.chmodSync(path.join(root, 'bin', 'pgrep'), 0o755);
+  fs.chmodSync(path.join(root, 'bin', 'plutil'), 0o755);
   mk(path.join(home, '.config', 'claude-dojo', 'config.json'), JSON.stringify({ theme: 'alpha' }));
   if (prefs) mk(path.join(home, 'Library', 'Preferences', 'com.apple.Terminal.plist'), 'placeholder');
   const env = {
@@ -95,6 +112,8 @@ function makeEnv({ prefs = true } = {}) {
     DOJO_TERMINAL_DIR: path.join(root, 'src-terminal'),
     DOJO_DEFAULTS_BIN: path.join(root, 'bin', 'defaults'),
     DOJO_PGREP_BIN: path.join(root, 'bin', 'pgrep'),
+    DOJO_PLUTIL_BIN: path.join(root, 'bin', 'plutil'),
+    REAL_PLUTIL,
     FAKE_STORE: path.join(root, 'store.plist'),
     FAKE_PREFS: path.join(home, 'Library', 'Preferences', 'com.apple.Terminal.plist'),
     FAKE_LOG: path.join(root, 'calls.log'),
@@ -113,7 +132,7 @@ const setRunning = (E, on) => {
 // Lance setup.js avec l'environnement de E (+ extraEnv). Refuse de tourner sans faux defaults/pgrep.
 function cli(E, args, { input, extraEnv = {}, script = SETUP } = {}) {
   const env = { ...E.env, ...extraEnv };
-  assert.ok(env.DOJO_DEFAULTS_BIN.startsWith(E.root) && env.DOJO_PGREP_BIN.startsWith(E.root), 'faux defaults et pgrep obligatoires');
+  assert.ok(env.DOJO_DEFAULTS_BIN.startsWith(E.root) && env.DOJO_PGREP_BIN.startsWith(E.root) && env.DOJO_PLUTIL_BIN.startsWith(E.root), 'faux defaults, pgrep et plutil obligatoires');
   const r = spawnSync(process.execPath, [script, ...args], { env, input, encoding: 'utf8', timeout: 120000 });
   let out = null;
   try { out = JSON.parse(r.stdout.trim()); } catch { out = null; }
@@ -192,8 +211,9 @@ test('apply ghostty+welcome : fichiers générés, lignes exactes, sauvegardes, 
   assert.ok(gh.startsWith(RICH_GHOSTTY + '\n# claude-dojo terminal theme (managed)\nconfig-file = ?"'));
   assert.ok(gh.endsWith('ghostty.conf"'));
   const zs = readText(zshrc(E));
-  assert.ok(zs.startsWith(RICH_ZSH + '\n# claude-dojo welcome (managed)\nsource "'));
-  assert.ok(zs.endsWith('welcome.zsh"'));
+  const welcomeFile = path.join(generated(E), 'welcome.zsh');
+  assert.ok(zs.startsWith(RICH_ZSH + `\n# claude-dojo welcome (managed)\n[[ -r "${welcomeFile}" ]] && source "${welcomeFile}"`));
+  assert.ok(zs.endsWith(`source "${welcomeFile}"`));
   assert.equal(readText(path.join(generated(E), 'welcome.zsh')), '# welcome\necho hello\n');
   assert.equal(fs.existsSync(path.join(generated(E), 'theme', 'Terminal.terminal')), true, 'theme/ copié');
   assert.deepEqual(cfgTerminal(E), { ghostty: true, terminalApp: false, welcome: true });
@@ -325,6 +345,150 @@ test('ZDOTDIR : .zshrc lu dans ZDOTDIR (dossier avec espace), ~/.zshrc non cré�
   assert.equal(readText(path.join(zdot, '.zshrc')), '');
 });
 
+test('ZDOTDIR déclaré dans ~/.zshenv (export, guillemets doubles, $HOME) : .zshrc lu là, effective true ; l env l emporte', () => {
+  const E = makeEnv();
+  const zdot = path.join(E.home, 'zsh conf');
+  fs.writeFileSync(path.join(E.home, '.zshenv'), '# env\nexport ZDOTDIR="$HOME/zsh conf"\n');
+  const r = ok(cli(E, ['terminal', 'apply', '{"welcome":true}']));
+  assert.equal(r.welcome.zshrc, path.join(zdot, '.zshrc'));
+  assert.equal(r.welcome.effective, true);
+  assert.equal(r.welcome.warning, null);
+  assert.ok(readText(path.join(zdot, '.zshrc')).includes('# claude-dojo welcome (managed)'));
+  assert.equal(fs.existsSync(zshrc(E)), false, '~/.zshrc non créé');
+  const st = ok(cli(E, ['terminal', 'status']));
+  assert.equal(st.welcome.zshrc, path.join(zdot, '.zshrc'));
+  assert.equal(st.welcome.applied, true);
+  assert.equal(st.welcome.effective, true);
+  // ZDOTDIR dans l environnement : zsh n'attend plus ~/.zshenv, c'est lui qui gagne
+  const envDir = path.join(E.home, 'env dir');
+  fs.mkdirSync(envDir);
+  const st2 = ok(cli(E, ['terminal', 'status'], { extraEnv: { ZDOTDIR: envDir } }));
+  assert.equal(st2.welcome.zshrc, path.join(envDir, '.zshrc'));
+  assert.equal(st2.welcome.effective, true);
+});
+
+test('ZDOTDIR non résolu dans ~/.zshenv : bloc dans ~/.zshrc, effective false, warning dans apply et status', () => {
+  const E = makeEnv();
+  fs.writeFileSync(path.join(E.home, '.zshenv'), 'export ZDOTDIR=$XDG_CONFIG_HOME/zsh\n');
+  const r = ok(cli(E, ['terminal', 'apply', '{"welcome":true}']));
+  assert.equal(r.welcome.zshrc, zshrc(E));
+  assert.equal(r.welcome.effective, false);
+  assert.match(r.welcome.warning, /ZDOTDIR/);
+  assert.match(r.welcome.warning, /\$XDG_CONFIG_HOME\/zsh/);
+  assert.ok(readText(zshrc(E)).includes('# claude-dojo welcome (managed)'));
+  const st = ok(cli(E, ['terminal', 'status']));
+  assert.equal(st.welcome.effective, false);
+  assert.match(st.welcome.warning, /ZDOTDIR/);
+  // welcome désactivé : rien n'est écrit dans zsh, donc pas d'avertissement dans le résultat
+  const off = ok(cli(E, ['terminal', 'apply', '{"welcome":false}']));
+  assert.equal(off.welcome.warning, null);
+  assert.equal(readText(zshrc(E)), '');
+});
+
+const HAS_ZSH = fs.existsSync('/bin/zsh');
+test('ligne gardée : zsh source le header quand welcome.zsh existe, et ne dit rien quand il manque', { skip: HAS_ZSH ? false : '/bin/zsh absent' }, () => {
+  const E = makeEnv();
+  ok(cli(E, ['terminal', 'apply', '{"welcome":true}']));
+  // zsh -f : aucun fichier global lu ; HOME temporaire, environnement reconstruit
+  const src = () => spawnSync('/bin/zsh', ['-f', '-c', 'source "$HOME/.zshrc"; echo sourced'], { env: { HOME: E.home, PATH: '/usr/bin:/bin' }, encoding: 'utf8' });
+  const present = src();
+  assert.match(present.stdout, /hello/, 'welcome.zsh chargé');
+  fs.rmSync(path.join(generated(E), 'welcome.zsh'));
+  const absent = src();
+  assert.equal(absent.stderr, '', 'aucun message d erreur quand welcome.zsh manque');
+  assert.match(absent.stdout, /sourced/);
+});
+
+test('ancienne ligne source gérée : reconnue comme posée, apply la met à jour sans doublon', () => {
+  const E = makeEnv();
+  const old = path.join(generated(E), 'welcome.zsh');
+  fs.writeFileSync(zshrc(E), `x=1\n# claude-dojo welcome (managed)\nsource "${old}"\n`);
+  assert.equal(ok(cli(E, ['terminal', 'status'])).welcome.applied, true, 'ancienne ligne reconnue');
+  const r = ok(cli(E, ['terminal', 'apply', '{"welcome":true}']));
+  assert.equal(r.welcome.action, 'updated');
+  const zs = readText(zshrc(E));
+  assert.equal(zs.split('\n').filter((l) => l === '# claude-dojo welcome (managed)').length, 1, 'un seul marqueur');
+  assert.equal(zs.split('\n').filter((l) => l.startsWith('source ')).length, 0, 'plus de ligne source nue');
+  assert.equal(zs.split('\n').filter((l) => l.startsWith('[[ -r ')).length, 1, 'ligne gardée');
+  assert.equal(ok(cli(E, ['terminal', 'apply', '{"welcome":true}'])).welcome.action, 'unchanged');
+});
+
+test('bloc à jour déplacé à la main en tête de fichier (ex. avant le instant prompt de p10k) : apply le laisse en place', () => {
+  const E = makeEnv();
+  const welcomeFile = path.join(generated(E), 'welcome.zsh');
+  const line = `[[ -r "${welcomeFile}" ]] && source "${welcomeFile}"`;
+  const moved = `# claude-dojo welcome (managed)\n${line}\n# instant prompt\nexport P10K=1\n`;
+  fs.writeFileSync(zshrc(E), moved);
+  const r = ok(cli(E, ['terminal', 'apply', '{"welcome":true}']));
+  assert.equal(r.welcome.action, 'unchanged');
+  assert.equal(readText(zshrc(E)), moved, 'bloc laissé en tête, texte intact');
+});
+
+test('ligne utilisateur après un marqueur orphelin : conservée au apply et au retrait', () => {
+  const E = makeEnv();
+  fs.writeFileSync(zshrc(E), 'a=1\n# claude-dojo welcome (managed)\nexport USER_LINE=1\n');
+  ok(cli(E, ['terminal', 'apply', '{"welcome":true}']));
+  const zs = readText(zshrc(E));
+  assert.ok(zs.includes('export USER_LINE=1\n'), 'ligne utilisateur gardée après apply');
+  assert.equal(zs.split('\n').filter((l) => l === '# claude-dojo welcome (managed)').length, 1);
+  ok(cli(E, ['terminal', 'remove', '{"welcome":true}']));
+  assert.equal(readText(zshrc(E)), 'a=1\nexport USER_LINE=1\n');
+});
+
+for (const [label, content] of [['avec retour final', 'a = 1\r\nb = 2\r\n'], ['sans retour final', 'a = 1\r\nb = 2']]) {
+  test(`fichiers CRLF (${label}) : apply x2 sans doublon, lignes ajoutées en CRLF, retrait octet pour octet`, () => {
+    const E = makeEnv();
+    fs.mkdirSync(path.dirname(ghosttyFile(E)), { recursive: true });
+    fs.writeFileSync(ghosttyFile(E), content);
+    fs.writeFileSync(zshrc(E), content);
+    ok(cli(E, ['terminal', 'apply', '{"ghostty":true,"welcome":true}']));
+    ok(cli(E, ['terminal', 'apply', '{"ghostty":true,"welcome":true}']));
+    for (const f of [ghosttyFile(E), zshrc(E)]) {
+      const t = readText(f);
+      assert.equal(t.split('\n').filter((l) => l.replace(/\r$/, '').startsWith('# claude-dojo')).length, 1, `${path.basename(f)} : un seul marqueur`);
+      const added = t.slice(content.length);
+      assert.ok(t.startsWith(content + (content.endsWith('\n') ? '' : '\r\n')), `${path.basename(f)} : ajout après le texte d origine`);
+      assert.equal(added.replace(/\r\n/g, '').includes('\n'), false, `${path.basename(f)} : aucun LF seul ajouté`);
+    }
+    ok(cli(E, ['terminal', 'remove']));
+    assert.ok(readBytes(ghosttyFile(E)).equals(Buffer.from(content, 'utf8')), 'ghostty : octets d origine');
+    assert.ok(readBytes(zshrc(E)).equals(Buffer.from(content, 'utf8')), 'zshrc : octets d origine');
+  });
+}
+
+test('.zshrc et config Ghostty en liens symboliques : apply x2 sans doublon, retrait complet, les liens restent des liens', () => {
+  const E = makeEnv();
+  const dots = path.join(E.home, 'dotfiles');
+  fs.mkdirSync(dots, { recursive: true });
+  fs.writeFileSync(path.join(dots, 'zshrc'), RICH_ZSH);
+  fs.writeFileSync(path.join(dots, 'ghostty'), RICH_GHOSTTY);
+  fs.mkdirSync(path.dirname(ghosttyFile(E)), { recursive: true });
+  fs.symlinkSync('dotfiles/zshrc', zshrc(E));
+  fs.symlinkSync('../../dotfiles/ghostty', ghosttyFile(E));
+  ok(cli(E, ['terminal', 'apply', '{"ghostty":true,"welcome":true}']));
+  const once = snapshot(E.home);
+  ok(cli(E, ['terminal', 'apply', '{"ghostty":true,"welcome":true}']));
+  assert.deepEqual(snapshot(E.home), once, 'second apply : aucun octet ni lien modifié');
+  for (const [link, target] of [[zshrc(E), path.join(dots, 'zshrc')], [ghosttyFile(E), path.join(dots, 'ghostty')]]) {
+    assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'le lien reste un lien');
+    assert.equal(readText(target).split('\n').filter((l) => l.startsWith('# claude-dojo')).length, 1, 'une seule fois dans la cible');
+  }
+  ok(cli(E, ['terminal', 'remove']));
+  assert.equal(fs.lstatSync(zshrc(E)).isSymbolicLink(), true);
+  assert.equal(fs.readlinkSync(zshrc(E)), 'dotfiles/zshrc', 'lien inchangé');
+  assert.equal(fs.lstatSync(ghosttyFile(E)).isSymbolicLink(), true);
+  assert.equal(readText(path.join(dots, 'zshrc')), RICH_ZSH, 'zshrc cible : octets d origine');
+  assert.equal(readText(path.join(dots, 'ghostty')), RICH_GHOSTTY, 'ghostty cible : octets d origine');
+});
+
+test('ghostty.conf : custom-shader-animation = true (animation seulement fenêtre focalisée, valeur par défaut de Ghostty)', () => {
+  const E = makeEnv();
+  ok(cli(E, ['terminal', 'apply', '{"ghostty":true}']));
+  const conf = readText(path.join(generated(E), 'ghostty.conf'));
+  assert.equal(conf.split('\n').filter((l) => l === 'custom-shader-animation = true').length, 1);
+  assert.equal(/custom-shader-animation = always/.test(conf), false, 'always animerait hors focus');
+});
+
 test('chemins avec espaces : valeurs quotées dans ghostty.conf, theme et source zsh', () => {
   const E = makeEnv();
   ok(cli(E, ['terminal', 'apply', '{"ghostty":true,"welcome":true}']));
@@ -340,7 +504,7 @@ test('ghostty.conf : une ligne custom-shader par .glsl, triées, lien symbolique
   fs.symlinkSync('b.glsl', path.join(E.root, 'themes', 'alpha', 'terminal', 'shaders', 'z-link.glsl'));
   ok(cli(E, ['terminal', 'apply', '{"ghostty":true}']));
   const conf = readText(path.join(generated(E), 'ghostty.conf'));
-  const shaders = conf.split('\n').filter((l) => l.startsWith('custom-shader'));
+  const shaders = conf.split('\n').filter((l) => l.startsWith('custom-shader = '));
   assert.equal(shaders.length, 3, shaders.join(' | '));
   assert.ok(shaders[0].includes('/a.glsl') && shaders[1].includes('/b.glsl') && shaders[2].includes('/z-link.glsl'), 'ordre trié');
   assert.equal(conf.includes('notes.txt'), false);
@@ -362,7 +526,8 @@ test('zshrc : bloc périmé (ancien chemin) remplacé par un seul bloc à jour, 
   const zs = readText(zshrc(E));
   assert.equal(zs.split('\n').filter((l) => l === '# claude-dojo welcome (managed)').length, 1);
   assert.equal(zs.includes('/old/place'), false, 'ancien chemin retiré');
-  assert.ok(zs.startsWith('before=1\nafter=2\n# claude-dojo welcome (managed)\nsource "'), zs);
+  assert.ok(zs.startsWith('before=1\nafter=2\n# claude-dojo welcome (managed)\n[[ -r "'), zs);
+  assert.ok(zs.includes('&& source "'), 'ligne gardée');
   ok(cli(E, ['terminal', 'remove', '{"welcome":true}']));
   assert.equal(readText(zshrc(E)), 'before=1\nafter=2\n');
 });
@@ -455,6 +620,36 @@ test('set-theme vers un thème sans terminal/ : refusé, config et fichiers inch
   assert.equal(JSON.parse(readText(cfgFile(E))).theme, 'alpha');
 });
 
+test('set-theme : apply en échec (import Terminal) -> config.json garde l ancien thème, préférences et profil enregistré intacts', { skip: NEEDS_PLUTIL }, () => {
+  const E = makeEnv();
+  ok(cli(E, ['terminal', 'apply', '{"terminalApp":true}']));
+  const storeBefore = readBytes(E.store);
+  fails(cli(E, ['set-theme', 'beta'], { extraEnv: { FAKE_IMPORT_FAIL: failOnce(E) } }), /defaults import com\.apple\.Terminal a échoué/);
+  assert.equal(JSON.parse(readText(cfgFile(E))).theme, 'alpha', 'ancien thème gardé');
+  assert.ok(readBytes(E.store).equals(storeBefore), 'préférences rétablies');
+  assert.equal(stateObj(E).managed.terminalApp.profile, 'Dojo Alpha', 'profil enregistré inchangé');
+});
+
+test('theme/ jamais à moitié copié : copie en erreur -> ancien theme/ intact, config inchangée, aucun dossier temporaire', { skip: IS_ROOT ? 'root : chmod sans effet' : false }, () => {
+  const E = makeEnv();
+  ok(cli(E, ['terminal', 'apply', '{"ghostty":true}']));
+  const T = generated(E);
+  const before = snapshot(path.join(T, 'theme'));
+  assert.ok(before['shaders/a.glsl'], 'theme/ alpha de référence');
+  const unreadable = path.join(E.root, 'themes', 'beta', 'terminal', 'shaders', 'zz.glsl');
+  fs.mkdirSync(path.dirname(unreadable), { recursive: true });
+  fs.writeFileSync(unreadable, '// illisible\n');
+  fs.chmodSync(unreadable, 0o000);
+  try {
+    fails(cli(E, ['set-theme', 'beta']), /EACCES/);
+    assert.deepEqual(snapshot(path.join(T, 'theme')), before, 'theme/ inchangé');
+    assert.equal(JSON.parse(readText(cfgFile(E))).theme, 'alpha');
+    assert.deepEqual(fs.readdirSync(T).filter((n) => /\.(tmp|old)-/.test(n)), [], 'aucun dossier temporaire');
+  } finally {
+    fs.chmodSync(unreadable, 0o644);
+  }
+});
+
 test('thème sans terminal/ : apply ghostty refusé sans rien écrire ; welcome seul reste possible', () => {
   const E = makeEnv();
   fs.writeFileSync(cfgFile(E), JSON.stringify({ theme: 'gamma' }));
@@ -503,7 +698,9 @@ test('status : forme JSON exacte, lecture seule', () => {
   assert.deepEqual(Object.keys(st), ['ok', 'theme', 'options', 'ghostty', 'terminalApp', 'welcome']);
   assert.deepEqual(Object.keys(st.ghostty), ['configPath', 'applied', 'available']);
   assert.deepEqual(Object.keys(st.terminalApp), ['applied', 'running', 'available']);
-  assert.deepEqual(Object.keys(st.welcome), ['zshrc', 'applied']);
+  assert.deepEqual(Object.keys(st.welcome), ['zshrc', 'applied', 'effective', 'warning']);
+  assert.equal(st.welcome.effective, true, 'sans ZDOTDIR : ~/.zshrc, bien lu par zsh');
+  assert.equal(st.welcome.warning, null);
   assert.deepEqual(st.options, { ghostty: false, terminalApp: false, welcome: false });
   assert.equal(st.theme, 'alpha');
   assert.equal(st.ghostty.available, false, 'Ghostty.app absent des dossiers de test');
@@ -588,6 +785,77 @@ test('Terminal.app : prefs absentes -> import crée le domaine, retrait le laiss
   ok(cli(E, ['terminal', 'remove', '{"terminalApp":true}']));
   assert.equal(plistHas(E, 'Default Window Settings'), false);
   assert.equal(plistHas(E, 'Window Settings.Dojo Alpha'), false);
+});
+
+// ── Sauvegarde avant import, réimport en cas d'échec ──
+const BACKUP_RE = /^com\.apple\.Terminal\.\d{8}-\d{6}(-\d+)?\.plist$/;
+const backupDir = (E) => path.join(E.home, '.config', 'claude-dojo', 'backup');
+const backupList = (E) => (fs.existsSync(backupDir(E)) ? fs.readdirSync(backupDir(E)) : []);
+const failOnce = (E) => path.join(E.root, 'import-fail-once');
+const stateObj = (E) => (fs.existsSync(stateFile(E)) ? JSON.parse(readText(stateFile(E))) : {});
+
+test('import Terminal : sauvegarde datée = préférences avant import, chemin noté dans state.managed.terminalApp.backup', { skip: NEEDS_PLUTIL }, () => {
+  const E = makeEnv();
+  const storeBefore = readBytes(E.store);
+  ok(cli(E, ['terminal', 'apply', '{"terminalApp":true}']));
+  const names = backupList(E);
+  assert.equal(names.length, 1, 'une seule sauvegarde');
+  assert.match(names[0], BACKUP_RE);
+  const bak = path.join(backupDir(E), names[0]);
+  assert.ok(readBytes(bak).equals(storeBefore), 'sauvegarde = préférences d avant import');
+  assert.equal(stateObj(E).managed.terminalApp.backup, bak);
+  assert.equal(fs.statSync(bak).mode & 0o777, 0o600);
+  assert.ok(!readBytes(E.store).equals(storeBefore), 'import effectif');
+});
+
+test('import Terminal : defaults import en échec -> sauvegarde réimportée, erreur claire, préférences et état intacts', { skip: NEEDS_PLUTIL }, () => {
+  const E = makeEnv();
+  const storeBefore = readBytes(E.store);
+  const err = fails(cli(E, ['terminal', 'apply', '{"terminalApp":true}'], { extraEnv: { FAKE_IMPORT_FAIL: failOnce(E) } }),
+    /defaults import com\.apple\.Terminal a échoué[\s\S]*restaurées depuis/);
+  const imports = calls(E, 'defaults import com.apple.Terminal');
+  assert.equal(imports.length, 2, 'import, puis réimport de la sauvegarde');
+  const names = backupList(E);
+  assert.equal(names.length, 1, 'sauvegarde présente');
+  const bak = path.join(backupDir(E), names[0]);
+  assert.ok(imports[1].endsWith(bak), 'le réimport vient de la sauvegarde');
+  assert.ok(err.includes(bak), 'l erreur nomme la sauvegarde');
+  assert.ok(readBytes(E.store).equals(storeBefore), 'préférences rétablies à l identique');
+  assert.equal(stateObj(E).managed, undefined, 'aucun profil enregistré');
+  // config.json : les options sont écrites avant l import (Ghostty et zsh déjà posés restent décrits)
+  assert.equal(cfgTerminal(E).terminalApp, true);
+});
+
+test('import Terminal : import et restauration en échec -> erreur qui indique où est la sauvegarde', { skip: NEEDS_PLUTIL }, () => {
+  const E = makeEnv();
+  const err = fails(cli(E, ['terminal', 'apply', '{"terminalApp":true}'], { extraEnv: { FAKE_IMPORT_FAIL: 'always' } }),
+    /restauration impossible depuis/);
+  assert.equal(backupList(E).length, 1, 'sauvegarde conservée');
+  assert.ok(err.includes(path.join(backupDir(E), backupList(E)[0])));
+});
+
+test('plutil -insert en échec : erreur claire, aucun import, préférences intactes, sauvegarde prise avant', { skip: NEEDS_PLUTIL }, () => {
+  const E = makeEnv({ prefs: false }); // Window Settings absent : l insert est nécessaire
+  const storeBefore = readBytes(E.store);
+  fails(cli(E, ['terminal', 'apply', '{"terminalApp":true}'], { extraEnv: { FAKE_PLUTIL_FAIL: 'insert' } }),
+    /Window Settings : écriture impossible/);
+  assert.equal(calls(E, 'defaults import').length, 0, 'aucun import');
+  assert.ok(readBytes(E.store).equals(storeBefore), 'préférences intactes');
+  assert.equal(stateObj(E).managed, undefined);
+  assert.equal(backupList(E).length, 1, 'sauvegarde prise avant les modifications');
+});
+
+test('plutil -remove en échec au retrait : erreur claire, préférences et état intacts', { skip: NEEDS_PLUTIL }, () => {
+  const E = makeEnv();
+  ok(cli(E, ['terminal', 'apply', '{"terminalApp":true}']));
+  const storeBefore = readBytes(E.store);
+  const stateBefore = readText(stateFile(E));
+  const n = calls(E, 'defaults import').length;
+  fails(cli(E, ['terminal', 'remove', '{"terminalApp":true}'], { extraEnv: { FAKE_PLUTIL_FAIL: 'remove' } }), /profil Terminal « Dojo Alpha » \(retrait\) : écriture impossible/);
+  assert.equal(calls(E, 'defaults import').length, n, 'aucun import (export seul, en lecture)');
+  assert.ok(readBytes(E.store).equals(storeBefore), 'préférences intactes');
+  assert.equal(readText(stateFile(E)), stateBefore, 'état intact : profil toujours enregistré');
+  assert.equal(cfgTerminal(E).terminalApp, true, 'options inchangées');
 });
 
 test('uninstall : retire lignes, profil et dossier ; dryRun ne touche à rien', { skip: NEEDS_PLUTIL }, () => {

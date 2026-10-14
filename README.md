@@ -259,7 +259,7 @@ The choice is stored in the `terminal` key of [config.json](#configuration). Eve
 ### What changes on your Mac
 
 - **Ghostty**: a block marked `# claude-dojo terminal theme (managed)` in Ghostty's configuration file, which is `~/.config/ghostty/config` or the Application Support file, whichever exists. The block points to `~/.config/claude-dojo/terminal/ghostty.conf`, which holds the theme and the shaders.
-- **zsh**: a block marked `# claude-dojo welcome (managed)` in `~/.zshrc` (or in `$ZDOTDIR/.zshrc`), which sources the header script.
+- **zsh**: a block marked `# claude-dojo welcome (managed)` in `~/.zshrc` (or in `$ZDOTDIR/.zshrc`, with `ZDOTDIR` taken from the environment or from `~/.zshenv`). The block sources the header script only when that script exists. If Dojo cannot tell which `.zshrc` zsh reads, `terminal status` shows `welcome.effective: false` with a warning.
 - **Terminal.app**: the profile is added to the window settings and set as the default and startup profile. The previous defaults are remembered, so removing the profile restores them. If Terminal is running, nothing is written: the `.terminal` file opens, and you confirm the import with a double-click.
 - **Backups**: before Dojo changes your Ghostty configuration or your zsh configuration file, it saves a copy next to it as `<name>.bak-<timestamp>`.
 
@@ -271,6 +271,8 @@ Set these in your shell before the header runs, for example in `~/.zshrc` above 
 |---|---|
 | `DOJO_WELCOME=off` | No header in new windows |
 | `DOJO_ANIM=0` | Ghostty shows the still logo instead of the animation |
+
+With Powerlevel10k's instant prompt, move Dojo's two lines (the marker and the line below it) above the instant prompt block at the top of `~/.zshrc`. Otherwise the header can be swallowed. Dojo leaves a block that is already up to date where you put it.
 
 ### Remove them
 
