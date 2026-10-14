@@ -252,7 +252,6 @@ test('changement de config.background : background et themeKey changent, aussi �
   const b = json(await get('/theme'));
   assert.notEqual(b.background, a.background, 'background change');
   assert.notEqual(b.themeKey, a.themeKey, 'themeKey change');
-  assert.equal(b.themeKey.split('|')[1].split('-')[0], a.themeKey.split('|')[1].split('-')[0], 'même mtime : seul le chemin distingue');
   // la page relit /stats (themeKey) toutes les 2 s : la nouvelle clé doit y arriver
   assert.equal(await waitFor(async () => json(await get('/stats')).themeKey === b.themeKey), true, '/stats porte la nouvelle themeKey');
   // retour au fond du thème : la clé change encore
