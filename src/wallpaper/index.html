@@ -1642,6 +1642,32 @@ function setSafe(o) {
   fit();
 }
 
+/* ── Zone de travail (interrogée par DojoWallpaper.app) ───────── */
+// Rectangles occupés par les panneaux, en px CSS (repère de la fenêtre), transformations (scale de fit) comprises.
+// left / right : colonnes de panneaux selon leur position réelle (le mode miroir les échange) ; top : bandeau horloge / météo.
+// Un élément masqué ou vide vaut null. La couleur ou le thème n'y changent rien : on mesure le rendu.
+window.dojoReservedRects = function () {
+  const box = (el) => {
+    if (!el) return null;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return null;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return null;
+    return { x: r.left, y: r.top, w: r.width, h: r.height };
+  };
+  const out = { viewport: { w: innerWidth, h: innerHeight }, left: null, right: null, top: box($('hero')) };
+  for (const r of [box($('left')), box($('panel'))]) {
+    if (!r) continue;
+    const side = r.x + r.w / 2 < innerWidth / 2 ? 'left' : 'right';
+    out[side] = out[side] ? unionBox(out[side], r) : r;
+  }
+  return out;
+};
+function unionBox(a, b) {
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+}
+
 /* ── Batterie ────────────────────────────────────────────────── */
 function renderBattery(b) {
   $('batCard').style.display = b ? '' : 'none';
