@@ -1,9 +1,9 @@
-// État de l'assistant (10 étapes) et ses actions : détection, géocodage, aperçu des réglages, application.
+// État de l'assistant (11 étapes) et ses actions : détection, géocodage, aperçu des réglages, application.
 import Foundation
 import Combine
 
 enum SetupStep: Int, CaseIterable {
-    case welcome, dependencies, weather, github, projects, calendars, claude, autostart, theme, done
+    case welcome, dependencies, weather, github, projects, calendars, claude, autostart, theme, windowZone, done
 
     var title: String {
         switch self {
@@ -16,6 +16,7 @@ enum SetupStep: Int, CaseIterable {
         case .claude: return "Claude Code"
         case .autostart: return "Démarrage automatique"
         case .theme: return "Thème"
+        case .windowZone: return "Zone de travail"
         case .done: return "Terminé"
         }
     }
@@ -78,6 +79,8 @@ final class SetupModel: ObservableObject {
     /// Fond choisi dans l'assistant ; nil = inchangé.
     @Published var backgroundChange: BackgroundChange?
 
+    // Zone de travail (windowZone de config.json) : enregistrée avec le reste à la dernière étape
+    @Published var windowZone = WindowZoneConfig.defaults
     // Options terminal : cases de l'étape Thème
     /// Cases cochées (Ghostty, Terminal.app, message d'accueil zsh).
     @Published var terminalChoice = TerminalOptions()
@@ -203,10 +206,18 @@ final class SetupModel: ObservableObject {
             "Calendriers : \(validCalendars)",
             "Thème : " + (themeName ?? "non disponible"),
             "Fond : " + backgroundLabel,
+            "Zone de travail : " + windowZoneLabel,
             "Terminal : " + terminalLabel,
             "Claude Code : hooks Dojo \(hooks ? "oui" : "non"), barre de statut \(statusLineLabel), heavy-gate \(heavyGate ? "oui" : "non"), VITEST_MAX_WORKERS \(vitestWorkers ? "oui" : "non")",
             "Démarrage automatique : " + autostartLabel
         ]
+    }
+
+    var windowZoneLabel: String {
+        guard windowZone.enabled else { return "désactivée" }
+        let top = windowZone.reserveTop ? "côtés + haut" : "côtés seulement"
+        let excluded = windowZone.exclude.isEmpty ? "" : ", \(windowZone.exclude.count) app(s) exclue(s)"
+        return "activée (\(top), marge \(Int(windowZone.margin)) pt\(excluded))"
     }
 
     /// Dojo lancé depuis le DMG monté ou une copie translocée : les LaunchAgents seraient installés vers un chemin temporaire.
@@ -228,6 +239,7 @@ final class SetupModel: ObservableObject {
         loading = true
         await refreshDetect()
         await loadThemes()
+        await loadWindowZone()
         await loadTerminal()
         loading = false
     }
@@ -245,6 +257,14 @@ final class SetupModel: ObservableObject {
             themesError = nil
         } catch {
             themesError = error.localizedDescription
+        }
+    }
+
+    /// Réglage de la zone de travail courant (`setup.js window-zone`) : défauts complétés, désactivée par défaut.
+    func loadWindowZone() async {
+        guard liveMode else { return }
+        if let response: WindowZoneResponse = try? await runner.call("window-zone"), let zone = response.windowZone {
+            windowZone = zone
         }
     }
 
@@ -465,7 +485,8 @@ final class SetupModel: ObservableObject {
             calendars: calendars.map { $0.trimmed }.filter { DojoConfig.isCalendarURL($0) },
             github: DojoConfig.GitHub(owners: owners.map { $0.trimmed }.filter { !$0.isEmpty }),
             projects: DojoConfig.Projects(roots: roots.map { $0.trimmed }.filter { !$0.isEmpty }, onlyOwners: onlyOwners),
-            sentry: sentry)
+            sentry: sentry,
+            windowZone: windowZone)
     }
 
     // MARK: Application

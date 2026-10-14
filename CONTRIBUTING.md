@@ -55,11 +55,24 @@ bash -n install.sh uninstall.sh
 shellcheck -S warning install.sh uninstall.sh
 for f in src/*.js; do node --check "$f"; done
 node --test test/
+scripts/test-swift.sh
 scripts/build-app.sh --no-dmg
 ```
 
 Also run the install and uninstall test described above, in a temporary `HOME`.
 
+### Manual checks for the window zone
+
+CI covers the geometry of the window zone (`scripts/test-swift.sh`) but cannot grant the Accessibility permission or move real windows. If you change `mac/WindowZone*.swift`, check by hand, in a throwaway `HOME`:
+
+1. Without the Accessibility permission, turning the option on shows **Autorisation requise** and no window moves. After granting it, the option works within a few seconds without a restart.
+2. Open a standard window over a panel: it is moved into the free zone, and made smaller only if it is bigger than the zone.
+3. Drag a window across a panel: it is not pulled back while the mouse button is down, and is fitted a moment after you let go.
+4. A native full screen app, a dialog, a Save sheet and a non-resizable window are left alone. So is an app in the exclusion list.
+5. Two screens (one Retina, one not), then unplug one: each screen keeps its own zone, and the windows of the removed screen come back inside the remaining one.
+6. Stage Manager on: its left strip is reserved and the settings say so.
+7. Change the theme, the size, or **Inverser gauche / droite**: the zone follows within a few seconds.
+8. ⌃⌥↩, ⌃⌥← and ⌃⌥→ act on the window in front.
 ## Adding the terminal part of a theme
 
 The terminal part of a theme lives in `src/themes/<id>/terminal/`. A generator builds most of it from a spec, and the shaders are written by hand. The [terminal README](scripts/themes/terminal/README.md) has the full contract of a spec.
