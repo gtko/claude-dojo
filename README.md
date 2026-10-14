@@ -61,7 +61,7 @@ The assistant has ten steps. Steps 3 to 6 are optional, and nothing is changed u
 
 ### What the assistant changes
 
-- `~/.config/claude-dojo/`: the Dojo files (including the `themes/` folder with the eight themes), the `config.json` file (mode `0600`, because it can contain private URLs), the cache, and, once you choose a custom background, the `backgrounds/` folder.
+- `~/.config/claude-dojo/`: the Dojo files (including the `themes/` folder with the eight themes), the `config.json` file (mode `0600`, because it can contain private URLs), the cache, once you choose a custom background the `backgrounds/` folder, and, if you enable them, the [terminal parts](#terminal-themes): the `terminal/` folder, plus lines in Ghostty's configuration and `~/.zshrc`.
 - `~/Library/LaunchAgents/`: `io.github.claude-dojo.agent` (local agent and collector) and `io.github.claude-dojo.wallpaper` (wallpaper app), which start at login.
 - `~/.claude/settings.json`: the six Dojo hooks, the status line according to your choice (keep yours, replace it, or leave it alone), and, if you choose them, heavy-gate and `VITEST_MAX_WORKERS=2` in the `env` block, unless that variable is already set. `model`, `effort`, `plugins` and `permissions` are never touched. Before any change, the file is copied to `settings.json.bak-<timestamp>`.
 
@@ -225,6 +225,65 @@ To add a theme, follow these steps:
 
 The installer and the assistant copy `src/themes/` to `~/.config/claude-dojo/themes/`, so run `./install.sh` again, or apply the assistant, to get a new theme. After you edit a theme's files, choose **Reload** in the menu bar icon.
 
+## Terminal themes
+
+Each theme can also style your terminal. The terminal part of a theme has four pieces, and you choose which ones to apply:
+
+- **Ghostty palette**: the 16 colours, background, cursor and selection of the theme. The window is translucent (`background-opacity = 0.88`, `background-blur = 20`) and no background image is set, so your wallpaper shows through.
+- **Ghostty shaders**: four small effects on the cursor: a trail after a jump, a ring that tightens on a click, a burst when the window regains focus, and a faint glow along the edges.
+- **Terminal.app profile**: the same colours as a Terminal profile, imported as the default and startup profile.
+- **Welcome header**: each new zsh window opens with the theme's logo and two lines picked at random from its universe. In Ghostty the logo plays once, in under a second. The header is drawn with [fastfetch](https://github.com/fastfetch-cli/fastfetch).
+
+<p align="center">
+  <img src="docs/screenshots/terminal/header-stargate-sg1.webp" alt="Welcome header, Stargate SG-1 theme" width="800">
+  <img src="docs/screenshots/terminal/header-frieren.webp" alt="Welcome header, Frieren theme" width="800">
+  <img src="docs/screenshots/terminal/header-jujutsu-kaisen.webp" alt="Welcome header, Jujutsu Kaisen theme" width="800">
+</p>
+
+*The welcome header of three themes, with sample data. Rendered from the fastfetch output, in a Ghostty-style window.*
+
+### Turn them on
+
+- **Setup assistant**: in the **Thème** step (also reached from **Réglages…**), the **Terminal** section has one checkbox per target: **Appliquer aussi à Ghostty**, **Appliquer aussi à Terminal** and **Message d'accueil du terminal**. A checkbox is disabled when that app is not installed. The choice applies as soon as you tick the box.
+- **Command line**:
+
+  ```sh
+  node ~/.config/claude-dojo/setup.js terminal status
+  node ~/.config/claude-dojo/setup.js terminal apply '{"ghostty":true,"terminalApp":false,"welcome":true}'
+  ```
+
+  The keys are `ghostty`, `terminalApp` and `welcome`, and each is a boolean. A key left out keeps its saved value, and `terminal apply` with no argument applies the saved choice. `terminal status` prints the choice and the state of each part as JSON, without changing anything. Changing the theme with `set-theme` rewrites the parts that are active.
+
+The choice is stored in the `terminal` key of [config.json](#configuration). Everything is off by default.
+
+### What changes on your Mac
+
+- **Ghostty**: a block marked `# claude-dojo terminal theme (managed)` in Ghostty's configuration file, which is `~/.config/ghostty/config` or the Application Support file, whichever exists. The block points to `~/.config/claude-dojo/terminal/ghostty.conf`, which holds the theme and the shaders.
+- **zsh**: a block marked `# claude-dojo welcome (managed)` in `~/.zshrc` (or in `$ZDOTDIR/.zshrc`), which sources the header script.
+- **Terminal.app**: the profile is added to the window settings and set as the default and startup profile. The previous defaults are remembered, so removing the profile restores them. If Terminal is running, nothing is written: the `.terminal` file opens, and you confirm the import with a double-click.
+- **Backups**: before Dojo changes your Ghostty configuration or your zsh configuration file, it saves a copy next to it as `<name>.bak-<timestamp>`.
+
+### Header settings
+
+Set these in your shell before the header runs, for example in `~/.zshrc` above the line that Dojo adds:
+
+| Variable | Effect |
+|---|---|
+| `DOJO_WELCOME=off` | No header in new windows |
+| `DOJO_ANIM=0` | Ghostty shows the still logo instead of the animation |
+
+### Remove them
+
+Untick the boxes, or run `node ~/.config/claude-dojo/setup.js terminal remove` to remove every part. `terminal remove '{"welcome":true}'` removes only the given ones. Dojo deletes its marked lines, the Terminal profile it imported and its generated files. The rest of your Ghostty configuration and `~/.zshrc` is left as it was. Uninstalling Dojo removes these parts too.
+
+### Limits
+
+- macOS only, like the rest of Dojo. The header works in zsh only, and only in Ghostty and Terminal.app. Other terminals show nothing.
+- The shaders and the animated logo need Ghostty 1.x. The generated configuration was checked with `ghostty +validate-config` on Ghostty 1.3.1.
+- fastfetch is optional. Install it with `brew install fastfetch`. Without it, the header is plain text with the same colours and the two lines.
+- Terminal.app has no graphics protocol, so its logo is drawn with half-block characters, and it is not animated.
+- Dojo does not change the Terminal profile while Terminal is running. See [What changes on your Mac](#what-changes-on-your-mac).
+
 ## Gallery
 
 <p align="center">
@@ -333,6 +392,7 @@ The file is `~/.config/claude-dojo/config.json`. Every block is optional. Withou
 | `projects.roots` | Folders to scan for Git repositories (`~` is accepted). Default: the common folders `Projects`, `Projets`, `Developer`, `Code`, `dev`, `src` and `repos` in your home folder, when they exist |
 | `projects.onlyOwners` | `true` shows only repositories owned by `github.owners` |
 | `sentry.token`, `sentry.org` | Sentry token and organization slug. Shows unresolved issues from the last 24 hours |
+| `terminal` | Terminal parts to apply: `ghostty`, `terminalApp` and `welcome`, each `true` or `false` (default). See [Terminal themes](#terminal-themes) |
 
 Example (placeholder values, replace them and delete the blocks you do not use):
 
