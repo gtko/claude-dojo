@@ -40,7 +40,9 @@
       "pants": "#4f5d3a",
       "pantsD": "#3b4730",
       "shoe": "#3a2e24",
-      "iris": "#2f6fb0"
+      "iris": "#2f6fb0",
+      "band": null,
+      "pockets": true
     },
     {
       "id": "carter",
@@ -55,7 +57,8 @@
       "pants": "#4f5d3a",
       "pantsD": "#3b4730",
       "shoe": "#3a2e24",
-      "iris": "#3a86d4"
+      "iris": "#3a86d4",
+      "band": null
     },
     {
       "id": "daniel",
@@ -71,7 +74,8 @@
       "pantsD": "#5f5a3c",
       "shoe": "#3a2e24",
       "iris": "#4a6b3a",
-      "glasses": "#2b2b2b"
+      "glasses": "#2b2b2b",
+      "band": null
     },
     {
       "id": "tealc",
@@ -89,7 +93,8 @@
       "iris": "#2a1d14",
       "gem": "#d9a441",
       "belt": "#d9a441",
-      "backItem": "staff"
+      "backItem": "staff",
+      "band": null
     },
     {
       "id": "hammond",
@@ -104,7 +109,9 @@
       "pants": "#2e4a78",
       "pantsD": "#213659",
       "shoe": "#1a1a20",
-      "iris": "#4a6e8a"
+      "iris": "#4a6e8a",
+      "band": null,
+      "balding": true
     }
   ]
 }

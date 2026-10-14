@@ -38,7 +38,8 @@
       "pants": "#5c3a22",
       "pantsD": "#43291a",
       "iris": "#3fb89a",
-      "backItem": "staff"
+      "backItem": "staff",
+      "band": null
     },
     {
       "id": "roxy",
@@ -52,7 +53,8 @@
       "body": "#2f6fd0",
       "pants": "#244f9a",
       "pantsD": "#1b3b74",
-      "iris": "#3a8cff"
+      "iris": "#3a8cff",
+      "band": null
     },
     {
       "id": "eris",
@@ -66,7 +68,8 @@
       "pants": "#1a1a1f",
       "pantsD": "#0e0e12",
       "iris": "#e0623a",
-      "brows": true
+      "brows": true,
+      "band": null
     },
     {
       "id": "sylphie",
@@ -79,7 +82,8 @@
       "body": "#3f9f6a",
       "pants": "#2f7a52",
       "pantsD": "#225c3e",
-      "iris": "#37c97e"
+      "iris": "#37c97e",
+      "band": null
     },
     {
       "id": "ruijerd",
@@ -95,7 +99,8 @@
       "pants": "#243d30",
       "pantsD": "#182c22",
       "backItem": "spear",
-      "iris": "#d42a2a"
+      "iris": "#d42a2a",
+      "band": null
     }
   ]
 }

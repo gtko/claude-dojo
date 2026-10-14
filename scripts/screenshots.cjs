@@ -9,7 +9,7 @@
 //   node scripts/screenshots.cjs --themes        tous les thèmes
 //   node scripts/screenshots.cjs --theme <id>    un seul thème
 //   -> docs/screenshots/themes/<id>.webp (1280 px de large, page entière) pour chaque thème,
-//      src/themes/<id>/thumbnail.jpg (480 x 300, plein cadre ; jamais pour naruto, conservée telle quelle),
+//      src/themes/<id>/thumbnail.jpg (480 x 300, plein cadre, tous les thèmes),
 //      et avec --themes seulement : docs/screenshots/themes.webp (planche 4 colonnes, 1920 px).
 //   Largeur, hauteur et DPR facultatifs après l'option (mêmes défauts que ci-dessus).
 //
@@ -356,8 +356,7 @@ async function captureThemes() {
     for (const id of ids) {
       const png = await captureTheme(context, id, tmp);
       toWebp(cwebp, png, path.join(DOCS_SHOTS, 'themes', id + '.webp'), THEME_WEBP_W, THEME_WEBP_Q);
-      // naruto : sa vignette existante n'est jamais réécrite
-      if (id !== 'naruto') makeThumb(png, path.join(THEMES_DIR, id, 'thumbnail.jpg'));
+      makeThumb(png, path.join(THEMES_DIR, id, 'thumbnail.jpg'));
     }
     if (THEMES_ALL) await planche(browser, ids, tmp, cwebp);
   } finally {

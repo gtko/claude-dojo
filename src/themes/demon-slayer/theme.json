@@ -41,7 +41,8 @@
       "iris": "#3b2016",
       "scarFace": "forehead",
       "earrings": "#d9a441",
-      "backItem": "sheath"
+      "backItem": "sheath",
+      "band": null
     },
     {
       "id": "nezuko",
@@ -56,7 +57,8 @@
       "pantsD": "#c4568a",
       "iris": "#f08fb8",
       "gag": true,
-      "horn": true
+      "horn": true,
+      "band": null
     },
     {
       "id": "zenitsu",
@@ -69,7 +71,8 @@
       "body": "#1b1f24",
       "pants": "#1b1f24",
       "pantsD": "#121418",
-      "iris": "#3a2a1a"
+      "iris": "#3a2a1a",
+      "band": null
     },
     {
       "id": "inosuke",
@@ -82,7 +85,8 @@
       "pants": "#5a6b80",
       "pantsD": "#44536a",
       "boarMask": true,
-      "iris": "#15151c"
+      "iris": "#15151c",
+      "band": null
     },
     {
       "id": "rengoku",
@@ -97,7 +101,8 @@
       "pants": "#1b1f24",
       "pantsD": "#121418",
       "iris": "#e8a33a",
-      "brows": true
+      "brows": true,
+      "band": null
     }
   ]
 }
