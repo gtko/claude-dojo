@@ -16,6 +16,16 @@ struct ThemesResponse: Decodable {
     let background: String?
 }
 
+/// Réponse de `setup.js set-theme <id>` : thème, fond après bascule, présence de fonds téléchargés pour ce thème,
+/// et besoin de télécharger le pack (needsSync). Tous les champs sont facultatifs : un champ absent ne bloque pas
+/// le changement de thème (hasDownloads et needsSync nil = inconnu).
+struct SetThemeResponse: Decodable {
+    let theme: String?
+    let background: String?
+    let hasDownloads: Bool?
+    let needsSync: Bool?
+}
+
 /// Fond choisi dans l'assistant : le fond du thème, ou une image à copier (set-background).
 enum BackgroundChange: Equatable {
     case theme

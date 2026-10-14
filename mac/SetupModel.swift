@@ -77,6 +77,12 @@ final class SetupModel: ObservableObject {
     @Published private(set) var currentBackground: String?
     /// Fond choisi dans l'assistant ; nil = inchangé.
     @Published var backgroundChange: BackgroundChange?
+    /// Fonds présents du thème choisi (`wallpapers local`) : alimentent la bande de l'étape Thème.
+    @Published var packWallpapers: [LocalWallpaper] = []
+    @Published var packError: String?
+    /// Message discret après un clic sur une vignette (échec d'application).
+    @Published var packMessage: String?
+    @Published var packBusy = false
 
     // Démarrage et application
     @Published var autostart = true
@@ -86,8 +92,8 @@ final class SetupModel: ObservableObject {
     @Published var applyError: String?
 
     private var sentry: JSONValue?
-    /// Thème à l'ouverture de l'assistant : seul un choix différent déclenche set-theme.
-    private var initialTheme = ""
+    /// Thème appliqué (à l'ouverture de l'assistant, puis après set-theme) : seul un choix différent déclenche set-theme.
+    var initialTheme = ""
     private var hadAutostart = false
     private var prefilled = false
     private var cancellables = Set<AnyCancellable>()
@@ -101,6 +107,18 @@ final class SetupModel: ObservableObject {
             .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
                 Task { await self?.refreshPreview() }
+            }
+            .store(in: &cancellables)
+        // Bande des fonds : relue au changement de thème choisi et à la fin d'un téléchargement de pack.
+        $themeChoice
+            .dropFirst()
+            .sink { [weak self] _ in
+                Task { await self?.reloadPack() }
+            }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .wallpaperPackDidChange)
+            .sink { [weak self] _ in
+                Task { await self?.reloadPack() }
             }
             .store(in: &cancellables)
     }
@@ -219,6 +237,43 @@ final class SetupModel: ObservableObject {
             themesError = nil
         } catch {
             themesError = error.localizedDescription
+        }
+    }
+
+    /// Les fonds du thème choisi ne s'appliquent que si ce thème est déjà le thème appliqué : `wallpapers use` agit sur le thème actif.
+    var packUsable: Bool { !themeChoice.isEmpty && themeChoice == initialTheme }
+
+    /// Relit les fonds présents du thème choisi (`wallpapers local`). Une réponse périmée (thème changé entre-temps) est ignorée.
+    func reloadPack() async {
+        guard liveMode else { return }
+        let theme = themeChoice
+        guard !theme.isEmpty else { return }
+        do {
+            let list = try await GalleryService.localWallpapers(runner: runner, theme: theme)
+            guard theme == themeChoice else { return }
+            packWallpapers = list
+            packError = nil
+        } catch {
+            guard theme == themeChoice else { return }
+            packWallpapers = []
+            packError = error.localizedDescription
+        }
+    }
+
+    /// Clic sur une vignette : applique ce fond au thème appliqué (`wallpapers use`), puis relit la bande.
+    func usePackWallpaper(_ item: LocalWallpaper) {
+        guard packUsable, !packBusy else { return }
+        packBusy = true
+        packMessage = nil
+        Task { @MainActor in
+            defer { packBusy = false }
+            do {
+                let response = try await GalleryService.applyBackground(runner: runner, id: item.id, theme: themeChoice)
+                currentBackground = response.background
+                await reloadPack()
+            } catch {
+                packMessage = GalleryService.plainMessage(error.localizedDescription)
+            }
         }
     }
 
@@ -411,6 +466,8 @@ final class SetupModel: ObservableObject {
 
             applied = true
             onApplied?()
+            // Premier lancement après l'assistant : le pack du thème choisi se télécharge en arrière-plan.
+            WallpaperSyncController.shared.ensureSynced(themeChoice, runner: runner)
             note("Terminé. Le fond d'écran est lancé.")
         } catch {
             applyError = error.localizedDescription
@@ -421,8 +478,14 @@ final class SetupModel: ObservableObject {
     /// Thème et fond choisis. Après write-config : config.json existe et garde ces champs. Rien n'est appelé si le choix est inchangé.
     private func applyTheme() async throws {
         if !themeChoice.isEmpty, themeChoice != initialTheme {
-            note("Thème : \(themeName ?? themeChoice)…")
-            let _: Ack = try await runner.call("set-theme", [themeChoice])
+            let name = themeName ?? themeChoice
+            note("Thème : \(name)…")
+            let response: SetThemeResponse = try await runner.call("set-theme", [themeChoice])
+            initialTheme = themeChoice
+            // set-theme peut rétablir un fond mémorisé pour ce thème : le fond courant suit la réponse.
+            currentBackground = response.background
+            WallpaperSyncController.shared.themeChanged(themeChoice, needsSync: response.needsSync, runner: runner)
+            GalleryOffer.offerIfNoDownloads(themeId: themeChoice, name: name, hasDownloads: response.hasDownloads, runner: runner)
         }
         switch backgroundChange {
         case .theme?:
