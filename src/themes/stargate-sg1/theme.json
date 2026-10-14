@@ -2,6 +2,12 @@
   "id": "stargate-sg1",
   "name": "Stargate SG-1",
   "credit": "Fan art non officiel, sans lien avec les ayants droit de Stargate SG-1.",
+  "wallpapers": {
+    "provider": "wallhaven",
+    "ids": ["6q11mw", "42yg7m", "436pgd", "nrgw97", "xek57v", "429okx"],
+    "default": "429okx",
+    "query": "Stargate"
+  },
   "accentFont": "\"Optima\", \"Avenir Next Condensed\", sans-serif",
   "palette": {
     "bg": "rgba(14, 22, 34, .55)",

@@ -2,6 +2,12 @@
   "id": "demon-slayer",
   "name": "Demon Slayer",
   "credit": "Fan art non officiel, sans lien avec les ayants droit de Demon Slayer.",
+  "wallpapers": {
+    "provider": "wallhaven",
+    "ids": ["8or3o1", "rrqz77", "x8pydd", "rryk81", "73wg59", "q2xmz7", "x67mkz", "pkxwwe", "zme9dg", "13ozrw", "13oe1w", "lmg1kl", "mdok21", "ox79lp", "z83e8y", "g81e93", "5wpyq9", "j5lzv5", "we668r", "6ol3px", "mdwrry", "we6297", "ox7r25", "p8mdyj", "7p75yy", "x83ex3", "x8e89o", "q6pyl5"],
+    "default": "ox79lp",
+    "query": "Kimetsu no Yaiba"
+  },
   "accentFont": "\"Hiragino Mincho ProN\", \"Yu Mincho\", serif",
   "palette": {
     "bg": "rgba(22, 18, 48, .55)",

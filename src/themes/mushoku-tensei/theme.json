@@ -2,6 +2,12 @@
   "id": "mushoku-tensei",
   "name": "Mushoku Tensei",
   "credit": "Fan art non officiel, sans lien avec les ayants droit de Mushoku Tensei.",
+  "wallpapers": {
+    "provider": "wallhaven",
+    "ids": ["v936d8", "g76xe3", "m9z25k", "2y326g", "7jxkw3", "72kyke", "x8vy63", "wemxxp"],
+    "default": "x8vy63",
+    "query": "Mushoku Tensei"
+  },
   "accentFont": "\"Palatino\", \"Palatino Linotype\", serif",
   "palette": {
     "bg": "rgba(6,30,26,.55)",

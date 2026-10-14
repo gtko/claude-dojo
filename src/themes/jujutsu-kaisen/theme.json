@@ -2,6 +2,12 @@
   "id": "jujutsu-kaisen",
   "name": "Jujutsu Kaisen",
   "credit": "Fan art non officiel, sans lien avec les ayants droit de Jujutsu Kaisen.",
+  "wallpapers": {
+    "provider": "wallhaven",
+    "ids": ["m9opdm", "l3k3my", "rrxmgw", "8ooqvk", "pkgoge", "o3gdwm", "g788ll", "y8mmrk", "e7zmqo", "rqo8km", "p92ex3", "j355oy", "d6my2l", "x8zp1l", "yxkdmk", "p978z9", "1qd39g", "5y57e8"],
+    "default": "m9opdm",
+    "query": "Jujutsu Kaisen"
+  },
   "accentFont": "\"Avenir Next Condensed\", \"Hiragino Sans\", sans-serif",
   "palette": {
     "bg": "rgba(10,6,20,.58)",

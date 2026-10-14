@@ -2,6 +2,12 @@
   "id": "one-piece",
   "name": "One Piece",
   "credit": "Fan art non officiel, sans lien avec les ayants droit de One Piece.",
+  "wallpapers": {
+    "provider": "wallhaven",
+    "ids": ["2ymdrg", "g8j113", "wqe7wx", "vm555m", "2k57qy", "4xq82o", "yx668d", "jxrrry", "9d3l21", "vpp8gm", "2yzoly", "vqo2ol", "01o8k3"],
+    "default": "jxrrry",
+    "query": "One Piece"
+  },
   "accentFont": "\"Marker Felt\", \"Chalkboard SE\", cursive",
   "palette": {
     "bg": "rgba(6,30,52,.55)",

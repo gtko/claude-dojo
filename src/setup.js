@@ -566,6 +566,11 @@ function normalizePatch(p) {
     out.projects.roots = out.projects.roots.map((r) => (typeof r === 'string' ? expandHome(r) : r));
   }
   if (typeof out.background === 'string') out.background = expandHome(out.background);
+  if (isObj(out.backgroundByTheme)) {
+    for (const k of Object.keys(out.backgroundByTheme)) {
+      if (typeof out.backgroundByTheme[k] === 'string') out.backgroundByTheme[k] = expandHome(out.backgroundByTheme[k]);
+    }
+  }
   return out;
 }
 
@@ -604,19 +609,39 @@ function validateConfig(c) {
   if (c.background !== undefined && c.background !== null && !(typeof c.background === 'string' && path.isAbsolute(c.background))) {
     fail('background doit être null ou un chemin absolu.');
   }
+  if (c.backgroundByTheme !== undefined && c.backgroundByTheme !== null) {
+    if (!isObj(c.backgroundByTheme)) fail('backgroundByTheme doit être un objet {identifiant de thème: chemin}.');
+    for (const [theme, bg] of Object.entries(c.backgroundByTheme)) {
+      if (!THEME_ID_RE.test(theme)) fail('backgroundByTheme : identifiant de thème invalide.');
+      if (bg === null) continue;
+      if (bg !== THEME_BG_ID && !(typeof bg === 'string' && path.isAbsolute(bg))) fail('backgroundByTheme : chemin absolu, null ou theme attendu.');
+      checkBackgroundPath(bg, 'backgroundByTheme');
+    }
+  }
 }
 
-// config.background (si fourni, non null) : même règle que set-background, c.-à-d. un fichier directement dans backgrounds/,
-// extension autorisée, jamais un lien symbolique. Vérifié sur la seule valeur envoyée, pas sur config.json entier.
-function checkBackgroundPath(p) {
+// Galerie d'un thème : fichier directement dans backgrounds/<theme>/ (un seul niveau). Renvoie l'id du thème, ou null.
+function galleryOwner(file) {
+  const rel = path.relative(paths.backgrounds(), path.resolve(file)).split(path.sep);
+  return rel.length === 2 && THEME_ID_RE.test(rel[0]) && rel[1] !== '' ? rel[0] : null;
+}
+
+// config.background (si fourni, non null) : même règle que set-background, c.-à-d. un fichier directement dans backgrounds/
+// ou dans une galerie backgrounds/<theme>/, extension autorisée, jamais un lien symbolique (fichier ou dossier de galerie).
+// Vérifié sur la seule valeur envoyée, pas sur config.json entier. label : nom du champ, pour les messages.
+// Sentinelle « theme » (backgroundByTheme seulement) : fond du thème choisi explicitement, ce n'est pas un chemin.
+function checkBackgroundPath(p, label = 'background') {
+  if (label === 'backgroundByTheme' && p === THEME_BG_ID) return;
   const file = path.resolve(p);
-  const dir = paths.backgrounds();
-  if (path.dirname(file) !== dir || !BG_EXT.includes(path.extname(file).toLowerCase())) {
-    fail(`background doit être null ou une image copiée dans ${dir} (jpg, jpeg, png, heic ou webp). Utilisez set-background.`);
+  const root = paths.backgrounds();
+  const direct = path.dirname(file) === root;
+  const owner = direct ? null : galleryOwner(file);
+  if ((!direct && owner === null) || !BG_EXT.includes(path.extname(file).toLowerCase())) {
+    fail(`${label} doit être null ou une image copiée dans ${root} (jpg, jpeg, png, heic ou webp), ou dans sa galerie. Utilisez set-background ou wallpapers use.`);
   }
-  let lst = null;
-  try { lst = fs.lstatSync(file); } catch {}
-  if (lst && lst.isSymbolicLink()) fail(`background : lien symbolique refusé : ${file}`);
+  const isLink = (f) => { try { return fs.lstatSync(f).isSymbolicLink(); } catch { return false; } };
+  if (isLink(file)) fail(`${label} : lien symbolique refusé : ${file}`);
+  if (owner !== null && (isLink(path.dirname(file)) || isLink(root))) fail(`${label} : lien symbolique refusé dans le dossier de galerie.`);
 }
 
 // Écrit config.json (0600, dossier 0700). Ne renvoie jamais les valeurs (le jeton Sentry en fait partie).
@@ -636,6 +661,9 @@ function writeConfig(input) {
   // weather décrit un seul lieu : il remplace l'ancien en entier (sinon le fuseau d'une ancienne ville resterait).
   if (Object.prototype.hasOwnProperty.call(patch, 'weather')) merged.weather = patch.weather;
   for (const k of Object.keys(patch)) if (patch[k] === null) delete merged[k];
+  if (isObj(merged.backgroundByTheme)) {
+    for (const k of Object.keys(merged.backgroundByTheme)) if (merged.backgroundByTheme[k] === null) delete merged.backgroundByTheme[k];
+  }
   validateConfig(merged);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   fs.chmodSync(dir, 0o700);
@@ -1014,22 +1042,54 @@ function themesInfo() {
   return { ok: true, themes: listThemes(), theme, background };
 }
 
+// Fond utilisable tel quel : chemin accepté par checkBackgroundPath et fichier régulier présent. La sentinelle « theme » n'est pas un fichier.
+function usableBackground(p) {
+  if (p === THEME_BG_ID) return false;
+  try { checkBackgroundPath(p, 'backgroundByTheme'); } catch { return false; }
+  return isRegularFile(p);
+}
+
+// Bascule de thème. Fond : 1) sentinelle « theme » mémorisée = fond du thème (null) ; 2) chemin mémorisé utilisable ;
+// 3) aucune entrée mémorisée et défaut du thème déjà téléchargé : ce défaut (si fond null ou de galerie) ;
+// 4) aucune entrée et fond de galerie : fond du thème (null). Un fond perso hors galerie reste inchangé.
+// needsSync : le thème a encore des fonds curés non téléchargés (wallpapers sync).
 function setTheme(arg) {
   const id = String(arg ?? '');
   if (!THEME_ID_RE.test(id)) fail('identifiant de thème attendu (lettres minuscules, chiffres, tirets).');
   const known = listThemes().map((t) => t.id);
   if (!known.includes(id)) fail(`thème inconnu : ${id}. Thèmes disponibles : ${known.join(', ') || 'aucun'}.`);
+  const before = readConfig() || {};
+  const prev = typeof before.background === 'string' ? before.background : null;
   writeConfig({ theme: id });
-  return { ok: true, theme: id };
+  const remembered = isObj(before.backgroundByTheme) ? before.backgroundByTheme[id] : undefined;
+  const absent = remembered === undefined || remembered === null;
+  const owner = prev === null ? null : galleryOwner(prev);
+  const dflt = defaultFileId(id);
+  const dfltFile = dflt === null ? null : galleryFileFor(id, dflt);
+  if (remembered === THEME_BG_ID) writeConfig({ background: null });
+  else if (typeof remembered === 'string' && usableBackground(remembered)) writeConfig({ background: remembered });
+  else if (absent && dfltFile !== null && replaceableBackground(prev)) applyGalleryFile(id, dfltFile.file);
+  else if (owner !== null) writeConfig({ background: null });
+  const after = readConfig() || {};
+  return {
+    ok: true,
+    theme: id,
+    background: typeof after.background === 'string' ? after.background : null,
+    hasDownloads: galleryFiles(id).length > 0,
+    needsSync: missingIds(id).length > 0,
+  };
 }
 
-// Supprime l'ancienne copie si elle est dans backgrounds/ : un chemin choisi par l'utilisateur n'est jamais touché.
+// Supprime l'ancienne copie seulement si elle est directement dans backgrounds/ : un chemin choisi par l'utilisateur
+// et les fonds de galerie (backgrounds/<theme>/) ne sont jamais touchés.
 function dropOldBackground(prev, keep) {
   if (typeof prev !== 'string' || prev === keep) return null;
-  if (!isInside(path.resolve(prev), paths.backgrounds())) return null;
+  if (path.dirname(path.resolve(prev)) !== paths.backgrounds()) return null;
   fs.rmSync(prev, { force: true });
   return prev;
 }
+
+const isRegularFile = (p) => { try { return fs.lstatSync(p).isFile(); } catch { return false; } };
 
 // Signature (magic bytes) de chaque format accepté : le contenu doit correspondre à l'extension.
 const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -1073,6 +1133,620 @@ function setBackground(arg) {
   return { ok: true, background: dest, removed: dropOldBackground(prev, dest) };
 }
 
+// ── Galerie Wallhaven (SFW) ──────────────────────────────────────────────
+// Fonds proposés par l'API publique Wallhaven, téléchargés dans backgrounds/<theme>/. Hôte et URL fixes (jamais surchargeables).
+const WALLHAVEN_API = 'https://wallhaven.cc/api/v1';
+const WALLHAVEN_IMG_HOST = 'w.wallhaven.cc';
+const WALLHAVEN_ID_RE = /^[a-z0-9]{4,10}$/;
+const GALLERY_FILE_RE = /^wallhaven-([a-z0-9]{4,10})\.(jpg|jpeg|png|webp)$/;
+const GALLERY_KIND = { '.jpg': 'jpeg', '.jpeg': 'jpeg', '.png': 'png', '.webp': 'webp' };
+const SEARCH_CATEGORIES = { 'stargate-sg1': '111' }; // défaut : 010 (anime)
+const API_TIMEOUT_MS = 15000;
+const IMG_TIMEOUT_MS = 60000;
+const IMG_MAX_BYTES = 25 * 1024 * 1024;
+// Identifiant réservé : le fond embarqué du thème (wallpapers use theme). Il sert aussi de sentinelle dans
+// backgroundByTheme[<thème>] : « le fond du thème a été choisi explicitement », pour que set-theme et sync ne réappliquent pas le défaut.
+const THEME_BG_ID = 'theme';
+// Entrée « bundled » de wallpapers.ids : même fond embarqué, jamais téléchargée ; wallpapers use bundled = wallpapers use theme.
+const BUNDLED_ID = 'bundled';
+const PROGRESS_FRESH_MS = 90 * 1000; // progression « en cours » si mise à jour il y a moins de 90 s
+
+const wallId = (v) => typeof v === 'string' && WALLHAVEN_ID_RE.test(v);
+const strOrNull = (v) => (typeof v === 'string' ? v : null);
+const httpsOrNull = (u) => {
+  if (typeof u !== 'string') return null;
+  try { return new URL(u).protocol === 'https:' ? u : null; } catch { return null; }
+};
+const galleryDir = (theme) => path.join(paths.backgrounds(), theme);
+const indexFile = () => path.join(paths.backgrounds(), 'index.json');
+
+// User-Agent exigé par Wallhaven (sinon 403) : version lue dans package.json à côté de ce fichier.
+function userAgent() {
+  try {
+    return `claude-dojo/${JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version}`;
+  } catch { return 'claude-dojo/inconnu'; }
+}
+
+// Erreur Wallhaven. fatal : la commande entière échoue (refus, limite de débit, réseau) ; sinon seul l'élément est sauté.
+function apiFail(msg, fatal) {
+  const e = new SetupError(msg);
+  e.fatal = fatal;
+  throw e;
+}
+
+// Délai minimal entre deux requêtes API : 1000 ms. DOJO_WALLHAVEN_MIN_INTERVAL_MS ne sert qu'aux tests.
+function wallhavenGap() {
+  const raw = process.env.DOJO_WALLHAVEN_MIN_INTERVAL_MS;
+  return raw && /^\d+$/.test(raw) ? Number(raw) : 1000;
+}
+
+// Client HTTP : requêtes séquentielles espacées de wallhavenGap() ms (API et images), sans redirection suivie, avec délai maximal.
+// deps (tests) : fetch, now, sleep.
+function makeWallhaven(deps = {}) {
+  const doFetch = deps.fetch || globalThis.fetch;
+  const now = deps.now || Date.now;
+  const pause = deps.sleep || sleep;
+  const gap = wallhavenGap();
+  const ua = userAgent();
+  let last = null;
+  async function spaced() {
+    if (last !== null) {
+      const left = last + gap - now();
+      if (left > 0) await pause(left);
+    }
+    last = now();
+  }
+  async function request(url, timeoutMs) {
+    try {
+      return await doFetch(url, { headers: { 'User-Agent': ua }, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
+    } catch (e) {
+      if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) apiFail('délai dépassé en interrogeant Wallhaven.', true);
+      apiFail('erreur réseau vers Wallhaven (connexion impossible ou redirection refusée).', true);
+    }
+  }
+  function checkStatus(res) {
+    if (res.ok) return;
+    if (res.status === 403) apiFail('Wallhaven a refusé la requête.', true);
+    if (res.status === 429) apiFail('trop de requêtes, réessayez plus tard.', true);
+    if (res.status === 404) apiFail('fond introuvable sur Wallhaven (404).', false);
+    apiFail(`réponse inattendue de Wallhaven (HTTP ${res.status}).`, false);
+  }
+  return {
+    async json(url) {
+      await spaced();
+      const res = await request(url, API_TIMEOUT_MS);
+      checkStatus(res);
+      try { return await res.json(); } catch { return apiFail('réponse Wallhaven illisible.', false); }
+    },
+    async image(url) {
+      await spaced();
+      const res = await request(url, IMG_TIMEOUT_MS);
+      checkStatus(res);
+      return res;
+    },
+  };
+}
+
+// Corps de l'image plafonné à IMG_MAX_BYTES : Content-Length d'abord, puis comptage en streaming.
+async function readCapped(res) {
+  const tooBig = () => fail(`image trop lourde : ${IMG_MAX_BYTES / (1024 * 1024)} Mo maximum.`);
+  const declared = res.headers.get('content-length');
+  if (declared !== null && Number(declared) > IMG_MAX_BYTES) tooBig();
+  if (!res.body) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > IMG_MAX_BYTES) tooBig();
+    return buf;
+  }
+  const reader = res.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > IMG_MAX_BYTES) {
+      await reader.cancel().catch(() => {});
+      tooBig();
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, total);
+}
+
+// URL de l'image : https, hôte exactement w.wallhaven.cc, sans identifiants ni port explicite.
+function imageUrl(raw) {
+  let u;
+  try { u = new URL(String(raw)); } catch { fail('URL d\'image invalide.'); }
+  if (u.protocol !== 'https:' || u.hostname !== WALLHAVEN_IMG_HOST || u.port !== '' || u.username !== '' || u.password !== '') {
+    fail(`URL d'image refusée : seul https://${WALLHAVEN_IMG_HOST} est accepté.`);
+  }
+  return u;
+}
+
+// Écriture atomique en 0600 : temporaire créé en O_EXCL, puis rename (qui remplace un éventuel lien sans le suivre).
+function writeSecret(dest, buf) {
+  const tmp = `${dest}.tmp-${process.pid}`;
+  fs.rmSync(tmp, { force: true });
+  try {
+    fs.writeFileSync(tmp, buf, { mode: 0o600, flag: 'wx' });
+    fs.renameSync(tmp, dest);
+  } catch (e) {
+    fs.rmSync(tmp, { force: true });
+    throw e;
+  }
+}
+
+// Dossier de galerie : créé en 0700, jamais un lien symbolique.
+function ensureSafeDir(dir) {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (!fs.lstatSync(dir).isDirectory()) fail(`dossier refusé (lien symbolique ou fichier) : ${dir}`);
+  fs.chmodSync(dir, 0o700);
+}
+
+// Vrai si le fichier a la signature de son format (lecture sans suivre les liens).
+function magicMatches(file, kind) {
+  let fd = null;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const buf = Buffer.alloc(16);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    return bgKind(buf.subarray(0, n)) === kind;
+  } catch { return false; } finally { if (fd !== null) fs.closeSync(fd); }
+}
+
+// Fonds téléchargés d'un thème : backgrounds/<theme>/wallhaven-<id>.<ext>, fichiers réguliers au contenu valide, triés par nom.
+function galleryFiles(theme) {
+  const dir = galleryDir(theme);
+  try { if (!fs.lstatSync(dir).isDirectory()) return []; } catch { return []; }
+  let names = [];
+  try { names = fs.readdirSync(dir).sort(); } catch { return []; }
+  const out = [];
+  for (const name of names) {
+    const m = GALLERY_FILE_RE.exec(name);
+    if (!m) continue;
+    const file = path.join(dir, name);
+    if (!isRegularFile(file) || !magicMatches(file, GALLERY_KIND[path.extname(name)])) continue;
+    out.push({ id: m[1], file });
+  }
+  return out;
+}
+
+const galleryFileFor = (theme, id) => galleryFiles(theme).find((f) => f.id === id) || null;
+
+// backgrounds/index.json : une entrée par (thème, id), pour les crédits (source, résolution). Lien ou contenu invalide = vide.
+function readIndex() {
+  if (!isRegularFile(indexFile())) return [];
+  try {
+    const v = JSON.parse(fs.readFileSync(indexFile(), 'utf8'));
+    return Array.isArray(v) ? v.filter(isObj) : [];
+  } catch { return []; }
+}
+
+function recordDownload(entry) {
+  ensureSafeDir(paths.backgrounds());
+  const rest = readIndex().filter((e) => !(e.id === entry.id && e.theme === entry.theme));
+  writeSecret(indexFile(), Buffer.from(JSON.stringify([...rest, entry], null, 2) + '\n'));
+}
+
+// Thème connu (listé par listThemes), ou erreur.
+function knownTheme(arg) {
+  const id = String(arg ?? '');
+  if (!THEME_ID_RE.test(id)) fail('identifiant de thème attendu (lettres minuscules, chiffres, tirets).');
+  if (!listThemes().some((t) => t.id === id)) fail(`thème inconnu : ${id}.`);
+  return id;
+}
+
+const activeTheme = () => {
+  const t = (readConfig() || {}).theme;
+  return typeof t === 'string' && THEME_ID_RE.test(t) ? t : DEFAULT_THEME;
+};
+
+function themeJson(id) {
+  try {
+    const t = JSON.parse(fs.readFileSync(path.join(paths.themes(), id, 'theme.json'), 'utf8'));
+    return isObj(t) ? t : null;
+  } catch { return null; }
+}
+
+// Galerie curée déclarée dans theme.json (champ wallpapers) : { ids, query, default }. ids peut contenir « bundled »
+// (fond embarqué du thème, jamais téléchargé). default : id du fond à télécharger en premier, « bundled », ou null.
+function curatedOf(theme) {
+  const w = (themeJson(theme) || {}).wallpapers;
+  const idOk = (v) => v === BUNDLED_ID || wallId(v);
+  if (!isObj(w) || w.provider !== 'wallhaven' || !Array.isArray(w.ids) || !w.ids.every(idOk)
+    || typeof w.query !== 'string' || w.query.trim() === '') {
+    fail(`le thème ${theme} n'a pas de galerie Wallhaven valide (champ wallpapers de theme.json).`);
+  }
+  const def = w.default === undefined ? null : w.default;
+  if (def !== null && !(idOk(def) && w.ids.includes(def))) {
+    fail(`le thème ${theme} : wallpapers.default doit être un identifiant de ids (ou bundled).`);
+  }
+  return { ids: w.ids, query: w.query, default: def };
+}
+
+// Identifiants Wallhaven de la galerie : sans « bundled », sans doublon, dans l'ordre du pack.
+const remoteIdsOf = (curated) => [...new Set(curated.ids.filter((id) => id !== BUNDLED_ID))];
+
+// Id du fond par défaut à télécharger : null si le thème n'a pas de défaut, si le défaut est « bundled », ou sans galerie valide.
+function defaultFileId(theme) {
+  let def = null;
+  try { def = curatedOf(theme).default; } catch { return null; }
+  return def !== null && def !== BUNDLED_ID ? def : null;
+}
+
+// IDs curés du thème absents de la galerie (vide si le thème n'a pas de galerie valide).
+function missingIds(theme) {
+  let ids;
+  try { ids = remoteIdsOf(curatedOf(theme)); } catch { return []; }
+  const have = new Set(galleryFiles(theme).map((f) => f.id));
+  return ids.filter((id) => !have.has(id));
+}
+
+// Fond courant remplaçable par le fond par défaut : aucun fond, ou un fichier de galerie (backgrounds/<theme>/).
+// Un fond perso hors galerie n'est jamais remplacé.
+const replaceableBackground = (bg) => typeof bg !== 'string' || bg === '' || galleryOwner(bg) !== null;
+
+// Entrée commune aux réponses (list, search) : id, résolution, miniature, page source, téléchargement local.
+function toEntry(d, locals) {
+  const file = locals.get(d.id) || null;
+  return {
+    id: d.id,
+    resolution: strOrNull(d.resolution),
+    thumb: httpsOrNull(d.thumbs && d.thumbs.large),
+    source: strOrNull(d.url),
+    purity: strOrNull(d.purity),
+    downloaded: file !== null,
+    file,
+  };
+}
+
+const localsOf = (theme) => new Map(galleryFiles(theme).map((f) => [f.id, f.file]));
+
+async function wallpapersList(arg, api) {
+  const theme = knownTheme(arg);
+  const curated = curatedOf(theme);
+  const ids = remoteIdsOf(curated);
+  const locals = localsOf(theme);
+  const wallpapers = [];
+  const skipped = [];
+  for (const id of ids) {
+    let d;
+    try {
+      const body = await api.json(`${WALLHAVEN_API}/w/${id}`);
+      d = body && isObj(body.data) ? body.data : apiFail('réponse Wallhaven inattendue.', false);
+    } catch (e) {
+      if (!(e instanceof SetupError) || e.fatal) throw e;
+      skipped.push({ id, reason: e.message });
+      continue;
+    }
+    if (d.id !== id) skipped.push({ id, reason: 'identifiant inattendu dans la réponse.' });
+    else if (d.purity !== 'sfw') skipped.push({ id, reason: `contenu non SFW (${String(d.purity)}).` });
+    else wallpapers.push(toEntry(d, locals));
+  }
+  return { ok: true, theme, query: curated.query, default: curated.default, wallpapers, skipped };
+}
+
+function parsePage(arg) {
+  if (arg === undefined || arg === '') return 1;
+  const n = Number(arg);
+  if (!/^\d+$/.test(String(arg)) || n < 1 || n > 1000) fail('page attendue : entier entre 1 et 1000.');
+  return n;
+}
+
+async function wallpapersSearch(themeArg, pageArg, api) {
+  const theme = knownTheme(themeArg);
+  const { query } = curatedOf(theme);
+  const page = parsePage(pageArg);
+  // purity=100 (SFW) forcé : aucun paramètre ne le change.
+  const params = new URLSearchParams({
+    q: query,
+    purity: '100',
+    categories: SEARCH_CATEGORIES[theme] || '010',
+    atleast: '2560x1440',
+    ratios: '16x10,16x9',
+    sorting: 'favorites',
+    page: String(page),
+  });
+  const body = await api.json(`${WALLHAVEN_API}/search?${params}`);
+  if (!isObj(body) || !Array.isArray(body.data)) apiFail('réponse Wallhaven inattendue.', false);
+  const meta = isObj(body.meta) ? body.meta : {};
+  const lastPage = Number.isInteger(meta.last_page) && meta.last_page >= 1 ? meta.last_page : page;
+  const locals = localsOf(theme);
+  const wallpapers = body.data
+    .filter((d) => isObj(d) && wallId(d.id) && d.purity === 'sfw')
+    .map((d) => toEntry(d, locals));
+  return { ok: true, theme, page, lastPage, wallpapers };
+}
+
+async function wallpapersDownload(idArg, themeArg, api) {
+  const id = String(idArg ?? '');
+  if (!WALLHAVEN_ID_RE.test(id)) fail('identifiant Wallhaven invalide (4 à 10 caractères : a-z et 0-9).');
+  if (id === THEME_BG_ID || id === BUNDLED_ID) fail(`identifiant réservé : ${id} désigne le fond embarqué du thème.`);
+  const theme = knownTheme(themeArg === undefined ? activeTheme() : themeArg);
+  const body = await api.json(`${WALLHAVEN_API}/w/${id}`);
+  const d = body && isObj(body.data) ? body.data : apiFail('réponse Wallhaven inattendue.', false);
+  if (d.id !== id) fail('identifiant inattendu dans la réponse Wallhaven.');
+  if (d.purity !== 'sfw') fail(`image refusée : contenu non SFW (${String(d.purity)}).`);
+  const url = imageUrl(d.path);
+  const ext = path.extname(url.pathname).toLowerCase();
+  if (!GALLERY_KIND[ext]) fail(`format refusé (${ext || 'sans extension'}) : jpg, png ou webp attendu.`);
+  const res = await api.image(url.href);
+  const buf = await readCapped(res);
+  if (bgKind(buf) !== GALLERY_KIND[ext]) {
+    fail(`contenu incohérent avec l'extension ${ext} : ce fichier n'est pas une image ${GALLERY_KIND[ext].toUpperCase()} valide.`);
+  }
+  ensureSafeDir(paths.backgrounds());
+  ensureSafeDir(galleryDir(theme));
+  const file = path.join(galleryDir(theme), `wallhaven-${id}${ext}`);
+  writeSecret(file, buf);
+  const source = strOrNull(d.url);
+  const resolution = strOrNull(d.resolution);
+  recordDownload({ id, theme, source, resolution, file, downloadedAt: new Date().toISOString() });
+  return { ok: true, id, theme, file, source, resolution };
+}
+
+// Fond = fichier de galerie pour ce thème : config.background et config.backgroundByTheme[theme].
+function applyGalleryFile(theme, file) {
+  const cfg = readConfig() || {};
+  const byTheme = isObj(cfg.backgroundByTheme) ? { ...cfg.backgroundByTheme } : {};
+  byTheme[theme] = file;
+  writeConfig({ background: file, backgroundByTheme: byTheme });
+}
+
+// Tous les fonds téléchargés d'un id, un par thème : backgrounds/<theme>/wallhaven-<id>.*, triés par nom de thème.
+// Racine absente ou lien symbolique = aucun ; une galerie en lien ou un fichier invalide est ignoré (galleryFiles).
+function downloadsOf(id) {
+  try { if (!fs.lstatSync(paths.backgrounds()).isDirectory()) return []; } catch { return []; }
+  let names = [];
+  try { names = fs.readdirSync(paths.backgrounds()).sort(); } catch { return []; }
+  const out = [];
+  for (const theme of names) {
+    if (!THEME_ID_RE.test(theme)) continue;
+    const hit = galleryFileFor(theme, id);
+    if (hit) out.push({ theme, file: hit.file });
+  }
+  return out;
+}
+
+// Fond téléchargé <id> : dans le thème donné ; sinon dans le thème actif ; sinon dans l'unique autre thème qui l'a.
+// Présent dans plusieurs autres thèmes : erreur, il faut préciser le thème. config.theme n'est jamais modifié.
+function downloadedFor(id, themeArg) {
+  if (themeArg !== undefined) {
+    const theme = knownTheme(themeArg);
+    const hit = galleryFileFor(theme, id);
+    if (!hit) fail(`fond ${id} non téléchargé pour le thème ${theme} (wallpapers download ${id} ${theme}).`);
+    return { theme, file: hit.file };
+  }
+  const active = activeTheme();
+  const found = downloadsOf(id);
+  if (found.length === 0) fail(`fond ${id} non téléchargé (wallpapers download ${id} ${active}).`);
+  const here = found.find((d) => d.theme === active);
+  if (here) return here;
+  if (found.length > 1) {
+    fail(`fond ${id} téléchargé pour plusieurs thèmes (${found.map((d) => d.theme).join(', ')}) : précisez le thème, wallpapers use ${id} <theme>.`);
+  }
+  return found[0];
+}
+
+// use <id|fichier> [theme] : id = fond téléchargé (voir downloadedFor) ; fichier de galerie = pas de copie ;
+// autre fichier = set-background. Le thème n'est accepté qu'avec un identifiant. theme et bundled : fond du thème (alias).
+function wallpapersUse(arg, themeArg) {
+  const value = String(arg ?? '');
+  if (value === '') fail('identifiant ou chemin attendu : wallpapers use <id|fichier|theme|bundled> [theme].');
+  if (value === THEME_BG_ID || value === BUNDLED_ID) {
+    if (themeArg !== undefined) fail(`wallpapers use ${value} : pas de second argument, le thème actif est utilisé.`);
+    return useThemeBackground();
+  }
+  if (WALLHAVEN_ID_RE.test(value)) {
+    const hit = downloadedFor(value, themeArg);
+    applyGalleryFile(hit.theme, hit.file);
+    return { ok: true, background: hit.file, theme: hit.theme, id: value };
+  }
+  if (themeArg !== undefined) fail('thème accepté seulement avec un identifiant Wallhaven : wallpapers use <id> [theme].');
+  const file = path.resolve(expandHome(value));
+  const owner = galleryOwner(file);
+  if (owner !== null) {
+    if (!isRegularFile(file)) fail(`fichier introuvable dans la galerie : ${file}`);
+    applyGalleryFile(owner, file);
+    const m = GALLERY_FILE_RE.exec(path.basename(file));
+    return { ok: true, background: file, theme: owner, id: m ? m[1] : null };
+  }
+  const set = setBackground(value);
+  return { ok: true, background: set.background, theme: activeTheme(), id: null };
+}
+
+// Fond du thème (choix explicite) : config.background = null, et backgroundByTheme[thème actif] = sentinelle « theme » :
+// set-theme et sync ne rétablissent plus le fond par défaut de ce thème. Même effet que
+// set-background default : la copie directe éventuelle (backgrounds/<fichier>) est retirée, les galeries jamais.
+function useThemeBackground() {
+  const theme = activeTheme();
+  const prev = (readConfig() || {}).background;
+  writeConfig({ background: null, backgroundByTheme: { [theme]: THEME_BG_ID } });
+  dropOldBackground(prev, null);
+  return { ok: true, background: null, theme, id: THEME_BG_ID };
+}
+
+// Fond embarqué du thème (src/themes/<id>/background.jpg) : null si le fichier manque.
+// current : config.background absent et thème actif.
+function themeBuiltin(theme) {
+  const file = path.join(paths.themes(), theme, 'background.jpg');
+  if (!isRegularFile(file)) return null;
+  const cfg = readConfig() || {};
+  const bg = typeof cfg.background === 'string' && cfg.background !== '' ? cfg.background : null;
+  return { id: THEME_BG_ID, file, source: null, resolution: null, current: bg === null && theme === activeTheme(), builtin: true };
+}
+
+// Liste des fonds d'un thème : fond du thème en tête pour naruto, en dernier pour les autres, puis les téléchargés.
+function wallpapersLocal(arg) {
+  const theme = knownTheme(arg);
+  const current = (readConfig() || {}).background;
+  const index = readIndex();
+  const downloaded = galleryFiles(theme).map((f) => {
+    const meta = index.find((e) => e.theme === theme && e.id === f.id) || {};
+    return {
+      id: f.id,
+      file: f.file,
+      source: strOrNull(meta.source),
+      resolution: strOrNull(meta.resolution),
+      current: f.file === current,
+      builtin: false,
+    };
+  });
+  const embedded = themeBuiltin(theme);
+  let wallpapers = downloaded;
+  if (embedded !== null) wallpapers = theme === DEFAULT_THEME ? [embedded, ...downloaded] : [...downloaded, embedded];
+  return { ok: true, theme, count: downloaded.length, wallpapers };
+}
+
+// next : fond suivant dans la liste de local du thème actif (fond du thème compris), cyclique, depuis le fond courant.
+function wallpapersNext() {
+  const theme = activeTheme();
+  const list = wallpapersLocal(theme).wallpapers;
+  if (list.length === 0) fail(`aucun fond pour le thème ${theme} : ni fond du thème ni téléchargement (wallpapers download <id>).`);
+  const at = list.findIndex((w) => w.current);
+  const pick = list[(at + 1) % list.length];
+  if (pick.builtin) {
+    useThemeBackground();
+    return { ok: true, background: null, theme, id: THEME_BG_ID, count: list.length };
+  }
+  applyGalleryFile(theme, pick.file);
+  return { ok: true, background: pick.file, theme, id: pick.id, count: list.length };
+}
+
+// ── Synchronisation : wallpapers sync [theme], progression : wallpapers progress <theme> ─────────────
+// Progression du thème : backgrounds/<theme>/.sync-progress.json = { pid, total, done, current }, 0600, écrite atomiquement.
+// Le fichier sert aussi de verrou : pid vivant ET fichier mis à jour il y a moins de PROGRESS_FRESH_MS = sync en cours.
+const progressFile = (theme) => path.join(galleryDir(theme), '.sync-progress.json');
+const progressBytes = (state) => Buffer.from(JSON.stringify({ pid: process.pid, ...state }) + '\n');
+
+// Contenu du fichier de progression (null si absent, illisible ou lien symbolique).
+function readProgress(theme) {
+  const file = progressFile(theme);
+  if (!isRegularFile(file)) return null;
+  try { const v = JSON.parse(fs.readFileSync(file, 'utf8')); return isObj(v) ? v : null; } catch { return null; }
+}
+
+// Vrai si le fichier de progression existe (fichier régulier) et a été mis à jour il y a moins de PROGRESS_FRESH_MS.
+function progressFresh(theme) {
+  try {
+    const st = fs.lstatSync(progressFile(theme));
+    return st.isFile() && Date.now() - st.mtimeMs < PROGRESS_FRESH_MS;
+  } catch { return false; }
+}
+
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
+// Prend le verrou du thème : création exclusive (O_EXCL). Un verrou vivant bloque ; un verrou périmé (fichier ancien
+// ou pid mort) est repris. Renvoie false si un autre sync tourne.
+function acquireLock(theme, state) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      fs.writeFileSync(progressFile(theme), progressBytes(state), { mode: 0o600, flag: 'wx' });
+      return true;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+    const cur = readProgress(theme);
+    if (cur && progressFresh(theme) && pidAlive(cur.pid)) return false;
+    fs.rmSync(progressFile(theme), { force: true });
+  }
+  return false;
+}
+
+// Fin de sync : retire la progression seulement si elle appartient à ce processus.
+function releaseLock(theme) {
+  const cur = readProgress(theme);
+  if (cur && cur.pid === process.pid) fs.rmSync(progressFile(theme), { force: true });
+}
+
+// Fond par défaut appliqué à la fin de son téléchargement (sync), si le thème est le thème actif, qu'aucun choix n'est
+// mémorisé pour lui (backgroundByTheme absent ou sentinelle absente) et que le fond courant est remplaçable (voir replaceableBackground).
+function applyDefaultFile(theme, file) {
+  if (theme !== activeTheme()) return false;
+  const cfg = readConfig() || {};
+  const remembered = isObj(cfg.backgroundByTheme) ? cfg.backgroundByTheme[theme] : undefined;
+  if (remembered !== undefined && remembered !== null) return false;
+  if (!replaceableBackground(cfg.background)) return false;
+  applyGalleryFile(theme, file);
+  return true;
+}
+
+// sync [theme] : télécharge les fonds curés (theme.json) pas encore présents, un par un, espacés (makeWallhaven).
+// Le fond par défaut (wallpapers.default) passe en premier. « bundled » n'est jamais téléchargé.
+// Erreur propre à un fond (404, non SFW, trop lourd, signature) : dans failed, on continue. Erreur bloquante
+// (403, 429, réseau, délai) : le sync s'arrête proprement (stopped), ce qui est téléchargé reste.
+// Le fond actif ne change qu'à la fin du téléchargement du défaut, si applyDefaultFile l'accepte (defaultApplied).
+async function wallpapersSync(themeArg, api) {
+  const theme = knownTheme(themeArg === undefined ? activeTheme() : themeArg);
+  const curated = curatedOf(theme);
+  const defId = defaultFileId(theme);
+  const ids = remoteIdsOf(curated);
+  const order = defId === null ? ids : [defId, ...ids.filter((id) => id !== defId)];
+  const have = new Set(galleryFiles(theme).map((f) => f.id));
+  const skipped = order.filter((id) => have.has(id));
+  const todo = order.filter((id) => !have.has(id));
+  const total = order.length;
+  const defaultId = curated.default;
+  if (todo.length === 0) {
+    return { ok: true, theme, defaultId, defaultApplied: false, total, downloaded: [], skipped, failed: [], stopped: null };
+  }
+  ensureSafeDir(paths.backgrounds());
+  ensureSafeDir(galleryDir(theme));
+  let done = skipped.length;
+  if (!acquireLock(theme, { total, done, current: null })) return { ok: true, theme, alreadyRunning: true };
+  const downloaded = [];
+  const failed = [];
+  let stopped = null;
+  let defaultApplied = false;
+  try {
+    for (const id of todo) {
+      writeSecret(progressFile(theme), progressBytes({ total, done, current: id }));
+      try {
+        const got = await wallpapersDownload(id, theme, api);
+        downloaded.push(id);
+        if (id === defId && applyDefaultFile(theme, got.file)) defaultApplied = true;
+      } catch (e) {
+        if (!(e instanceof SetupError) || e.fatal) {
+          stopped = e && e.message ? e.message : String(e);
+          break;
+        }
+        failed.push({ id, reason: e.message });
+      }
+      done += 1;
+    }
+  } finally {
+    releaseLock(theme);
+  }
+  return { ok: true, theme, defaultId, defaultApplied, total, downloaded, skipped, failed, stopped };
+}
+
+// progress <theme> : running = progression mise à jour il y a moins de 90 s ; total et done du dernier sync.
+function wallpapersProgress(arg) {
+  const theme = knownTheme(arg);
+  const p = readProgress(theme) || {};
+  const count = (v) => (Number.isInteger(v) && v >= 0 ? v : 0);
+  return { ok: true, theme, running: progressFresh(theme), total: count(p.total), done: count(p.done) };
+}
+
+// Sous-commandes : wallpapers list|search|download|sync|progress|use|next|local. deps (fetch, now, sleep) : injectés par les tests.
+async function wallpapers(args = [], deps = {}) {
+  const [sub, a2, a3] = args;
+  switch (sub) {
+    case 'list': return wallpapersList(a2, makeWallhaven(deps));
+    case 'search': return wallpapersSearch(a2, a3, makeWallhaven(deps));
+    case 'download': return wallpapersDownload(a2, a3, makeWallhaven(deps));
+    case 'sync': return wallpapersSync(a2, makeWallhaven(deps));
+    case 'progress': return wallpapersProgress(a2);
+    case 'use': return wallpapersUse(a2, a3);
+    case 'next': return wallpapersNext();
+    case 'local': return wallpapersLocal(a2);
+    default: return fail('wallpapers attend list, search, download, sync, progress, use, next ou local.');
+  }
+}
+
 // ── Dispatch CLI ─────────────────────────────────────────────────────────
 const USAGE = [
   'node setup.js detect',
@@ -1080,6 +1754,15 @@ const USAGE = [
   'node setup.js themes',
   'node setup.js set-theme <id>',
   'node setup.js set-background <chemin|default>',
+  'node setup.js wallpapers list <theme>',
+  'node setup.js wallpapers search <theme> [page]',
+  'node setup.js wallpapers download <id> [theme]',
+  'node setup.js wallpapers sync [theme]',
+  'node setup.js wallpapers progress <theme>',
+  'node setup.js wallpapers use <id|fichier> [theme]',
+  'node setup.js wallpapers use theme|bundled',
+  'node setup.js wallpapers next',
+  'node setup.js wallpapers local <theme>',
   'node setup.js geocode <ville>',
   'node setup.js install-files <srcdir>',
   'node setup.js npm-install [node]',
@@ -1090,7 +1773,7 @@ const USAGE = [
   'node setup.js status',
 ];
 
-async function main(argv) {
+async function main(argv, deps = {}) {
   const [cmd, a1, a2] = argv;
   switch (cmd) {
     case undefined: case '-h': case '--help':
@@ -1100,6 +1783,7 @@ async function main(argv) {
     case 'themes': return themesInfo();
     case 'set-theme': return setTheme(a1);
     case 'set-background': return setBackground(a1);
+    case 'wallpapers': return wallpapers(argv.slice(1), deps);
     case 'geocode': return geocode(readArg(a1));
     case 'install-files': return installFiles(readArg(a1));
     case 'npm-install': return npmInstall(a1 || null);
@@ -1132,4 +1816,5 @@ if (require.main === module) {
 module.exports = {
   main, detect, mergeSettings, unmergeSettings, writeConfig, installFiles,
   launchAgentsInstall, launchAgentsUninstall, uninstall, lineDiff, deepMerge, validateConfig,
+  wallpapers, setTheme,
 };
