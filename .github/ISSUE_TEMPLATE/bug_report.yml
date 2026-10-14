@@ -1,0 +1,79 @@
+name: Bug report
+description: Something in claude-dojo is broken or misbehaves on macOS
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+        Do not paste personal data, secrets, OAuth tokens or unredacted logs. Redact them first.
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Output of `sw_vers -productVersion`
+      placeholder: "15.4"
+    validations:
+      required: true
+
+  - type: input
+    id: chip
+    attributes:
+      label: Chip
+      description: Apple silicon or Intel, with the model name (Apple menu > About This Mac)
+      placeholder: "Apple M3 Pro"
+    validations:
+      required: true
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version
+      description: Output of `node --version` (Node.js 18 or newer is required)
+      placeholder: "v20.11.1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected to happen, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run ./install.sh --yes --no-launchd
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: install-logs
+    attributes:
+      label: Install logs
+      description: Output of the install script. Redact personal data first.
+      render: shell
+
+  - type: textarea
+    id: agent-log
+    attributes:
+      label: agent.log
+      description: Relevant excerpt of agent.log. Remove paths, project names and anything personal.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I have removed personal data and secrets from the logs and screenshots above.
+          required: true
+        - label: I searched the existing issues first.
+          required: true

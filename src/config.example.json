@@ -1,0 +1,20 @@
+{
+  "weather": {
+    "name": "Paris",
+    "lat": 48.8566,
+    "lon": 2.3522,
+    "timezone": "Europe/Paris"
+  },
+  "calendars": [],
+  "github": {
+    "owners": []
+  },
+  "projects": {
+    "roots": ["~/Projects"],
+    "onlyOwners": false
+  },
+  "sentry": {
+    "token": "",
+    "org": ""
+  }
+}

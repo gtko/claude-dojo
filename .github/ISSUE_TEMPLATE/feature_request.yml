@@ -1,0 +1,50 @@
+name: Feature request
+description: Suggest an idea or an improvement for claude-dojo
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. claude-dojo is macOS only, so please keep proposals within that scope.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the situation you are in and what gets in the way.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe what you would like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about, if any.
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Output of `sw_vers -productVersion`, if relevant
+      placeholder: "15.4"
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This is a feature, not a bug report.
+          required: true
+        - label: The idea does not require personal data or secrets to work.
+          required: true
+        - label: I searched the existing issues first.
+          required: true

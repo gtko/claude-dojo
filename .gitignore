@@ -1,0 +1,7 @@
+node_modules/
+cache/
+*.app
+.DS_Store
+config.json
+*.log
+*.bak-*
