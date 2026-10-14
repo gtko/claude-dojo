@@ -34,6 +34,7 @@ function cli(home, args, { input, env = {} } = {}) {
 
 const settingsFile = (home) => path.join(home, '.claude', 'settings.json');
 const configFile = (home) => path.join(home, '.config', 'claude-dojo', 'config.json');
+const stateFile = (home) => path.join(home, '.config', 'claude-dojo', 'state.json');
 const writeJson = (file, obj) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2));
@@ -514,4 +515,116 @@ test('setup.js n utilise que des modules natifs (zéro dépendance)', () => {
   const requires = [...src.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]);
   for (const r of requires) assert.ok(allowed.has(r), `module inattendu : ${r}`);
   assert.ok(!/exec\(\s*['"`]/.test(src), 'jamais exec avec une chaîne (shell)');
+});
+
+test('écriture atomique : aucun fichier tmp résiduel, mode d origine conservé', () => {
+  const home = tmpHome();
+  writeJson(settingsFile(home), richSettings());
+  fs.chmodSync(settingsFile(home), 0o600);
+  const inode = fs.statSync(settingsFile(home)).ino;
+  const r = cli(home, ['merge-settings', JSON.stringify({ heavyGate: true, statusLine: 'replace' })]);
+  assert.equal(r.code, 0, r.raw);
+  assert.equal(r.out.changed, true);
+  assert.notEqual(fs.statSync(settingsFile(home)).ino, inode, 'remplacé par renommage (nouvel inode), pas écrit en place');
+  assert.equal(fs.statSync(settingsFile(home)).mode & 0o777, 0o600, 'mode conservé');
+  assert.deepEqual(fs.readdirSync(path.dirname(settingsFile(home))).filter((n) => n.includes('.tmp-')), []);
+  assert.equal(backups(settingsFile(home)).length, 1, 'sauvegarde horodatée toujours créée');
+});
+
+test('settings.json lien symbolique (dotfiles) : le lien est conservé, la cible reçoit les hooks', () => {
+  const home = tmpHome();
+  const dotfiles = path.join(home, 'dotfiles', 'claude');
+  const target = path.join(dotfiles, 'settings.json');
+  writeJson(target, richSettings());
+  fs.mkdirSync(path.dirname(settingsFile(home)), { recursive: true });
+  fs.symlinkSync(target, settingsFile(home));
+  const r = cli(home, ['merge-settings', JSON.stringify({ heavyGate: true, statusLine: 'keep' })]);
+  assert.equal(r.code, 0, r.raw);
+  assert.equal(r.out.changed, true);
+  assert.ok(fs.lstatSync(settingsFile(home)).isSymbolicLink(), 'le lien n est pas remplacé par un fichier');
+  assert.equal(fs.readlinkSync(settingsFile(home)), target);
+  assert.ok(dojoCommands(readJson(target)).length > 0, 'la cible reçoit les hooks dojo');
+  assert.deepEqual(fs.readdirSync(dotfiles).filter((n) => n.includes('.tmp-')), []);
+});
+
+test('settings.json lien cassé : la cible est créée, le lien conservé', () => {
+  const home = tmpHome();
+  const target = path.join(home, 'dotfiles', 'settings.json');
+  fs.mkdirSync(path.dirname(settingsFile(home)), { recursive: true });
+  fs.symlinkSync(target, settingsFile(home));
+  const r = cli(home, ['merge-settings', '{"statusLine":"keep"}']);
+  assert.equal(r.code, 0, r.raw);
+  assert.ok(fs.lstatSync(settingsFile(home)).isSymbolicLink(), 'lien conservé');
+  assert.ok(readJson(target).hooks.Stop, 'cible créée avec les hooks');
+});
+
+test('launchagents install refuse un bundle sur un volume monté, en AppTranslocation ou hors des dossiers d application', () => {
+  const home = tmpHome();
+  const msg = 'Déplace DojoWallpaper.app dans /Applications puis relance-la.';
+  const bad = [
+    '/Volumes/ClaudeDojo/DojoWallpaper.app',
+    '/private/var/folders/xx/AppTranslocation/ABC123/d/DojoWallpaper.app',
+    path.join(home, 'Downloads', 'DojoWallpaper.app'),
+  ];
+  for (const app of bad) {
+    const r = cli(home, ['launchagents', 'install', JSON.stringify({ dryRun: true, node: process.execPath, app })]);
+    assert.equal(r.code, 1, `${app} : ${r.raw}`);
+    assert.equal(r.out.ok, false);
+    assert.equal(r.out.error, msg);
+  }
+  // Refus sans dryRun : rien n'est écrit (LaunchAgents absents).
+  const real = cli(home, ['launchagents', 'install', JSON.stringify({ noLaunchd: true, node: process.execPath, app: bad[0] })]);
+  assert.equal(real.code, 1, real.raw);
+  assert.equal(fs.existsSync(path.join(home, 'Library')), false, 'aucun LaunchAgent écrit après un refus');
+
+  // Dossiers d'applications de test (appDirsOf) : acceptés, y compris le cas install.sh (~/Applications).
+  for (const app of [path.join(home, 'Applications', 'DojoWallpaper.app'), path.join(home, 'SysApplications', 'DojoWallpaper.app')]) {
+    const ok = cli(home, ['launchagents', 'install', JSON.stringify({ dryRun: true, node: process.execPath, app })]);
+    assert.equal(ok.code, 0, `${app} : ${ok.raw}`);
+    assert.equal(ok.out.ok, true);
+  }
+});
+
+test('VITEST_MAX_WORKERS posé par l utilisateur : conservé au merge heavy-gate, à sa désactivation et à l unmerge', () => {
+  const home = tmpHome();
+  writeJson(settingsFile(home), { ...richSettings(), env: { FOO: 'bar', VITEST_MAX_WORKERS: '2' } });
+  assert.equal(cli(home, ['merge-settings', JSON.stringify({ heavyGate: true, statusLine: 'keep' })]).out.ok, true);
+  assert.equal(cli(home, ['merge-settings', JSON.stringify({ heavyGate: false, statusLine: 'keep' })]).out.ok, true);
+  assert.equal(readJson(settingsFile(home)).env.VITEST_MAX_WORKERS, '2', 'merge heavy-gate désactivé : valeur utilisateur gardée');
+  assert.equal(cli(home, ['unmerge-settings']).out.ok, true);
+  const restored = readJson(settingsFile(home));
+  assert.equal(restored.env.VITEST_MAX_WORKERS, '2', 'unmerge : valeur utilisateur gardée');
+  assert.equal(restored.env.FOO, 'bar');
+  assert.equal(fs.existsSync(stateFile(home)), false, 'rien de mémorisé pour une valeur non posée par Dojo');
+});
+
+test('VITEST_MAX_WORKERS posé par Dojo : mémorisé, retiré à l unmerge', () => {
+  const home = tmpHome();
+  writeJson(settingsFile(home), { env: { FOO: 'bar' } });
+  assert.equal(cli(home, ['merge-settings', JSON.stringify({ heavyGate: true, statusLine: 'keep' })]).out.ok, true);
+  assert.equal(readJson(settingsFile(home)).env.VITEST_MAX_WORKERS, '2');
+  assert.equal(readJson(stateFile(home)).managed.vitestMaxWorkers, '2', 'propriété mémorisée');
+  assert.equal(cli(home, ['unmerge-settings']).out.ok, true);
+  assert.deepEqual(readJson(settingsFile(home)), { env: { FOO: 'bar' } }, 'env d origine restauré');
+  assert.equal(fs.existsSync(stateFile(home)), false, 'propriété oubliée après unmerge');
+});
+
+test('VITEST_MAX_WORKERS posé par Dojo : retiré au merge heavy-gate désactivé', () => {
+  const home = tmpHome();
+  writeJson(settingsFile(home), { env: { FOO: 'bar' } });
+  assert.equal(cli(home, ['merge-settings', JSON.stringify({ heavyGate: true, statusLine: 'keep' })]).out.ok, true);
+  assert.equal(cli(home, ['merge-settings', JSON.stringify({ heavyGate: false, statusLine: 'keep' })]).out.ok, true);
+  assert.equal(readJson(settingsFile(home)).env.VITEST_MAX_WORKERS, undefined, 'retiré avec heavy-gate');
+  assert.equal(readJson(settingsFile(home)).env.FOO, 'bar');
+  assert.equal(fs.existsSync(stateFile(home)), false);
+});
+
+test('VITEST_MAX_WORKERS changé à la main après un merge Dojo : gardé à l unmerge, propriété oubliée', () => {
+  const home = tmpHome();
+  writeJson(settingsFile(home), { env: { FOO: 'bar' } });
+  assert.equal(cli(home, ['merge-settings', JSON.stringify({ heavyGate: true, statusLine: 'keep' })]).out.ok, true);
+  writeJson(settingsFile(home), { ...readJson(settingsFile(home)), env: { FOO: 'bar', VITEST_MAX_WORKERS: '5' } });
+  assert.equal(cli(home, ['unmerge-settings']).out.ok, true);
+  assert.equal(readJson(settingsFile(home)).env.VITEST_MAX_WORKERS, '5', 'valeur modifiée par l utilisateur gardée');
+  assert.equal(fs.existsSync(stateFile(home)), false);
 });

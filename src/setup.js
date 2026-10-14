@@ -203,6 +203,29 @@ function readConfig() {
   try { return JSON.parse(fs.readFileSync(path.join(paths.dojo(), 'config.json'), 'utf8')); } catch { return null; }
 }
 
+// ── state.json : ce que Dojo a posé dans settings.json et doit donc retirer (dossier de config) ──
+// Aujourd'hui : VITEST_MAX_WORKERS, avec la valeur que Dojo a écrite. Fichier absent ou illisible = rien n'est à Dojo.
+const stateFile = () => path.join(paths.dojo(), 'state.json');
+function readState() {
+  try { const s = JSON.parse(fs.readFileSync(stateFile(), 'utf8')); return isObj(s) ? s : {}; } catch { return {}; }
+}
+// Valeur de VITEST_MAX_WORKERS posée par Dojo, ou null si Dojo ne l'a pas posée.
+function managedVitest() {
+  const m = readState().managed;
+  return isObj(m) && typeof m.vitestMaxWorkers === 'string' ? m.vitestMaxWorkers : null;
+}
+// value : valeur posée par Dojo, ou null pour oublier la propriété.
+function setManagedVitest(value) {
+  const state = readState();
+  const managed = isObj(state.managed) ? { ...state.managed } : {};
+  if (value === null) delete managed.vitestMaxWorkers; else managed.vitestMaxWorkers = value;
+  if (Object.keys(managed).length) state.managed = managed; else delete state.managed;
+  const file = stateFile();
+  if (Object.keys(state).length === 0) { fs.rmSync(file, { force: true }); return; }
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 });
+}
+
 async function detect() {
   const node = findNode();
   const gh = findBin('gh');
@@ -249,7 +272,6 @@ function setDojoGroup(list, re, canonical) {
   if (canonical) { if (at < 0) out.push(canonical); else out.splice(at, 0, canonical); }
   return out;
 }
-const hasDojoIn = (list, re) => Array.isArray(list) && list.some((g) => isObj(g) && Array.isArray(g.hooks) && g.hooks.some((h) => isDojo(h, re)));
 
 // Lit settings.json sans le modifier. before = texte brut (null si absent).
 // norm = même contenu reformaté (2 espaces) : base du diff et de la détection de changement.
@@ -322,39 +344,50 @@ function mergeTransform(s, o) {
 
   const vw = o.vitestWorkers !== undefined ? o.vitestWorkers : (wantHeavy ? true : undefined);
   const vwValue = vw === true ? '2' : (typeof vw === 'number' && vw > 0 ? String(Math.floor(vw)) : null);
-  const dojoVitestValues = new Set(['2']);
-  if (vwValue) dojoVitestValues.add(vwValue);
 
   if (wantHeavy) {
     s.hooks.PreToolUse = setDojoGroup(Array.isArray(s.hooks.PreToolUse) ? s.hooks.PreToolUse : [], RE.heavy, {
       matcher: 'Bash',
       hooks: [{ type: 'command', command: q(node) + ' ' + q(dojo + '/heavy-gate.js'), timeout: 10 }],
     });
-  } else if (o.heavyGate === false && isObj(s.hooks)) {
-    const had = hasDojoIn(s.hooks.PreToolUse, RE.heavy);
-    if (Array.isArray(s.hooks.PreToolUse)) s.hooks.PreToolUse = setDojoGroup(s.hooks.PreToolUse, RE.heavy, null);
-    if (had && isObj(s.env) && dojoVitestValues.has(s.env.VITEST_MAX_WORKERS)) {
-      delete s.env.VITEST_MAX_WORKERS;
-      if (Object.keys(s.env).length === 0) delete s.env;
-    }
+  } else if (o.heavyGate === false) {
+    if (isObj(s.hooks) && Array.isArray(s.hooks.PreToolUse)) s.hooks.PreToolUse = setDojoGroup(s.hooks.PreToolUse, RE.heavy, null);
+    dropManagedVitest(s, o.managedVitest);
   }
 
+  // VITEST_MAX_WORKERS n'est posé que s'il est absent : une valeur déjà présente est à l'utilisateur.
+  let vitestSet = null;
   if (vwValue) {
     if (!isObj(s.env)) s.env = {};
-    if (s.env.VITEST_MAX_WORKERS === undefined) s.env.VITEST_MAX_WORKERS = vwValue;
+    if (s.env.VITEST_MAX_WORKERS === undefined) { s.env.VITEST_MAX_WORKERS = vwValue; vitestSet = vwValue; }
   }
 
   const statusLine = { type: 'command', command: q(node) + ' ' + q(dojo + '/statusline.js'), refreshInterval: 30 };
   if (o.statusLine === 'replace') s.statusLine = statusLine;
   else if (o.statusLine === 'keep' && (!s.statusLine || isDojo(s.statusLine, RE.statusline))) s.statusLine = statusLine;
   // 'none' : statusLine jamais touchée
-  return s;
+  return { vitestSet };
+}
+
+// Retire VITEST_MAX_WORKERS seulement si Dojo l'a posé, et seulement avec la valeur qu'il a écrite.
+function dropManagedVitest(s, managed) {
+  if (managed === null || !isObj(s.env) || s.env.VITEST_MAX_WORKERS !== managed) return false;
+  delete s.env.VITEST_MAX_WORKERS;
+  if (Object.keys(s.env).length === 0) delete s.env;
+  return true;
+}
+
+// Tient la propriété VITEST à jour après une écriture : valeur posée par Dojo (set) mémorisée ;
+// sinon oubliée si la valeur mémorisée n'est plus dans settings (retirée ou changée à la main).
+function syncVitestMark(settings, set = null) {
+  if (set !== null) { setManagedVitest(set); return; }
+  const m = managedVitest();
+  if (m !== null && !(isObj(settings.env) && settings.env.VITEST_MAX_WORKERS === m)) setManagedVitest(null);
 }
 
 // Retire uniquement ce que dojo a ajouté (même logique que uninstall.sh). Renvoie true si modifié.
-function unmergeTransform(s) {
+function unmergeTransform(s, managed) {
   let touched = false;
-  let heavyRemoved = false;
   if (isObj(s.hooks)) {
     for (const ev of Object.keys(s.hooks)) {
       const list = s.hooks[ev];
@@ -364,7 +397,7 @@ function unmergeTransform(s) {
       for (const g of list) {
         if (!isObj(g) || !Array.isArray(g.hooks)) { out.push(g); continue; }
         const kept = g.hooks.filter((h) => {
-          if (isDojo(h, RE.heavy)) { heavyRemoved = true; return false; }
+          if (isDojo(h, RE.heavy)) return false;
           return !isDojo(h, RE.hook);
         });
         if (kept.length === g.hooks.length) { out.push(g); continue; }
@@ -379,15 +412,33 @@ function unmergeTransform(s) {
     if (touched && Object.keys(s.hooks).length === 0) delete s.hooks;
   }
   if (isDojo(s.statusLine, RE.statusline)) { delete s.statusLine; touched = true; }
-  if (heavyRemoved && isObj(s.env) && s.env.VITEST_MAX_WORKERS === '2') {
-    delete s.env.VITEST_MAX_WORKERS;
-    touched = true;
-    if (Object.keys(s.env).length === 0) delete s.env;
-  }
+  if (dropManagedVitest(s, managed)) touched = true;
   return touched;
 }
 
-// Écriture commune : sauvegarde horodatée si le fichier existait, puis écriture (sauf dryRun).
+// Fichier réel : si file est un lien symbolique (dotfiles), sa cible. Le lien n'est jamais remplacé.
+function realFile(file) {
+  try { return fs.lstatSync(file).isSymbolicLink() ? linkTarget(file) : file; } catch { return file; }
+}
+
+// Écriture atomique : tmp à côté du vrai fichier, puis renameSync. Le mode d'origine est conservé.
+function writeAtomic(file, content) {
+  const target = realFile(file);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  let mode = null;
+  try { mode = fs.statSync(target).mode & 0o777; } catch { /* nouveau fichier */ }
+  const tmp = target + '.tmp-' + process.pid;
+  try {
+    fs.writeFileSync(tmp, content);
+    if (mode !== null) fs.chmodSync(tmp, mode);
+    fs.renameSync(tmp, target);
+  } catch (e) {
+    fs.rmSync(tmp, { force: true });
+    throw e;
+  }
+}
+
+// Écriture commune : sauvegarde horodatée si le fichier existait, puis écriture atomique (sauf dryRun).
 function commitSettings(file, before, after, dryRun) {
   let backup = null;
   if (!dryRun) {
@@ -395,8 +446,7 @@ function commitSettings(file, before, after, dryRun) {
       backup = file + '.bak-' + stampNow();
       fs.copyFileSync(file, backup);
     }
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, after);
+    writeAtomic(file, after);
   }
   return backup;
 }
@@ -431,13 +481,15 @@ function mergeSettings(opts = {}) {
     statusLine: opts.statusLine || 'keep',
     heavyGate: typeof opts.heavyGate === 'boolean' ? opts.heavyGate : undefined,
     vitestWorkers: opts.vitestWorkers,
+    managedVitest: managedVitest(),
   };
   if (!['replace', 'keep', 'none'].includes(o.statusLine)) fail("statusLine doit valoir replace, keep ou none.");
   const { before, norm, obj } = readSettingsFile(file);
-  mergeTransform(obj, o);
+  const { vitestSet } = mergeTransform(obj, o);
   const after = JSON.stringify(obj, null, 2) + '\n';
   const changed = norm === null || after !== norm;
   const backup = changed ? commitSettings(file, before, after, dryRun) : null;
+  if (!dryRun) syncVitestMark(obj, vitestSet);
   return settingsResult(file, norm, after, changed, dryRun, backup, {
     heavyGateThresholds: o.heavyGate === true ? heavyThresholds() : null,
   });
@@ -447,11 +499,15 @@ function unmergeSettings(opts = {}) {
   const file = paths.settings();
   const dryRun = opts.dryRun === true;
   const { before, norm, obj } = readSettingsFile(file);
-  if (before === null) return { ok: true, changed: false, dryRun, file, backup: null, before: null, after: null, diff: '' };
-  const touched = unmergeTransform(obj);
+  if (before === null) {
+    if (!dryRun) syncVitestMark(obj);
+    return { ok: true, changed: false, dryRun, file, backup: null, before: null, after: null, diff: '' };
+  }
+  const touched = unmergeTransform(obj, managedVitest());
   const after = JSON.stringify(obj, null, 2) + '\n';
   const changed = touched && after !== norm;
   const backup = changed ? commitSettings(file, before, after, dryRun) : null;
+  if (!dryRun) syncVitestMark(obj);
   return settingsResult(file, norm, after, changed, dryRun, backup);
 }
 
@@ -711,6 +767,18 @@ function wallpaperPlist(appBin, dojo) {
 `;
 }
 
+// Le bundle lancé par le LaunchAgent doit être dans un dossier d'appDirs() : ni volume monté (DMG), ni AppTranslocation
+// (app lancée depuis un DMG ou Téléchargements, dont le chemin disparaît à l'éjection).
+const APP_MOVE_MSG = 'Déplace DojoWallpaper.app dans /Applications puis relance-la.';
+function checkAppLocation(app) {
+  const resolved = path.resolve(app);
+  let real = resolved;
+  try { real = fs.realpathSync(resolved); } catch { /* absent : chemin tel quel */ }
+  const bad = (p) => p.startsWith('/Volumes/') || p.includes('/AppTranslocation/');
+  if (bad(resolved) || bad(real)) fail(APP_MOVE_MSG);
+  if (!appDirs().map((d) => path.resolve(d)).includes(path.dirname(resolved))) fail(APP_MOVE_MSG);
+}
+
 // Binaire du fond d'écran : json.app, sinon /Applications si présent, sinon l'app compilée dans ~/Applications.
 function wallpaperBinary(appOpt) {
   const sysApp = path.join(appDirs()[appDirs().length - 1], APP_NAME);
@@ -733,6 +801,7 @@ async function bootstrapLabel(label, file) {
 async function launchAgentsInstall(opts = {}) {
   const dryRun = opts.dryRun === true;
   const noLaunchd = opts.noLaunchd === true;
+  if (opts.app) checkAppLocation(String(opts.app));
   const found = opts.node || (findNode() || {}).path;
   if (!found) fail('Node.js 18 ou plus est introuvable : impossible d\'écrire les LaunchAgents.');
   const node = canonical(found);
