@@ -1,5 +1,6 @@
 // Tests du lanceur d'accueil src/terminal/welcome.zsh (node:test) : rendu Ghostty (kitty), Terminal.app (texte),
-// rendu natif sans fastfetch, gardes (shell interactif, DOJO_WELCOME=off, FASTFETCH_SHOWN, autre terminal).
+// rendu natif sans fastfetch ou avec fastfetch en échec / sans sortie, fichier temporaire, animation (8 frames au
+// plus), gardes (shell interactif, DOJO_WELCOME=off, FASTFETCH_SHOWN, autre terminal).
 // Chaque test travaille dans un HOME temporaire installé comme ~/.config/claude-dojo/terminal/ ; fastfetch est
 // remplacé par un faux binaire qui enregistre ses arguments et la config reçue (sortie déterministe).
 // L'environnement des processus zsh est reconstruit de zéro : TERM_PROGRAM et DOJO_* du poste ne fuient pas.
@@ -58,6 +59,15 @@ printf '%s\\n' "$@" > "$DOJO_TEST_OUT/args.txt"
 echo "FF-STUB"
 `;
 
+// Faux fastfetch en échec (comme une ancienne version refusant --key-width) : sortie partielle puis code 1.
+const FAIL_STUB = `#!/bin/sh
+echo "PARTIEL-STUB"
+echo "error: unexpected argument '--key-width' found" >&2
+exit 1
+`;
+// Faux fastfetch qui réussit sans rien afficher.
+const EMPTY_STUB = '#!/bin/sh\nexit 0\n';
+
 const LISTS = [
   'key1|mission',
   'key2|jutsu',
@@ -93,8 +103,17 @@ function installHome({ withTheme = true, lists = LISTS } = {}) {
   return { home, term, welcome: path.join(term, 'welcome.zsh') };
 }
 
-function stubBin(home) {
-  return path.join(write(path.join(home, 'stub-bin', 'fastfetch'), STUB, 0o755), '..');
+function stubBin(home, body = STUB, dir = 'stub-bin') {
+  return path.join(write(path.join(home, dir, 'fastfetch'), body, 0o755), '..');
+}
+
+// Rendu natif attendu : titre avec le thème de config.json, puis les 2 lignes dynamiques, aucune commande kitty
+function assertNative(r) {
+  const lines = r.out.split('\n').filter((l) => l.trim() !== '').map(stripAnsi);
+  assert.equal(lines[0], '✦ claude-dojo · naruto', 'titre avec le thème de config.json');
+  assert.equal(lines.length, 3, `titre + 2 lignes dynamiques, reçu : ${JSON.stringify(lines)}`);
+  assert.equal(kittyPayloads(r.out).length, 0, 'aucune image kitty');
+  assert.ok(!r.out.includes(`${ESC}_G`), 'aucune commande graphique kitty');
 }
 
 // Lance zsh (-i par défaut) avec un environnement reconstruit de zéro.
@@ -278,6 +297,77 @@ test('Ghostty sans fastfetch : rendu natif, aucune commande graphique', { skip: 
   assert.equal(r.err, '');
   assert.equal(kittyPayloads(r.out).length, 0);
   assert.match(stripAnsi(r.out), /✦ claude-dojo/);
+});
+
+// ── Repli : fastfetch en échec, sortie vide, fichier temporaire, animation ─
+test('Terminal.app : fastfetch en échec (rc 1) => rendu natif, rc 0, stderr vide, sortie partielle non affichée', { skip: skipReason }, () => {
+  const { home, welcome } = installHome();
+  const r = zsh(home, src(welcome), { pathDirs: [stubBin(home, FAIL_STUB, 'fail-bin'), SYS_PATH] });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.err, '', 'aucune sortie d\'erreur');
+  assert.ok(!r.out.includes('PARTIEL-STUB'), 'sortie partielle de fastfetch non affichée');
+  assert.equal(r.leftovers.length, 0, 'fichier temporaire supprimé');
+  assertNative(r);
+});
+
+test('Ghostty : fastfetch en échec (rc 1) => rendu natif, aucune image kitty dessinée', { skip: skipReason }, () => {
+  const { home, welcome } = installHome();
+  const r = zsh(home, src(welcome), { term: 'ghostty', pathDirs: [stubBin(home, FAIL_STUB, 'fail-bin'), SYS_PATH] });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.err, '', 'aucune sortie d\'erreur');
+  assert.ok(!r.out.includes('PARTIEL-STUB'), 'sortie partielle de fastfetch non affichée');
+  assert.equal(r.leftovers.length, 0, 'fichier temporaire supprimé');
+  assertNative(r);
+});
+
+test('sortie vide de fastfetch (rc 0) => rendu natif, Terminal.app et Ghostty', { skip: skipReason }, () => {
+  for (const prog of ['Apple_Terminal', 'ghostty']) {
+    const { home, welcome } = installHome();
+    const r = zsh(home, src(welcome), { term: prog, pathDirs: [stubBin(home, EMPTY_STUB, 'empty-bin'), SYS_PATH] });
+    assert.equal(r.code, 0, `${prog} : ${r.err}`);
+    assert.equal(r.err, '', `${prog} : aucune sortie d'erreur`);
+    assert.equal(r.leftovers.length, 0, `${prog} : fichier temporaire supprimé`);
+    assertNative(r);
+  }
+});
+
+test('TMPDIR inexistant (mktemp impossible) : rendu natif, fastfetch non appelé', { skip: skipReason }, () => {
+  const { home, welcome } = installHome();
+  const r = zsh(home, src(welcome), { pathDirs: [stubBin(home), SYS_PATH], extra: { TMPDIR: path.join(home, 'absent') } });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.err, '');
+  assert.ok(!fs.existsSync(path.join(r.outDir, 'args.txt')), 'fastfetch non appelé');
+  assertNative(r);
+});
+
+test('fichier temporaire : dossier mktemp (nom aléatoire, config .jsonc dedans), supprimé après le succès', { skip: skipReason }, () => {
+  const { home, welcome } = installHome();
+  const r = zsh(home, src(welcome), { pathDirs: [stubBin(home), SYS_PATH] });
+  assert.equal(r.code, 0, r.err);
+  const args = readOut(r, 'args.txt').split('\n');
+  const cfgArg = args[args.indexOf('-c') + 1];
+  assert.ok(cfgArg.startsWith(home + path.sep), 'créé dans TMPDIR');
+  assert.match(cfgArg, /dojo-welcome\.[A-Za-z0-9]{6}\/fastfetch\.jsonc$/, 'nom imprévisible, suffixe .jsonc');
+  assert.ok(!fs.existsSync(path.dirname(cfgArg)), 'dossier temporaire supprimé');
+  assert.equal(r.leftovers.length, 0);
+});
+
+test('Ghostty : au plus 8 frames kitty sur 20, réparties uniformément, la dernière incluse', { skip: skipReason }, () => {
+  const { home, welcome, term } = installHome();
+  for (let n = 3; n <= 20; n++) {
+    write(path.join(term, 'theme', 'frames', `frame_${String(n).padStart(2, '0')}.png`), `png-${n}`);
+  }
+  const r = zsh(home, src(welcome), { term: 'ghostty', pathDirs: [stubBin(home), SYS_PATH] });
+  assert.equal(r.code, 0, r.err);
+  const payloads = kittyPayloads(r.out);
+  assert.equal(payloads.length, 8, 'huit images émises');
+  assert.deepEqual(
+    payloads.map((p) => path.basename(p.file)),
+    ['frame_01.png', 'frame_03.png', 'frame_06.png', 'frame_09.png', 'frame_11.png', 'frame_14.png', 'frame_17.png', 'frame_20.png'],
+  );
+  assert.equal([...r.out.matchAll(new RegExp(`${ESC}_Ga=d,d=I,i=`, 'g'))].length, 7, 'chaque frame remplace la précédente');
+  assert.match(r.out, /FF-STUB/);
+  assert.equal(r.leftovers.length, 0);
 });
 
 // ── Gardes ───────────────────────────────────────────────────────────────

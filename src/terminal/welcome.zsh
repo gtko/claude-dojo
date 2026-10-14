@@ -5,7 +5,7 @@
 #   fastfetch.jsonc        config Ghostty (protocole graphique kitty)
 #   fastfetch-text.jsonc   config Terminal.app (logo texte)
 #   logo.png               image fixe (animation désactivée, ou pas de frames/)
-#   frames/frame_NN.png    frames de l'animation kitty (facultatives)
+#   frames/frame_NN.png    frames de l'animation kitty (facultatives, 8 images au plus)
 #   logo.txt               logo texte pour Terminal.app
 #   lists.txt              lignes « clé|valeur » (voir plus bas)
 # Dans les .jsonc, la ligne « // @DYNAMIC@ » reçoit deux modules custom tirés au hasard
@@ -19,6 +19,7 @@
 #   l1|premier item                     l2|autre item
 #
 # Terminal.app : logo texte. Ghostty : animation kitty. Autre terminal : rien.
+# fastfetch absent, en échec ou sans sortie : rendu natif (titre et 2 lignes), sans rien d'autre.
 # Variables : DOJO_WELCOME=off désactive, DOJO_ANIM=0 garde l'image fixe.
 # Seule dojo_welcome agit (export de FASTFETCH_SHOWN, sortie) : le sourçage ne crée aucune variable.
 
@@ -103,11 +104,19 @@ dojo_welcome() {
   local ff=0
   command -v fastfetch >/dev/null 2>&1 && [[ -d $D ]] && ff=1
 
-  local -a frames=()
+  # Animation kitty : frames/ puis logo.png. 8 images au plus, prises uniformément (la dernière incluse)
+  local -a all=() frames=()
+  local n k
   if (( ff )) && [[ $mode == kitty ]]; then
-    [[ ${DOJO_ANIM:-1} == 0 ]] || frames=("$D"/frames/frame_*.png)
-    (( ${#frames} )) || { [[ -r $D/logo.png ]] && frames=("$D"/logo.png); }
-    (( ${#frames} )) || ff=0
+    [[ ${DOJO_ANIM:-1} == 0 ]] || all=("$D"/frames/frame_*.png)
+    (( ${#all} )) || { [[ -r $D/logo.png ]] && all=("$D"/logo.png); }
+    (( ${#all} )) || ff=0
+  fi
+  n=${#all}
+  if (( n > 8 )); then
+    for (( k = 0; k < 8; k++ )); do frames+=("${all[1 + k * (n - 1) / 7]}"); done
+  else
+    frames=("${all[@]}")
   fi
   if (( ff )); then
     if [[ $mode == text ]]; then
@@ -117,56 +126,77 @@ dojo_welcome() {
     fi
   fi
 
-  if (( ff )); then
-    # config : la ligne @DYNAMIC@ devient les modules (fichier temporaire, supprimé ensuite)
-    # le suffixe .jsonc est obligatoire : fastfetch -c sans extension cherche un preset
-    local cfg=$D/fastfetch.jsonc tmp="" txt_cfg pat='// @DYNAMIC@'
-    [[ $mode == text ]] && cfg=$D/fastfetch-text.jsonc
-    # colonne des valeurs : fastfetch place chaque valeur à --key-width (colonne absolue) ; elle doit
-    # dépasser la plus longue clé suivie du séparateur (2) : clés du thème et libellés dynamiques (« ✦ » + libellé)
-    local -a kwarg=() jkeys=()
-    local kmax=0 k
-    jkeys=("${(@f)$(sed -n 's/.*"key"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg" 2>/dev/null)}")
-    for k in $jkeys; do (( ${#k} > kmax )) && kmax=${#k}; done
-    for k in $dlabel; do (( ${#k} + 2 > kmax )) && kmax=$(( ${#k} + 2 )); done
-    (( kmax )) && kwarg=(--key-width $(( kmax + 3 )))
-    txt_cfg=$(<"$cfg")
-    txt_cfg=${txt_cfg//${pat}/$ins}
-    tmp=${TMPDIR:-/tmp}/dojo-welcome.$$.jsonc
-    if print -r -- "$txt_cfg" >| "$tmp" 2>/dev/null; then
-      cfg=$tmp
-    else
-      rm -f -- "$tmp" 2>/dev/null
-      tmp=""
+  # fastfetch : sortie capturée, affichée seulement si rc 0 et non vide ; sinon rendu natif.
+  # La config vit dans un dossier mktemp (nom imprévisible), supprimé par always dans tous les cas.
+  local ok=0 rc=1 cfgdir="" ffout="" txt_cfg="" pat='// @DYNAMIC@'
+  local cfg=$D/fastfetch.jsonc
+  local -a kwarg=() jkeys=() b64s=()
+  local kmax=0 id prev=0 b64 f ln cur="" enc="" blank="" logo=""
+  [[ $mode == text ]] && cfg=$D/fastfetch-text.jsonc
+  {
+    if (( ff )); then
+      # colonne des valeurs : fastfetch place chaque valeur à --key-width (colonne absolue) ; elle doit
+      # dépasser la plus longue clé suivie du séparateur (2) : clés du thème et libellés dynamiques (« ✦ » + libellé)
+      jkeys=("${(@f)$(sed -n 's/.*"key"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg" 2>/dev/null)}")
+      for k in $jkeys; do (( ${#k} > kmax )) && kmax=${#k}; done
+      for k in $dlabel; do (( ${#k} + 2 > kmax )) && kmax=$(( ${#k} + 2 )); done
+      (( kmax )) && kwarg=(--key-width $(( kmax + 3 )))
+      # la ligne @DYNAMIC@ devient les modules ; le suffixe .jsonc est obligatoire (fastfetch -c sans
+      # extension cherche un preset)
+      txt_cfg=$(<"$cfg")
+      txt_cfg=${txt_cfg//${pat}/$ins}
+      cfgdir=$(mktemp -d "${TMPDIR:-/tmp}/dojo-welcome.XXXXXX" 2>/dev/null) || cfgdir=""
+      if [[ -n $cfgdir ]] && print -r -- "$txt_cfg" >| "$cfgdir/fastfetch.jsonc" 2>/dev/null; then
+        cfg=$cfgdir/fastfetch.jsonc
+      else
+        ff=0
+      fi
     fi
+    if (( ff )); then
+      if [[ $mode == text ]]; then
+        local -a logo_args=(--logo none)
+        [[ -r $D/logo.txt ]] && logo_args=(--logo "$D/logo.txt" --logo-type file)
+        ffout=$(fastfetch -c "$cfg" "${kwarg[@]}" "${logo_args[@]}" 2>/dev/null); rc=$?
+      else
+        # Ghostty : zone du logo réservée (lignes vides) que fastfetch remplit
+        blank=${(l:cols:: :)}
+        logo=$(for _ in {1..$rows}; do print -r -- "$blank"; done)
+        ffout=$(fastfetch -c "$cfg" "${kwarg[@]}" --logo-type data --logo "$logo" \
+          --logo-padding-left $pad --logo-padding-right 4 --logo-padding-top 0 2>/dev/null); rc=$?
+      fi
+      (( rc == 0 && ${#ffout} )) && ok=1
+    fi
+  } always {
+    if [[ -n $cfgdir ]]; then rm -rf -- "$cfgdir" 2>/dev/null; fi
+  }
 
+  if (( ok )); then
     if [[ $mode == text ]]; then
-      local -a logo_args=(--logo none)
-      [[ -r $D/logo.txt ]] && logo_args=(--logo "$D/logo.txt" --logo-type file)
       print
-      fastfetch -c "$cfg" "${kwarg[@]}" "${logo_args[@]}" 2>/dev/null
+      print -r -- "$ffout"
     else
-      # Ghostty : zone du logo réservée (lignes vides), frames kitty dessinées par-dessus
+      # Ghostty : seulement une fois fastfetch réussi. Chemins encodés en base64 par une seule
+      # substitution ; une ligne « # » ferme chaque chemin (« # » n'appartient pas à l'alphabet base64).
       zmodload zsh/zselect 2>/dev/null
-      local blank=${(l:cols:: :)} logo f id prev=0 b64
-      logo=$(for _ in {1..$rows}; do print -r -- "$blank"; done)
+      enc=$(for f in $frames; do print -rn -- "$f" | base64; print -r -- '#'; done)
+      for ln in "${(@f)enc}"; do
+        if [[ $ln == '#' ]]; then b64s+=("$cur"); cur=""; else cur+=$ln; fi
+      done
+      # zone du logo réservée (lignes vides), frames kitty dessinées par-dessus, puis le texte fastfetch
       printf '\n%.0s' {1..$rows}
       printf '\e[%dA\e[%dG\e7' $rows $((pad + 1))
       i=0
-      for f in $frames; do
+      for b64 in $b64s; do
         (( i++ ))
         id=$((8000 + i))
-        b64=$(print -rn -- "$f" | base64 | tr -d '\n')
         printf '\e8\e_Ga=T,f=100,t=f,i=%d,p=1,c=%d,r=%d,C=1,q=2;%s\e\\' $id $cols $rows "$b64"
         (( prev )) && printf '\e_Ga=d,d=I,i=%d,q=2\e\\' $prev
         prev=$id
-        (( ${#frames} > 1 )) && zselect -t 4 2>/dev/null
+        (( ${#b64s} > 1 )) && zselect -t 4 2>/dev/null
       done
       printf '\e8\e[1G'
-      fastfetch -c "$cfg" "${kwarg[@]}" --logo-type data --logo "$logo" \
-        --logo-padding-left $pad --logo-padding-right 4 --logo-padding-top 0 2>/dev/null
+      print -r -- "$ffout"
     fi
-    [[ -n $tmp ]] && rm -f -- "$tmp"
   else
     # rendu natif : titre accent puis les 2 lignes dynamiques
     print
