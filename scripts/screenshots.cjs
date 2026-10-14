@@ -5,18 +5,28 @@
 //   -> <dossier>/overview.webp (3200 x 2000 à DPR 1,25) et <dossier>/dojo.webp
 //      (sans cwebp, les PNG sont gardés ; KEEP_PNG=1 garde aussi les PNG)
 //
+// Thèmes (aperçu #demo:<id>, données et fond lus dans src/themes/<id>/) :
+//   node scripts/screenshots.cjs --themes        tous les thèmes
+//   node scripts/screenshots.cjs --theme <id>    un seul thème
+//   -> docs/screenshots/themes/<id>.webp (1280 px de large, page entière) pour chaque thème,
+//      src/themes/<id>/thumbnail.jpg (480 x 300, plein cadre ; jamais pour naruto, conservée telle quelle),
+//      et avec --themes seulement : docs/screenshots/themes.webp (planche 4 colonnes, 1920 px).
+//   Largeur, hauteur et DPR facultatifs après l'option (mêmes défauts que ci-dessus).
+//
 // Variables d'environnement facultatives :
 //   PLAYWRIGHT_CORE  chemin du paquet playwright-core, si absent de node_modules (npm i -D playwright-core)
 //   CHROME_PATH      exécutable Chrome ou Chromium ; sinon détecté, sinon le Chromium de Playwright
 //   CWEBP            binaire cwebp ; sinon recherché dans le PATH
-//   WEBP_QUALITY     qualité cwebp (défaut 90)
+//   WEBP_QUALITY     qualité cwebp des captures d'ensemble (défaut 90 ; les thèmes sortent à 80)
 //
-// Les données viennent d'une interception Playwright de http://localhost:7777/stats : aucun agent réel
-// n'est contacté, aucun serveur n'est lancé, et rien n'est écrit hors du dossier demandé.
+// Les données viennent d'une interception Playwright de http://localhost:7777 (/stats, /theme, fonds) :
+// aucun agent réel n'est contacté, aucun serveur n'est lancé. Hors des modes thèmes, rien n'est écrit
+// hors du dossier demandé ; les modes thèmes n'écrivent que dans docs/screenshots et les vignettes.
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { spawnSync } = require('child_process');
+const os = require('os');
 
 function loadPlaywright() {
   for (const id of [process.env.PLAYWRIGHT_CORE, 'playwright-core']) {
@@ -30,9 +40,22 @@ const { chromium } = loadPlaywright();
 
 const ROOT = path.resolve(__dirname, '..');
 const PAGE = path.join(ROOT, 'src', 'wallpaper', 'index.html');
-const OUT = process.argv[2];
-if (!OUT) { console.error('Usage : node scripts/screenshots.cjs <dossier> [largeur] [hauteur] [DPR]'); process.exit(2); }
-const VW = +(process.argv[3] || 2560), VH = +(process.argv[4] || 1600), DPR = +(process.argv[5] || 1.25);
+const USAGE = 'Usage : node scripts/screenshots.cjs <dossier> [largeur] [hauteur] [DPR]\n'
+  + '        node scripts/screenshots.cjs --themes [largeur] [hauteur] [DPR]\n'
+  + '        node scripts/screenshots.cjs --theme <id> [largeur] [hauteur] [DPR]';
+const argv = process.argv.slice(2), pos = [];
+let THEMES_ALL = false, THEME_ID = null;
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === '--themes') THEMES_ALL = true;
+  else if (argv[i] === '--theme') {
+    if (!argv[i + 1] || argv[i + 1].startsWith('--')) { console.error(USAGE); process.exit(2); }
+    THEME_ID = argv[++i];
+  } else pos.push(argv[i]);
+}
+const THEME_MODE = THEMES_ALL || THEME_ID !== null;
+const OUT = THEME_MODE ? null : pos.shift();
+if (!THEME_MODE && !OUT) { console.error(USAGE); process.exit(2); }
+const VW = +(pos[0] || 2560), VH = +(pos[1] || 1600), DPR = +(pos[2] || 1.25);
 const GB = 1024 ** 3;
 
 const BROWSERS = [
@@ -194,24 +217,166 @@ function buildStats() {
   };
 }
 
-(async () => {
-  fs.mkdirSync(OUT, { recursive: true });
+function launchBrowser() {
   const executablePath = findBrowser();
-  const browser = await chromium.launch({ headless: true, timeout: 60000, ...(executablePath ? { executablePath } : {}) });
+  return chromium.launch({ headless: true, timeout: 60000, ...(executablePath ? { executablePath } : {}) });
+}
+
+// ── Captures des thèmes (--themes, --theme <id>) ──────────────────
+// Aperçu pur : le thème demandé par #demo:<id>, sans fond personnel ni thème de la config.
+const THEMES_DIR = path.join(ROOT, 'src', 'themes');
+const DOCS_SHOTS = path.join(ROOT, 'docs', 'screenshots');
+const THUMB_W = 480, THUMB_H = 300;
+const THEME_WEBP_W = 1280, THEME_WEBP_Q = 80;
+const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Private-Network': 'true' };
+const isThemeId = (id) => typeof id === 'string' && /^[a-z0-9-]+$/.test(id);
+function readThemeJson(id) {
+  try {
+    const t = JSON.parse(fs.readFileSync(path.join(THEMES_DIR, id, 'theme.json'), 'utf8'));
+    return t && typeof t === 'object' && !Array.isArray(t) ? t : null;
+  } catch { return null; }
+}
+// GET /theme de l'agent : l'id demandé, sinon naruto (id inconnu ou absent)
+function themeJson(wanted) {
+  let id = isThemeId(wanted) ? wanted : 'naruto';
+  let t = readThemeJson(id);
+  if (!t) { id = 'naruto'; t = readThemeJson(id) || {}; }
+  return { ...t, id, background: `/themes/${id}/background.jpg`, themeKey: `${id}|` };
+}
+// Faux agent : /stats (données factices), /theme, fonds et vignettes des thèmes (liste blanche)
+const THEME_FILE = /^\/themes\/([a-z0-9-]+)\/(background\.jpg|thumbnail\.jpg)$/;
+function fakeAgent(route) {
+  const u = new URL(route.request().url());
+  const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: CORS, body: JSON.stringify(body) });
+  if (u.pathname === '/stats') return json(buildStats());
+  if (u.pathname === '/theme') return json(themeJson(u.searchParams.get('id')));
+  const f = THEME_FILE.exec(u.pathname), file = f && path.join(THEMES_DIR, f[1], f[2]);
+  if (file && fs.existsSync(file)) return route.fulfill({ status: 200, contentType: 'image/jpeg', headers: CORS, body: fs.readFileSync(file) });
+  return json({}, 404);
+}
+
+function themeIds() {
+  if (!THEMES_ALL) {
+    if (!isThemeId(THEME_ID) || !readThemeJson(THEME_ID)) { console.error(`thème introuvable : ${THEME_ID} (src/themes/<id>/theme.json)`); process.exit(2); }
+    if (!fs.existsSync(path.join(THEMES_DIR, THEME_ID, 'background.jpg'))) { console.error(`${THEME_ID} : background.jpg absent`); process.exit(2); }
+    return [THEME_ID];
+  }
+  const dirs = fs.readdirSync(THEMES_DIR).filter((d) => isThemeId(d) && readThemeJson(d));
+  const ids = dirs.filter((d) => {
+    const ok = fs.existsSync(path.join(THEMES_DIR, d, 'background.jpg'));
+    if (!ok) console.log(`${d} : background.jpg absent, thème ignoré`);
+    return ok;
+  });
+  // naruto d'abord, puis ordre alphabétique
+  return ids.sort((a, b) => (a === 'naruto' ? -1 : b === 'naruto' ? 1 : a < b ? -1 : a > b ? 1 : 0));
+}
+
+// Une page #demo:<id> : fond décodé, 1 s d'animation, capture page entière en PNG dans tmp
+async function captureTheme(context, id, tmp) {
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  await page.goto(pathToFileURL(PAGE).href + '#demo:' + id, { waitUntil: 'load', timeout: 30000 });
+  await page.waitForFunction(() => !document.body.classList.contains('offline') && document.getElementById('ninjas').children.length > 0, null, { timeout: 15000 });
+  await page.waitForFunction((tid) => document.body.style.backgroundImage.includes(`/themes/${tid}/background.jpg`), id, { timeout: 15000 });
+  const info = await page.evaluate(async () => {
+    const m = /url\("?([^"]+?)"?\)/.exec(document.body.style.backgroundImage);
+    const img = new Image();
+    img.src = m[1];
+    await img.decode();
+    return {
+      bg: `${img.naturalWidth}x${img.naturalHeight}`,
+      palette: getComputedStyle(document.documentElement).getPropertyValue('--bg').trim(),
+      persos: document.querySelectorAll('#ninjas > .ninja, #ninjas2 > .ninja').length,
+    };
+  });
+  await page.waitForTimeout(1000);
+  const png = path.join(tmp, id + '.png');
+  await page.screenshot({ path: png, fullPage: true });
+  await page.close();
+  console.log(`${id} : fond ${info.bg}, --bg ${info.palette || '(défaut)'}, persos ${info.persos}`);
+  if (errors.length) console.log(`${id} erreurs`, JSON.stringify(errors));
+  return png;
+}
+
+function toWebp(cwebp, png, webp, width, quality) {
+  const r = spawnSync(cwebp, ['-quiet', '-q', String(quality), ...(width ? ['-resize', String(width), '0'] : []), png, '-o', webp]);
+  if (r.status !== 0) throw new Error(`cwebp a échoué sur ${png}: ${r.stderr}`);
+  console.log('written', webp);
+}
+
+// Vignette 480 x 300 : remplissage du cadre puis rognage centré (sips, macOS)
+function makeThumb(png, dest) {
+  const dim = (k) => +/: (\d+)/.exec(spawnSync('sips', ['-g', k, png]).stdout.toString())[1];
+  const w = dim('pixelWidth'), h = dim('pixelHeight');
+  const s = Math.max(THUMB_W / w, THUMB_H / h);
+  const nw = Math.max(THUMB_W, Math.ceil(w * s)), nh = Math.max(THUMB_H, Math.ceil(h * s));
+  const r = spawnSync('sips', ['-z', String(nh), String(nw), '--cropToHeightWidth', String(THUMB_H), String(THUMB_W),
+    '-s', 'format', 'jpeg', '-s', 'formatOptions', '85', png, '--out', dest]);
+  if (r.status !== 0) throw new Error(`sips a échoué sur ${png}: ${r.stderr}`);
+  console.log('written', dest);
+}
+
+// Planche : grille 4 colonnes des vignettes (images en data URI), rendue par une page HTML temporaire
+async function planche(browser, ids, tmp, cwebp) {
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const cells = ids.filter((id) => fs.existsSync(path.join(THEMES_DIR, id, 'thumbnail.jpg'))).map((id) => ({
+    name: readThemeJson(id).name || id,
+    src: 'data:image/jpeg;base64,' + fs.readFileSync(path.join(THEMES_DIR, id, 'thumbnail.jpg')).toString('base64'),
+  }));
+  const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><style>
+  html, body { margin: 0; background: #0b0d12; }
+  .grid { width: 1920px; box-sizing: border-box; padding: 48px 40px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 36px 24px; font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; color: #eef2f6; }
+  figure { margin: 0; }
+  img { display: block; width: 100%; aspect-ratio: 8 / 5; object-fit: cover; border-radius: 10px; }
+  figcaption { margin-top: 12px; font-size: 22px; text-align: center; }
+</style></head><body><main class="grid">${cells.map((c) => `<figure><img src="${c.src}" alt=""><figcaption>${esc(c.name)}</figcaption></figure>`).join('')}</main></body></html>`;
+  // hauteur de viewport réduite : la capture page entière suit la hauteur de la grille
+  const context = await browser.newContext({ viewport: { width: 1920, height: 200 }, deviceScaleFactor: 1 });
+  const page = await context.newPage();
+  await page.setContent(html, { waitUntil: 'load' });
+  await page.evaluate(() => Promise.all([...document.images].map((i) => i.decode())));
+  const png = path.join(tmp, 'themes.png');
+  await page.screenshot({ path: png, fullPage: true });
+  await context.close();
+  toWebp(cwebp, png, path.join(DOCS_SHOTS, 'themes.webp'), 0, THEME_WEBP_Q);
+}
+
+async function captureThemes() {
+  const cwebp = findCwebp();
+  if (!cwebp) throw new Error('cwebp introuvable : WebP requis pour les captures de thèmes (brew install webp, ou CWEBP=<chemin>)');
+  const ids = themeIds();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-dojo-themes-'));
+  fs.mkdirSync(path.join(DOCS_SHOTS, 'themes'), { recursive: true });
+  const browser = await launchBrowser();
+  try {
+    const context = await browser.newContext({ viewport: { width: VW, height: VH }, deviceScaleFactor: DPR });
+    await context.route('http://localhost:7777/**', fakeAgent);
+    for (const id of ids) {
+      const png = await captureTheme(context, id, tmp);
+      toWebp(cwebp, png, path.join(DOCS_SHOTS, 'themes', id + '.webp'), THEME_WEBP_W, THEME_WEBP_Q);
+      // naruto : sa vignette existante n'est jamais réécrite
+      if (id !== 'naruto') makeThumb(png, path.join(THEMES_DIR, id, 'thumbnail.jpg'));
+    }
+    if (THEMES_ALL) await planche(browser, ids, tmp, cwebp);
+  } finally {
+    await browser.close();
+    if (process.env.KEEP_PNG) console.log('PNG conservés dans', tmp);
+    else fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+(async () => {
+  if (THEME_MODE) return captureThemes();
+  fs.mkdirSync(OUT, { recursive: true });
+  const browser = await launchBrowser();
   const context = await browser.newContext({ viewport: { width: VW, height: VH }, deviceScaleFactor: DPR });
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
-
-  const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Private-Network': 'true' };
-  await page.route('http://localhost:7777/**', (route) => {
-    const u = new URL(route.request().url());
-    if (u.pathname === '/stats') {
-      return route.fulfill({ status: 200, contentType: 'application/json', headers: cors, body: JSON.stringify(buildStats()) });
-    }
-    return route.fulfill({ status: 404, contentType: 'application/json', headers: cors, body: '{}' });
-  });
+  await context.route('http://localhost:7777/**', fakeAgent);
 
   await page.goto(pathToFileURL(PAGE).href + '#demo', { waitUntil: 'load', timeout: 30000 });
   await page.waitForFunction(() => !document.body.classList.contains('offline') && document.getElementById('ninjas').children.length > 0, null, { timeout: 15000 });
