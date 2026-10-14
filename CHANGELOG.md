@@ -20,4 +20,7 @@ Initial public release.
 - Status line: a Claude Code status line that exposes model, effort, context and quota information to the wallpaper.
 - Heavy-gate: a `PreToolUse` hook that limits how many heavy suites (test runners, `tsc`, `eslint`, `next build`) run in parallel.
 - Installer and uninstaller: `install.sh` and `uninstall.sh`, with `--yes`, `--no-launchd` and `--purge` options.
+- Setup app: `DojoWallpaper.app` is now the installer and settings screen. A 9-step setup assistant (dependencies with a verified Node.js download, weather, GitHub, projects, calendars, Claude Code with a preview of the `settings.json` changes, autostart), a Settings… menu and an Uninstall… action.
+- Single setup logic in `src/setup.js`, shared by the app and `install.sh`, covered by `node --test`.
+- Universal DMG (Apple Silicon and Intel, macOS 12+) published with a `.sha256` file by the release workflow on `v*` tags.
 - CI: a GitHub Actions workflow running shell and Node.js syntax checks, shellcheck, the Swift build, and an install and uninstall smoke test in a temporary `HOME`.
