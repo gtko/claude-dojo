@@ -10,7 +10,7 @@ claude-dojo is **macOS only**. It is made of:
 
 - bash scripts (`install.sh`, `uninstall.sh`),
 - a Node.js runtime (Node.js 18 or newer),
-- a small Swift program (`mac/DojoWallpaper.swift`) that hosts the wallpaper.
+- a SwiftUI app (`mac/*.swift`) that hosts the wallpaper and runs the setup assistant.
 
 Please do not add Linux or Windows support as a side effect of another change. Open an issue first if you want to discuss a platform change.
 
@@ -20,7 +20,7 @@ Please do not add Linux or Windows support as a side effect of another change. O
 | --- | --- |
 | `src/` | The Node.js runtime. `install.sh` copies it to `~/.config/claude-dojo`. It contains the Claude Code hook, the status line, the collector, the local agent and the heavy-gate hook. |
 | `src/wallpaper/` | The HTML page displayed as the wallpaper, with its images. |
-| `mac/DojoWallpaper.swift` | The native macOS host that shows the page as the desktop wallpaper. |
+| `mac/*.swift` | The native macOS app: wallpaper host, setup assistant and settings. |
 | `install.sh` | Installs the runtime and connects it to Claude Code. |
 | `uninstall.sh` | Removes what `install.sh` added. |
 | `.github/` | The CI workflow, the issue forms and the pull request template. |
@@ -52,9 +52,10 @@ Run these before opening a pull request. CI runs the same checks on macOS.
 
 ```bash
 bash -n install.sh uninstall.sh
-shellcheck install.sh uninstall.sh
+shellcheck -S warning install.sh uninstall.sh
 for f in src/*.js; do node --check "$f"; done
-swiftc -O mac/DojoWallpaper.swift -o "$(mktemp -d)/DojoWallpaper" -framework Cocoa -framework WebKit
+node --test test/
+scripts/build-app.sh --no-dmg
 ```
 
 Also run the install and uninstall test described above, in a temporary `HOME`.

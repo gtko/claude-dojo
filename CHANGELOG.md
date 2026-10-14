@@ -13,7 +13,7 @@ Initial public release.
 
 ### Added
 
-- Wallpaper host: a native macOS app (`mac/DojoWallpaper.swift`) that shows the dojo page as the desktop wallpaper.
+- Wallpaper host: a native macOS app (`mac/*.swift`) that shows the dojo page as the desktop wallpaper.
 - Agent: a local server bound to `127.0.0.1:7777` that serves the page and its live stats.
 - Collector: gathers the data behind the optional panels (AI usage, GitHub, local projects, Sentry, weather, calendar) into a cache file read by the agent.
 - Hooks: a Claude Code hook that records the state of each session for the wallpaper.
