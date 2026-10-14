@@ -19,11 +19,27 @@ struct ThemeInfo: Decodable, Identifiable, Equatable {
     }
 }
 
-/// Réponse de `setup.js themes` : liste, thème courant et fond personnalisé (nil = fond du thème).
+/// Réponse de `setup.js themes` : liste, thème courant, fond personnalisé (nil = fond du thème) et option
+/// `wallpapers.autoDownload` (absente = vraie).
 struct ThemesResponse: Decodable {
     let themes: [ThemeInfo]?
     let theme: String?
     let background: String?
+    let autoDownload: Bool?
+
+    var autoDownloadEnabled: Bool { autoDownload ?? true }
+}
+
+/// Réponse de `setup.js set-theme <id>` : thème, fond après bascule, présence de fonds téléchargés pour ce thème,
+/// et besoin de télécharger le pack (needsSync). Tous les champs sont facultatifs : un champ absent ne bloque pas
+/// le changement de thème (hasDownloads et needsSync nil = inconnu).
+struct SetThemeResponse: Decodable {
+    let theme: String?
+    let background: String?
+    let hasDownloads: Bool?
+    let needsSync: Bool?
+    /// Présent seulement quand des options terminal étaient actives (fichiers régénérés).
+    let terminal: TerminalApplyResult?
 }
 
 /// Fond choisi dans l'assistant : le fond du thème, ou une image à copier (set-background).

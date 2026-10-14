@@ -5,8 +5,27 @@ import SwiftUI
 
 struct ThemeStep: View {
     @ObservedObject var model: SetupModel
+    /// Changement automatique du fond : lu et écrit dans UserDefaults (WallpaperAutoChange), pas dans l'assistant.
+    @State private var autoChange = WallpaperAutoChange.seconds
+    /// Téléchargement automatique du pack : l'état et son écriture (config.json) sont dans WallpaperSyncController.
+    @ObservedObject private var sync = WallpaperSyncController.shared
 
     private let columns = [GridItem(.adaptive(minimum: 150), spacing: 12)]
+
+    private var autoChangeBinding: Binding<Int> {
+        Binding(
+            get: { autoChange },
+            set: { value in
+                autoChange = value
+                WallpaperAutoChange.seconds = value
+            })
+    }
+
+    private var autoDownloadBinding: Binding<Bool> {
+        Binding(
+            get: { sync.autoDownload },
+            set: { value in sync.setAutoDownload(value, runner: model.runner) })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -32,14 +51,38 @@ struct ThemeStep: View {
             TerminalOptionsSection(model: model)
             Divider()
             Text("Fond d'écran").font(.callout).fontWeight(.medium)
+            if !model.themeChoice.isEmpty {
+                WallpaperBandView(model: model)
+            }
             Notice(text: "Fond sélectionné : \(model.backgroundLabel)")
             HStack(spacing: 10) {
                 Button("Choisir un fond…") { chooseBackground() }
                 Button("Fond du thème") { model.resetBackground() }
                     .disabled(model.backgroundUsesTheme)
+                Button("Galerie de fonds d'écran…") { GalleryWindowController.show(runner: model.runner, theme: nil) }
                 Spacer()
             }
             Notice(text: "Images jpg, png, heic ou webp : Dojo en garde une copie dans sa configuration.")
+            if model.editing {
+                Divider()
+                HStack(spacing: 10) {
+                    Text("Changer de fond automatiquement")
+                    Picker("Changer de fond automatiquement", selection: autoChangeBinding) {
+                        ForEach(WallpaperAutoChange.options) { option in
+                            Text(option.label).tag(option.seconds)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    Spacer()
+                }
+                Notice(text: "Passe au fond suivant parmi les fonds téléchargés du thème actif. Sans fond téléchargé, rien ne change.")
+                Toggle("Télécharger automatiquement le pack du thème", isOn: autoDownloadBinding)
+                    .toggleStyle(.checkbox)
+                if let message = sync.autoDownloadMessage {
+                    Notice(text: message, isError: true)
+                }
+            }
         }
     }
 

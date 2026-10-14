@@ -9,6 +9,8 @@ enum SetupLayout {
 
 struct SetupWizardView: View {
     @ObservedObject var model: SetupModel
+    /// Captures (--snapshot) seulement : contenu entier sans défilement ni hauteur fixe, pour qu'aucune section ne soit coupée.
+    var unclipped = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,16 +29,22 @@ struct SetupWizardView: View {
                 .padding(.top, 6)
             Divider().padding(.top, 10)
 
-            ScrollView {
+            if unclipped {
                 SetupStepView(model: model)
                     .padding(20)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ScrollView {
+                    SetupStepView(model: model)
+                        .padding(20)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
 
             Divider()
             footer
         }
-        .frame(width: SetupLayout.width, height: SetupLayout.height)
+        .frame(width: SetupLayout.width, height: unclipped ? nil : SetupLayout.height)
     }
 
     private var footer: some View {

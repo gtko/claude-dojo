@@ -1,5 +1,6 @@
 // Menu ⛩ et cycle de vie : fond d'écran, assistant (installation ou réglages), désinstallation.
 import Cocoa
+import Combine
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -19,8 +20,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var zoneActionItems: [NSMenuItem] = []
     private var themeMenu: NSMenu?
     private var themeItems: [NSMenuItem] = []
+    /// Sous-menu « Fonds » : fonds présents du thème actif, relus à chaque ouverture.
+    private var backgroundsMenu: NSMenu?
+    private var packWallpapers: [LocalWallpaper] = []
+    private var activeThemeId = ""
+    private var progressCancellable: AnyCancellable?
     private var setupWindow: SetupWindowController?
     private var wallpaperStarted = false
+    /// Minuteur du changement automatique de fond (WallpaperAutoChange) ; nil quand le réglage est « jamais ».
+    private var autoChangeTimer: Timer?
+    private var autoChangeBusy = false
 
     nonisolated init(forceSetup: Bool) {
         self.forceSetup = forceSetup
@@ -36,6 +45,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wallpaper.onChange = { [weak self] in self?.refreshMenu() }
         wallpaper.zoneManager.onStateChange = { [weak self] in self?.refreshMenu() }
         refreshMenu()
+        NotificationCenter.default.addObserver(self, selector: #selector(autoChangeSettingChanged),
+                                               name: .wallpaperAutoChangeDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(packDidChange),
+                                               name: .wallpaperPackDidChange, object: nil)
+        // Progression du téléchargement : le sous-menu « Fonds » affiche « Téléchargement… 5/18 » tant qu'il tourne.
+        progressCancellable = WallpaperSyncController.shared.$progress
+            .sink { _ in
+                Task { @MainActor [weak self] in self?.progressDidChange() }
+            }
+        scheduleAutoChange()
         Task { @MainActor in await self.bootstrap() }
         Task { @MainActor in await self.reloadThemes() }
     }
@@ -73,6 +92,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         themes.addItem(action("Fond du thème", #selector(useThemeBackground)))
         theme.submenu = themes
         menu.addItem(theme)
+        // Fonds : les fonds présents du thème actif (fond du thème compris), coche sur le courant.
+        let backgrounds = NSMenuItem(title: "Fonds", action: nil, keyEquivalent: "")
+        let backgroundSub = NSMenu(title: "Fonds")
+        backgroundSub.delegate = self
+        backgroundsMenu = backgroundSub
+        backgrounds.submenu = backgroundSub
+        menu.addItem(backgrounds)
+        menu.addItem(action("Fonds d'écran…", #selector(openGallery)))
+        // ⌘→ : touche de droite, dans la même famille que ⌘R, ⌘, et ⌘Q du menu.
+        menu.addItem(action("Fond suivant", #selector(nextWallpaper),
+                            key: String(utf16CodeUnits: [unichar(NSRightArrowFunctionKey)], count: 1)))
         menu.addItem(buildZoneMenu())
         menu.addItem(.separator())
         menu.addItem(action("Réglages…", #selector(openSettings), key: ","))
@@ -189,6 +219,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Relit la liste et le thème courant (setup.js themes) : reconstruit les thèmes si la liste a changé, coches à jour.
     private func reloadThemes() async {
         guard let response: ThemesResponse = try? await runner.call("themes") else { return }
+        activeThemeId = response.theme ?? ""
+        WallpaperSyncController.shared.adoptAutoDownload(response.autoDownloadEnabled)
         let list = response.themes ?? []
         if list.map(\.id) != themeItems.compactMap({ $0.representedObject as? String }) {
             rebuildThemeItems(list)
@@ -211,14 +243,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func pickTheme(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
+        let name = sender.title
         Task { @MainActor in
             do {
-                let result: ThemeChangeResult = try await runner.call("set-theme", [id])
+                let response: SetThemeResponse = try await runner.call("set-theme", [id])
+                WallpaperSyncController.shared.themeChanged(id, needsSync: response.needsSync, runner: runner)
                 await reloadThemes()
+                GalleryOffer.offerIfNoDownloads(themeId: id, name: name, hasDownloads: response.hasDownloads, runner: runner)
                 // Réglages ouverts : l'étape Thème suit le même thème (rien n'est écrit par ce rafraîchissement).
                 await setupWindow?.model.refreshExternal()
                 // Terminal.app ouvert : le profil du nouveau thème s'importe par double-clic.
-                if let file = result.terminal?.profileToOpen { TerminalProfile.offerOpen(file) }
+                if let file = response.terminal?.profileToOpen { TerminalProfile.offerOpen(file) }
             } catch {
                 showFailure("Thème non appliqué", error)
             }
@@ -231,6 +266,127 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func useThemeBackground() { setBackground("default") }
+
+    // MARK: Fonds du thème (sous-menu « Fonds »)
+
+    /// Relit le thème actif et ses fonds présents (`wallpapers local`), puis reconstruit le sous-menu.
+    private func refreshPack() async {
+        guard let themes: ThemesResponse = try? await runner.call("themes") else { return }
+        let theme = themes.theme ?? ""
+        guard !theme.isEmpty else { return }
+        activeThemeId = theme
+        guard let list = try? await GalleryService.localWallpapers(runner: runner, theme: theme) else { return }
+        packWallpapers = list
+        rebuildBackgroundItems()
+    }
+
+    private static let syncItemTag = 1
+
+    /// Progression : le titre de l'item se met à jour sur place (le menu peut être ouvert) ; le sous-menu
+    /// n'est reconstruit qu'au début et à la fin du téléchargement.
+    private func progressDidChange() {
+        guard let menu = backgroundsMenu else { return }
+        if let p = WallpaperSyncController.shared.progress, p.running, p.theme == activeThemeId,
+           let item = menu.item(withTag: Self.syncItemTag) {
+            item.title = "Téléchargement… \(p.done)/\(p.total)"
+        } else {
+            rebuildBackgroundItems()
+        }
+    }
+
+    /// Items du sous-menu : progression désactivée pendant un téléchargement, puis un item par fond (coche sur le courant).
+    private func rebuildBackgroundItems() {
+        guard let menu = backgroundsMenu else { return }
+        menu.removeAllItems()
+        if let p = WallpaperSyncController.shared.progress, p.running, p.theme == activeThemeId {
+            let progressItem = NSMenuItem(title: "Téléchargement… \(p.done)/\(p.total)", action: nil, keyEquivalent: "")
+            progressItem.isEnabled = false
+            progressItem.tag = Self.syncItemTag
+            menu.addItem(progressItem)
+            menu.addItem(.separator())
+        }
+        if packWallpapers.isEmpty {
+            let empty = NSMenuItem(title: "Aucun fond pour ce thème", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        }
+        for (wallpaper, name) in zip(packWallpapers, LocalWallpaper.names(packWallpapers)) {
+            var title = name
+            if !wallpaper.isBuiltin, let resolution = wallpaper.resolution { title += " (\(resolution))" }
+            let entry = action(title, #selector(pickBackground(_:)))
+            entry.representedObject = wallpaper
+            entry.state = wallpaper.current == true ? .on : .off
+            menu.addItem(entry)
+        }
+    }
+
+    /// Applique un fond du thème actif (`wallpapers use`), puis relit la liste pour la prochaine ouverture.
+    @objc private func pickBackground(_ sender: NSMenuItem) {
+        guard let wallpaper = sender.representedObject as? LocalWallpaper, !activeThemeId.isEmpty else { return }
+        let theme = activeThemeId
+        Task { @MainActor in
+            do {
+                _ = try await GalleryService.applyBackground(runner: runner, id: wallpaper.id, theme: theme)
+                await refreshPack()
+            } catch {
+                showFailure("Fond d'écran non appliqué", error)
+            }
+        }
+    }
+
+    @objc private func packDidChange() {
+        Task { @MainActor in await refreshPack() }
+    }
+
+    // MARK: Galerie et fond suivant
+
+    @objc private func openGallery() {
+        GalleryWindowController.show(runner: runner, theme: nil)
+    }
+
+    /// Fond suivant du thème actif. Sans fond téléchargé (ou en cas d'échec), l'alerte propose d'ouvrir la galerie.
+    @objc private func nextWallpaper() {
+        Task { @MainActor in
+            do {
+                _ = try await GalleryService.next(runner: runner)
+            } catch {
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "Fond suivant impossible"
+                alert.informativeText = GalleryService.plainMessage(error.localizedDescription)
+                alert.addButton(withTitle: "Ouvrir la galerie")
+                alert.addButton(withTitle: "Fermer")
+                NSApp.activate(ignoringOtherApps: true)
+                if alert.runModal() == .alertFirstButtonReturn {
+                    GalleryWindowController.show(runner: runner, theme: nil)
+                }
+            }
+        }
+    }
+
+    // MARK: Changement automatique du fond
+
+    @objc private func autoChangeSettingChanged() { scheduleAutoChange() }
+
+    /// Minuteur reprogrammé à chaque changement du réglage. Il existe même quand la fenêtre Réglages est fermée.
+    private func scheduleAutoChange() {
+        autoChangeTimer?.invalidate()
+        autoChangeTimer = nil
+        let seconds = WallpaperAutoChange.seconds
+        guard seconds > 0 else { return }
+        autoChangeTimer = Timer.scheduledTimer(timeInterval: TimeInterval(seconds), target: self,
+                                               selector: #selector(autoChangeTick), userInfo: nil, repeats: true)
+    }
+
+    /// Fond suivant à chaque tick. Échecs silencieux (aucun fond téléchargé, par exemple), pas d'appels qui se chevauchent.
+    @objc private func autoChangeTick() {
+        guard !autoChangeBusy else { return }
+        autoChangeBusy = true
+        Task { @MainActor in
+            defer { autoChangeBusy = false }
+            _ = try? await GalleryService.next(runner: runner)
+        }
+    }
 
     /// set-background (chemin d'image, ou « default ») en tâche de fond ; l'agent reprend le fond à chaud.
     private func setBackground(_ value: String) {
@@ -265,6 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch configured {
         case .some(true):
             startWallpaper()
+            startPackSync()
             if forceSetup { openSetup(editing: true) }
         case .some(false):
             openSetup(editing: false)
@@ -280,6 +437,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wallpaperStarted = true
         wallpaper.start()
         Task { @MainActor in await self.loadWindowZone() }
+    }
+
+    /// Démarrage (app déjà configurée) : le pack du thème actif est vérifié une fois par session, en arrière-plan.
+    private func startPackSync() {
+        Task { @MainActor in
+            guard let themes: ThemesResponse = try? await runner.call("themes"), let theme = themes.theme else { return }
+            activeThemeId = theme
+            WallpaperSyncController.shared.adoptAutoDownload(themes.autoDownloadEnabled)
+            WallpaperSyncController.shared.ensureSynced(theme, runner: runner)
+        }
     }
 
     func openSetup(editing: Bool) {
@@ -362,7 +529,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         if menu === zoneMenu { wallpaper.zoneManager.reconcile() }      // relit l'autorisation, réessaie les raccourcis, met le menu à jour
-        guard menu === themeMenu else { return }
-        Task { @MainActor in await reloadThemes() }
+        if menu === themeMenu {
+            Task { @MainActor in await reloadThemes() }
+        } else if menu === backgroundsMenu {
+            // Affichage immédiat avec la liste connue, puis relecture : coches et fonds à jour.
+            rebuildBackgroundItems()
+            Task { @MainActor in await refreshPack() }
+        }
     }
 }

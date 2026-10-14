@@ -2,6 +2,12 @@
   "id": "naruto",
   "name": "Naruto",
   "credit": "Fan art non officiel, sans lien avec les ayants droit de Naruto.",
+  "wallpapers": {
+    "provider": "wallhaven",
+    "ids": ["bundled", "mlq73y", "dpg97o", "zmrmdo", "dg3vql", "1pzx7v", "e7my2w", "x8ed23", "n6w5gx", "4lvw5q", "p88jqe", "2k59eg", "l3d772", "gpjo87", "l8z682", "o327x9", "nexggr", "j3xl5q", "1jmxjv", "yxw3g7", "j5o52w", "x1xy9l", "4yolol"],
+    "default": "bundled",
+    "query": "Naruto Shippuuden"
+  },
   "accentFont": null,
   "palette": {
     "bg": "rgba(24, 25, 36, .52)",

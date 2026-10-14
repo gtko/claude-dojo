@@ -1,4 +1,4 @@
-// --snapshot <dossier> : rend chaque étape de l'assistant en PNG (échelle 2), avec des données factices.
+// --snapshot <dossier> : rend chaque étape de l'assistant et la fenêtre galerie (gallery.png) en PNG (échelle 2), avec des données factices.
 // Aucun réseau, aucun appel à setup.js, aucune écriture hors du dossier demandé.
 import Cocoa
 import SwiftUI
@@ -27,49 +27,79 @@ enum SnapshotRenderer {
         window.appearance = dark
         for (index, step) in SetupStep.allCases.enumerated() {
             model.step = step
+            // L'étape Thème (grille, bande des fonds, réglages du fond) dépasse la hauteur de l'assistant :
+            // elle est capturée en entier, à la hauteur de son contenu, sans défilement.
+            let unclipped = step == .theme
             // Un hôte neuf par étape : hors écran, la barre de progression (NSProgressIndicator) garde sinon
             // la valeur de l'étape précédente. Créé après le changement d'étape, elle part de la bonne valeur.
-            let content = SetupWizardView(model: model)
+            let content = SetupWizardView(model: model, unclipped: unclipped)
                 .background(Color(nsColor: .windowBackgroundColor))
             let host = NSHostingView(rootView: content)
             host.appearance = dark
-            host.frame = NSRect(origin: .zero, size: size)
+            var pageSize = size
+            if unclipped {
+                host.frame = NSRect(origin: .zero, size: NSSize(width: size.width, height: 2400))
+                host.layoutSubtreeIfNeeded()
+                pageSize = NSSize(width: size.width, height: ceil(host.fittingSize.height))
+            }
+            host.frame = NSRect(origin: .zero, size: pageSize)
             window.contentView = host
             host.layoutSubtreeIfNeeded()
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
             host.layoutSubtreeIfNeeded()
 
-            guard let rep = NSBitmapImageRep(
-                bitmapDataPlanes: nil,
-                pixelsWide: Int(size.width) * 2,
-                pixelsHigh: Int(size.height) * 2,
-                bitsPerSample: 8,
-                samplesPerPixel: 4,
-                hasAlpha: true,
-                isPlanar: false,
-                colorSpaceName: .deviceRGB,
-                bytesPerRow: 0,
-                bitsPerPixel: 0)
-            else {
-                fputs("snapshot : bitmap impossible\n", stderr)
-                return 1
-            }
-            rep.size = size
-            host.cacheDisplay(in: host.bounds, to: rep)
-            guard let png = rep.representation(using: .png, properties: [:]) else {
-                fputs("snapshot : encodage PNG impossible\n", stderr)
-                return 1
-            }
             let file = out.appendingPathComponent("setup-0\(index + 1)-\(names[index]).png")
-            do {
-                try png.write(to: file)
-            } catch {
-                fputs("snapshot : écriture impossible (\(error.localizedDescription))\n", stderr)
-                return 1
-            }
+            guard writePNG(host, size: pageSize, to: file) else { return 1 }
             print(file.path)
         }
+
+        // Fenêtre « Fonds d'écran » (taille de GalleryWindowController : 900 × 640), données factices de GalleryView.mock().
+        let gallerySize = NSSize(width: 900, height: 640)
+        let gallery = NSHostingView(rootView: GalleryView.mock()
+            .frame(width: gallerySize.width, height: gallerySize.height)
+            .background(Color(nsColor: .windowBackgroundColor)))
+        gallery.appearance = dark
+        gallery.frame = NSRect(origin: .zero, size: gallerySize)
+        window.contentView = gallery
+        gallery.layoutSubtreeIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        gallery.layoutSubtreeIfNeeded()
+        let galleryFile = out.appendingPathComponent("gallery.png")
+        guard writePNG(gallery, size: gallerySize, to: galleryFile) else { return 1 }
+        print(galleryFile.path)
         return 0
+    }
+
+    /// PNG à l'échelle 2 du contenu de `view`. false si le bitmap, l'encodage ou l'écriture échoue (message sur stderr).
+    private static func writePNG(_ view: NSView, size: NSSize, to file: URL) -> Bool {
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(size.width) * 2,
+            pixelsHigh: Int(size.height) * 2,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0)
+        else {
+            fputs("snapshot : bitmap impossible\n", stderr)
+            return false
+        }
+        rep.size = size
+        view.cacheDisplay(in: view.bounds, to: rep)
+        guard let png = rep.representation(using: .png, properties: [:]) else {
+            fputs("snapshot : encodage PNG impossible\n", stderr)
+            return false
+        }
+        do {
+            try png.write(to: file)
+        } catch {
+            fputs("snapshot : écriture impossible (\(error.localizedDescription))\n", stderr)
+            return false
+        }
+        return true
     }
 }
 
@@ -151,6 +181,23 @@ extension SetupModel {
         ]
         model.themesLoaded = true
         model.themeChoice = "stargate-sg1"
+
+        // Bande des fonds du thème choisi (appliqué : la bande est utilisable). Vignettes dessinées en code, sans fichier lu.
+        model.initialTheme = "stargate-sg1"
+        let pack: [(id: String, resolution: String?, current: Bool, builtin: Bool, colors: (NSColor, NSColor))] = [
+            ("7x2k9q", "3840x2160", true, false, (NSColor(calibratedRed: 0.10, green: 0.16, blue: 0.32, alpha: 1), NSColor(calibratedRed: 0.52, green: 0.24, blue: 0.42, alpha: 1))),
+            ("o5m8dp", "2560x1440", false, false, (NSColor(calibratedRed: 0.06, green: 0.36, blue: 0.40, alpha: 1), NSColor(calibratedRed: 0.22, green: 0.58, blue: 0.42, alpha: 1))),
+            ("pd3wz1", "1920x1080", false, false, (NSColor(calibratedRed: 0.55, green: 0.22, blue: 0.14, alpha: 1), NSColor(calibratedRed: 0.90, green: 0.55, blue: 0.22, alpha: 1))),
+            ("theme", nil, false, true, (NSColor(calibratedRed: 0.14, green: 0.15, blue: 0.18, alpha: 1), NSColor(calibratedRed: 0.36, green: 0.40, blue: 0.48, alpha: 1))),
+        ]
+        model.packWallpapers = pack.map { entry in
+            let path = "/fixture/stargate-sg1/\(entry.id).jpg"
+            PackThumbnails.store(fixtureThumbnail(from: entry.colors.0, to: entry.colors.1), for: path, builtin: entry.builtin)
+            return LocalWallpaper(id: entry.id, file: path, source: nil, resolution: entry.resolution,
+                                  current: entry.current, builtin: entry.builtin)
+        }
+        // Téléchargement en cours : 5 fonds sur 18, affiché dans la bande et dans le sous-menu.
+        WallpaperSyncController.shared.showFixture(progress: PackProgress(theme: "stargate-sg1", done: 5, total: 18, running: true))
         model.windowZone = WindowZoneConfig(enabled: true, margin: 8, reserveTop: true, exclude: ["com.apple.Safari"])
         // Options terminal : Terminal.app ouvert avec une option demandée (message « Terminal est ouvert »).
         model.terminalStatus = TerminalStatus(
@@ -160,5 +207,16 @@ extension SetupModel {
             welcome: TerminalTarget(applied: false, available: nil, running: nil))
         model.terminalChoice = TerminalOptions(ghostty: true, terminalApp: true, welcome: true)
         return model
+    }
+
+    /// Dégradé dessiné en code, en guise de vignette (aucune image tierce).
+    private static func fixtureThumbnail(from: NSColor, to: NSColor) -> NSImage {
+        NSImage(size: NSSize(width: 320, height: 200), flipped: false) { rect in
+            NSGradient(starting: from, ending: to)?.draw(in: rect, angle: -30)
+            NSColor.white.withAlphaComponent(0.14).setFill()
+            let diameter = rect.height * 0.5
+            NSBezierPath(ovalIn: NSRect(x: rect.width * 0.62, y: rect.height * 0.3, width: diameter, height: diameter)).fill()
+            return true
+        }
     }
 }

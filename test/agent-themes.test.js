@@ -18,6 +18,15 @@ const SRC = path.join(REPO, 'src');
 
 let home, runtime, bgDir, outsideJpg, child, PORT;
 const VALID_JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from('valid-bg')]);
+const FRIEREN_JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from('frieren-bg')]);
+const waitFor = async (fn, ms = 8000) => {   // attend qu'une condition devienne vraie (l'agent échantillonne toutes les 2 s)
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    if (await fn()) return true;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return false;
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 function freePort() {
@@ -92,6 +101,27 @@ before(async () => {
   outsideJpg = path.join(home, 'dehors.jpg');
   fs.writeFileSync(outsideJpg, VALID_JPEG);
   fs.symlinkSync(outsideJpg, path.join(bgDir, 'lien.jpg'));
+
+  // sous-dossiers de thème : backgrounds/frieren/ (fond valide, SVG, deux niveaux, fichier lien, fichier lien interne)
+  const frieren = path.join(bgDir, 'frieren');
+  fs.mkdirSync(path.join(frieren, 'deux'), { recursive: true });
+  fs.writeFileSync(path.join(frieren, 'fond.jpg'), FRIEREN_JPEG);
+  fs.writeFileSync(path.join(frieren, 'fond.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+  fs.writeFileSync(path.join(frieren, 'deux', 'profond.jpg'), FRIEREN_JPEG);
+  fs.symlinkSync(outsideJpg, path.join(frieren, 'lien.jpg'));
+  fs.symlinkSync(path.join(bgDir, 'valid.jpg'), path.join(frieren, 'lien-interne.jpg'));
+  // même contenu et même mtime que valid.jpg, autre chemin : seule la clé de version peut les distinguer
+  const sameDate = path.join(frieren, 'meme-date.jpg');
+  fs.writeFileSync(sameDate, VALID_JPEG);
+  const ref = fs.statSync(path.join(bgDir, 'valid.jpg'));
+  fs.utimesSync(sameDate, new Date(Math.floor(ref.atimeMs)), new Date(Math.floor(ref.mtimeMs)));
+  // dossier de thème hors liste (majuscule) et sous-dossier lien vers l'extérieur
+  fs.mkdirSync(path.join(bgDir, 'Fond_Perso'));   // nom hors [a-z0-9-] (macOS est insensible à la casse : pas de doublon de frieren)
+  fs.writeFileSync(path.join(bgDir, 'Fond_Perso', 'x.jpg'), VALID_JPEG);
+  const dehors = path.join(home, 'dehors-dossier');
+  fs.mkdirSync(dehors);
+  fs.writeFileSync(path.join(dehors, 'x.jpg'), VALID_JPEG);
+  fs.symlinkSync(dehors, path.join(bgDir, 'lien-dossier'));
   setConfig({ theme: 'naruto', background: null });
 
   PORT = await freePort();
@@ -182,7 +212,53 @@ test('/custom-bg : .jpg valide -> 200 image/jpeg, nosniff et CSP sandbox ; /them
   assert.equal(r.headers['x-content-type-options'], 'nosniff');
   assert.equal(r.headers['content-security-policy'], 'sandbox');
   assert.deepEqual(r.body, VALID_JPEG);
-  assert.match(json(await get('/theme')).background, /^\/custom-bg\?v=\d+$/);
+  assert.match(json(await get('/theme')).background, /^\/custom-bg\?v=\d+-[0-9a-f]{8}$/);
+});
+
+test('/custom-bg : fichier valide dans backgrounds/<theme>/ -> 200 image/jpeg, nosniff et CSP sandbox', async () => {
+  setConfig({ theme: 'naruto', background: path.join(bgDir, 'frieren', 'fond.jpg') });
+  const r = await get('/custom-bg');
+  assert.equal(r.status, 200);
+  assert.equal(r.headers['content-type'], 'image/jpeg');
+  assert.equal(r.headers['x-content-type-options'], 'nosniff');
+  assert.equal(r.headers['content-security-policy'], 'sandbox');
+  assert.deepEqual(r.body, FRIEREN_JPEG);
+  assert.match(json(await get('/theme')).background, /^\/custom-bg\?v=\d+-[0-9a-f]{8}$/);
+});
+
+test('/custom-bg : sous-dossier ou fichier lien, deux niveaux, svg, dossier hors liste, .. -> 404', async () => {
+  const cases = {
+    'sous-dossier lien vers l\'extérieur': path.join(bgDir, 'lien-dossier', 'x.jpg'),
+    'fichier lien vers l\'extérieur dans sous-dossier': path.join(bgDir, 'frieren', 'lien.jpg'),
+    'fichier lien interne dans sous-dossier': path.join(bgDir, 'frieren', 'lien-interne.jpg'),
+    'deux niveaux': path.join(bgDir, 'frieren', 'deux', 'profond.jpg'),
+    'svg dans sous-dossier': path.join(bgDir, 'frieren', 'fond.svg'),
+    'dossier hors [a-z0-9-]': path.join(bgDir, 'Fond_Perso', 'x.jpg'),
+    '.. normalisé vers l\'extérieur': `${bgDir}/frieren/../../../../dehors.jpg`,
+    '.. même normalisé à l\'intérieur (aucun .. accepté)': `${bgDir}/frieren/../valid.jpg`,
+  };
+  for (const [label, file] of Object.entries(cases)) {
+    setConfig({ theme: 'naruto', background: file });
+    const r = await get('/custom-bg');
+    assert.equal(r.status, 404, label);
+    assert.equal(json(await get('/theme')).background, '/themes/naruto/background.jpg', `${label} : /theme garde le fond du thème`);
+  }
+});
+
+test('changement de config.background : background et themeKey changent, aussi à même mtime (/theme et /stats)', async () => {
+  setConfig({ theme: 'naruto', background: path.join(bgDir, 'valid.jpg') });
+  const a = json(await get('/theme'));
+  setConfig({ theme: 'naruto', background: path.join(bgDir, 'frieren', 'meme-date.jpg') });
+  const b = json(await get('/theme'));
+  assert.notEqual(b.background, a.background, 'background change');
+  assert.notEqual(b.themeKey, a.themeKey, 'themeKey change');
+  // la page relit /stats (themeKey) toutes les 2 s : la nouvelle clé doit y arriver
+  assert.equal(await waitFor(async () => json(await get('/stats')).themeKey === b.themeKey), true, '/stats porte la nouvelle themeKey');
+  // retour au fond du thème : la clé change encore
+  setConfig({ theme: 'naruto', background: null });
+  const c = json(await get('/theme'));
+  assert.equal(c.background, '/themes/naruto/background.jpg');
+  assert.notEqual(c.themeKey, b.themeKey);
 });
 
 // ── Host / Origin / Sec-Fetch-Site ───────────────────────────────────────

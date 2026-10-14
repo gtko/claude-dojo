@@ -2,6 +2,12 @@
   "id": "my-hero-academia",
   "name": "My Hero Academia",
   "credit": "Fan art non officiel, sans lien avec les ayants droit de My Hero Academia.",
+  "wallpapers": {
+    "provider": "wallhaven",
+    "ids": ["6qzdyq", "vgmep3", "zxvkyy", "yjkd6g", "73rm33", "qzj817", "j8xqwp", "k9jyx1", "p2medp", "p2m693", "ympo77", "eymy6w", "q22egr", "vm2kkp", "wy31wx", "zx3wzo", "zpyj2o"],
+    "default": "vgmep3",
+    "query": "Boku no Hero Academia"
+  },
   "accentFont": "\"Impact\", \"Avenir Next Condensed\", sans-serif",
   "palette": {
     "bg": "rgba(18, 26, 38, .55)",

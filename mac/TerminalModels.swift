@@ -77,11 +77,6 @@ struct TerminalApplyResult: Decodable {
     }
 }
 
-/// Réponse de `set-theme` : `terminal` seulement quand des options terminal étaient actives (fichiers régénérés).
-struct ThemeChangeResult: Decodable {
-    let terminal: TerminalApplyResult?
-}
-
 /// Ouvre le profil Terminal (.terminal) : Terminal l'importe quand on le valide. Demande avant, pour ne rien ouvrir à l'improviste.
 enum TerminalProfile {
     @MainActor

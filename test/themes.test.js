@@ -126,7 +126,7 @@ test('set-theme : écrit config.theme pour un thème connu, garde le reste de la
   writeJson(configFile(home), { weather: { name: 'Lyon', lat: 45.76, lon: 4.83 } });
   const r = cli(home, ['set-theme', 'alpha'], { env });
   assert.equal(r.code, 0, r.raw);
-  assert.deepEqual(r.out, { ok: true, theme: 'alpha' });
+  assert.deepEqual(r.out, { ok: true, theme: 'alpha', background: null, hasDownloads: false, needsSync: false });
   const cfg = readJson(configFile(home));
   assert.equal(cfg.theme, 'alpha');
   assert.equal(cfg.weather.name, 'Lyon', 'clés existantes conservées');

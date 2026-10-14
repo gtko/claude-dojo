@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
 
 const PORT = Number(process.env.DOJO_PORT) || 7777;   // DOJO_PORT ne sert qu'aux tests (port libre)
@@ -657,14 +658,30 @@ const readTheme = (id) => {   // theme.json d'un id valide, lisible et objet JSO
   return t && typeof t === 'object' && !Array.isArray(t) ? t : null;
 };
 const BG_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.heic'];   // liste blanche : SVG et HTML jamais servis comme fond
-function customBg() {   // config.background : image réelle, confinée à BG_DIR (chemin résolu), sinon null
+const BG_THEME_RE = /^[a-z0-9-]+$/;   // sous-dossier de thème : backgrounds/<theme>/, un seul niveau
+// config.background : image réelle, confinée à BG_DIR, sinon null. Acceptés : backgrounds/<fichier> et
+// backgrounds/<theme>/<fichier>. Refusés : « .. », lien symbolique à n'importe quel maillon (sous-dossier ou fichier),
+// lien sortant (realpath), deux niveaux ou plus, extension hors BG_EXT, fichier non régulier.
+// ver = mtime + hash court du chemin réel : deux fichiers différents ne partagent jamais la même version.
+function customBg() {
   const f = config().background;
-  if (typeof f !== 'string' || !f) return null;
+  if (typeof f !== 'string' || !f || !path.isAbsolute(f) || f.includes('\0') || f.split(/[\\/]/).includes('..')) return null;
   try {
-    const file = fs.realpathSync(f), dir = fs.realpathSync(BG_DIR);
-    if (!file.startsWith(dir + path.sep) || !BG_EXT.includes(path.extname(file).toLowerCase())) return null;
+    const rel = path.relative(BG_DIR, f).split(path.sep);   // maillons tels qu'écrits dans la config
+    if (rel.length > 2 || rel[0] === '..' || (rel.length === 2 && !BG_THEME_RE.test(rel[0]))) return null;
+    let link = BG_DIR;
+    for (const seg of rel) {
+      link = path.join(link, seg);
+      if (fs.lstatSync(link).isSymbolicLink()) return null;
+    }
+    const dir = fs.realpathSync(BG_DIR), file = fs.realpathSync(f);
+    const inner = path.relative(dir, file).split(path.sep);   // même forme une fois résolu
+    if (inner.length > 2 || inner[0] === '..' || (inner.length === 2 && !BG_THEME_RE.test(inner[0]))) return null;
+    if (!BG_EXT.includes(path.extname(file).toLowerCase())) return null;
     const st = fs.statSync(file);
-    return st.isFile() ? { file, mtime: Math.floor(st.mtimeMs) } : null;
+    if (!st.isFile()) return null;
+    const hash = crypto.createHash('sha1').update(file).digest('hex').slice(0, 8);
+    return { file, ver: `${Math.floor(st.mtimeMs)}-${hash}` };
   } catch { return null; }
 }
 // wanted : id demandé en aperçu (GET /theme?id=…), sans toucher à la config ; absent : thème de la config.
@@ -679,8 +696,8 @@ function themeData(wanted) {
     id, name: t.name || id, credit: t.credit || '', accentFont: t.accentFont || null,
     palette: t.palette || {}, vocab: t.vocab || {}, prop: t.prop || 'post', propColors: t.propColors || [],
     chars: Array.isArray(t.chars) ? t.chars : [],
-    background: bg ? `/custom-bg?v=${bg.mtime}` : `/themes/${id}/background.jpg`,
-    themeKey: `${id}|${bg ? bg.mtime : ''}`,
+    background: bg ? `/custom-bg?v=${bg.ver}` : `/themes/${id}/background.jpg`,
+    themeKey: `${id}|${bg ? bg.ver : ''}`,
   };
 }
 

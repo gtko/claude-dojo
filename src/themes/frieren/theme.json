@@ -2,6 +2,12 @@
   "id": "frieren",
   "name": "Frieren",
   "credit": "Fan art non officiel, sans lien avec les ayants droit de Frieren.",
+  "wallpapers": {
+    "provider": "wallhaven",
+    "ids": ["gw5ypd", "2y6vy6", "9ozlpk", "ly3lyy", "5gpvg8", "9omppk", "x6qqed", "rrz76w", "9depzk", "6l5wpl", "l87gvr", "9dewok", "p966oj", "851jyo", "d62kgl", "rrwdyq", "e83378", "9ozwkk", "gpxjjd", "vq2jq3", "p953g3", "mlzzx8", "6d3zlw", "9oox21"],
+    "default": "9ozlpk",
+    "query": "Sousou no Frieren"
+  },
   "accentFont": "\"Baskerville\", \"Georgia\", serif",
   "palette": {
     "bg": "rgba(14,16,40,.55)",
