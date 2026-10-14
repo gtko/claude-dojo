@@ -61,6 +61,24 @@ struct ProcessResult {
     let timedOut: Bool
 }
 
+/// Sortie d'un processus, lue sur un fil à part : protégée par un verrou, car ce fil peut finir après le délai de l'appelant.
+private final class ProcessOutput: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func set(_ value: Data) {
+        lock.lock()
+        data = value
+        lock.unlock()
+    }
+
+    func get() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return data
+    }
+}
+
 enum ProcessRunner {
     /// Environnement hérité, PATH enrichi (une app lancée par launchd a un PATH minimal).
     static func environment() -> [String: String] {
@@ -71,7 +89,8 @@ enum ProcessRunner {
     }
 
     /// Lance un exécutable (jamais de shell), attend la fin ou le timeout, renvoie stdout/stderr.
-    static func run(_ exe: URL, _ args: [String], timeout: TimeInterval, cwd: URL? = nil) async throws -> ProcessResult {
+    /// `stdin` : données envoyées sur l'entrée standard puis fermée. Pour les secrets : jamais dans argv (visible de `ps`).
+    static func run(_ exe: URL, _ args: [String], timeout: TimeInterval, cwd: URL? = nil, stdin: Data? = nil) async throws -> ProcessResult {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<ProcessResult, Error>) in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
@@ -79,23 +98,30 @@ enum ProcessRunner {
                 process.arguments = args
                 process.environment = environment()
                 process.currentDirectoryURL = cwd
-                process.standardInput = FileHandle.nullDevice
+                let inPipe: Pipe? = stdin == nil ? nil : Pipe()
+                if let inPipe {
+                    // Écrire vers un enfant qui ne lit plus renvoie EPIPE, au lieu de tuer l'app par SIGPIPE.
+                    _ = fcntl(inPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+                    process.standardInput = inPipe
+                } else {
+                    process.standardInput = FileHandle.nullDevice
+                }
                 let outPipe = Pipe()
                 let errPipe = Pipe()
                 process.standardOutput = outPipe
                 process.standardError = errPipe
 
-                var out = Data()
-                var err = Data()
+                let out = ProcessOutput()
+                let err = ProcessOutput()
                 let readers = DispatchGroup()
                 readers.enter()
                 DispatchQueue.global().async {
-                    out = outPipe.fileHandleForReading.readDataToEndOfFile()
+                    out.set(outPipe.fileHandleForReading.readDataToEndOfFile())
                     readers.leave()
                 }
                 readers.enter()
                 DispatchQueue.global().async {
-                    err = errPipe.fileHandleForReading.readDataToEndOfFile()
+                    err.set(errPipe.fileHandleForReading.readDataToEndOfFile())
                     readers.leave()
                 }
 
@@ -104,13 +130,27 @@ enum ProcessRunner {
                 } catch {
                     try? outPipe.fileHandleForWriting.close()
                     try? errPipe.fileHandleForWriting.close()
-                    readers.wait()
+                    if let inPipe {
+                        try? inPipe.fileHandleForReading.close()
+                        try? inPipe.fileHandleForWriting.close()
+                    }
+                    _ = readers.wait(timeout: .now() + 5)
                     cont.resume(throwing: SetupError("Impossible de lancer \(exe.lastPathComponent) : \(error.localizedDescription)"))
                     return
                 }
-                // Le processus a ses propres copies des extrémités d'écriture : on ferme la nôtre pour recevoir l'EOF.
+                // Le processus a ses propres copies des extrémités utiles : on ferme les nôtres pour recevoir l'EOF.
                 try? outPipe.fileHandleForWriting.close()
                 try? errPipe.fileHandleForWriting.close()
+                if let inPipe, let payload = stdin {
+                    // Pas de lecteur côté parent : si l'enfant meurt sans lire, l'écriture échoue au lieu de bloquer.
+                    try? inPipe.fileHandleForReading.close()
+                    // Écriture sur une file à part, pour ne pas bloquer le fil d'attente pendant que l'enfant écrit sa sortie.
+                    let writer = inPipe.fileHandleForWriting
+                    DispatchQueue.global().async {
+                        try? writer.write(contentsOf: payload)
+                        try? writer.close()
+                    }
+                }
 
                 let lock = NSLock()
                 var timedOut = false
@@ -118,17 +158,23 @@ enum ProcessRunner {
                     lock.lock()
                     timedOut = true
                     lock.unlock()
-                    if process.isRunning { process.terminate() }
+                    guard process.isRunning else { return }
+                    process.terminate()
+                    // SIGTERM ignoré : SIGKILL 3 s plus tard. Le pid reste valide tant que le processus tourne.
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+                        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                    }
                 }
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
                 process.waitUntilExit()
                 killer.cancel()
-                readers.wait()
+                // Un petit-enfant qui garde le tube ouvert ne doit pas bloquer l'appelant : 5 s d'attente au plus.
+                _ = readers.wait(timeout: .now() + 5)
 
                 lock.lock()
                 let didTimeOut = timedOut
                 lock.unlock()
-                cont.resume(returning: ProcessResult(status: process.terminationStatus, stdout: out, stderr: err, timedOut: didTimeOut))
+                cont.resume(returning: ProcessResult(status: process.terminationStatus, stdout: out.get(), stderr: err.get(), timedOut: didTimeOut))
             }
         }
     }
@@ -152,7 +198,8 @@ final class SetupRunner: ObservableObject {
     var runtimeDir: URL { DojoPaths.runtimeDir }
 
     /// Appel générique : décode la réponse dans T. Les champs de T sont optionnels, un champ absent ne bloque pas.
-    func call<T: Decodable>(_ cmd: String, _ args: [String] = [], timeout: TimeInterval = 60) async throws -> T {
+    /// `stdin` : JSON envoyé sur l'entrée standard (argument `-`), pour que les secrets n'apparaissent pas dans argv.
+    func call<T: Decodable>(_ cmd: String, _ args: [String] = [], timeout: TimeInterval = 60, stdin: Data? = nil) async throws -> T {
         let script = runtimeDir.appendingPathComponent("setup.js")
         guard FileManager.default.fileExists(atPath: script.path) else {
             throw SetupError("setup.js introuvable dans \(runtimeDir.path)")
@@ -162,7 +209,7 @@ final class SetupRunner: ObservableObject {
         }
         running = cmd
         defer { running = nil }
-        let result = try await ProcessRunner.run(node, [script.path, cmd] + args, timeout: timeout, cwd: runtimeDir)
+        let result = try await ProcessRunner.run(node, [script.path, cmd] + args, timeout: timeout, cwd: runtimeDir, stdin: stdin)
         if result.timedOut { throw SetupError("setup.js \(cmd) : délai dépassé (\(Int(timeout)) s)") }
 
         let lines = String(decoding: result.stdout, as: UTF8.self)

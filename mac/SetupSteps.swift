@@ -50,6 +50,26 @@ struct Notice: View {
     }
 }
 
+/// Bandeau d'avertissement : app lancée depuis le DMG ou une copie temporaire (démarrage automatique impossible).
+struct LocationBanner: View {
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.orange.opacity(0.12))
+        .cornerRadius(6)
+    }
+}
+
 struct StatusRow: View {
     let title: String
     let detail: String
@@ -114,6 +134,9 @@ struct WelcomeStep: View {
                 subtitle: model.editing
                     ? "Tu modifies la configuration existante. Rien n'est écrit tant que tu n'as pas validé la dernière étape."
                     : "Claude Dojo affiche sur ton bureau la météo, ton agenda, l'état de tes dépôts GitHub et de tes projets. Cet assistant prépare tout en quelques minutes.")
+            if let warning = model.appLocationWarning {
+                LocationBanner(text: warning)
+            }
             VStack(alignment: .leading, spacing: 10) {
                 Label("Dépendances : Node.js et des outils optionnels", systemImage: "shippingbox")
                 Label("Météo, GitHub, projets et calendriers", systemImage: "slider.horizontal.3")
@@ -396,10 +419,10 @@ struct ClaudeStep: View {
             }
             .pickerStyle(.radioGroup)
             .labelsHidden()
-            Toggle("Heavy-gate : arrête les processus lourds au-delà des seuils", isOn: $model.heavyGate)
+            Toggle("Heavy-gate : empêche Claude Code de lancer trop de suites de tests/builds en parallèle", isOn: $model.heavyGate)
                 .toggleStyle(.checkbox)
-            if model.heavyGate && !model.heavyThresholds.isEmpty {
-                Text("Seuils calculés automatiquement : " + model.heavyThresholds.joined(separator: " · "))
+            if model.heavyGate, let limits = model.heavyLimits {
+                Text("Seuils automatiques pour ce Mac : \(limits.suites) suites en parallèle · \(limits.nodes) processus node")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -410,13 +433,23 @@ struct ClaudeStep: View {
                 Notice(text: error, isError: true)
             }
             ScrollView {
-                // Lignes longues repliées (pas de troncature) ; la hauteur du cadre suit le contenu.
-                Text(model.diff.isEmpty ? "Aperçu indisponible." : model.diff)
-                    .font(.system(size: 11, design: .monospaced))
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
+                VStack(alignment: .leading, spacing: 6) {
+                    // Ajouts en phrases courtes (tous les hooks, barre de statut, env) : visibles sans défiler.
+                    ForEach(model.changes, id: \.self) { line in
+                        Text(line).font(.system(size: 11, design: .monospaced))
+                    }
+                    if !model.changes.isEmpty {
+                        Divider()
+                    }
+                    // Diff brut, lignes longues repliées (pas de troncature) ; la hauteur du cadre suit le contenu.
+                    Text(model.diff.isEmpty ? "Aperçu indisponible." : model.diff)
+                        .font(.system(size: 11, design: .monospaced))
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
             }
             .frame(height: 170)
             .background(Color(nsColor: .textBackgroundColor))
@@ -434,6 +467,9 @@ struct AutostartStep: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             StepTitle(title: "Démarrage automatique", subtitle: "Dojo se lance à l'ouverture de session, via des LaunchAgents dans ~/Library/LaunchAgents. Aucun droit administrateur requis.")
+            if let warning = model.appLocationWarning {
+                LocationBanner(text: warning)
+            }
             Toggle("Lancer Dojo à l'ouverture de session", isOn: $model.autostart)
                 .toggleStyle(.checkbox)
             if !model.autostart {
@@ -459,6 +495,9 @@ struct DoneStep: View {
                 ForEach(model.summary, id: \.self) { line in
                     Text("• " + line).font(.callout)
                 }
+            }
+            if model.autostart, let warning = model.appLocationWarning {
+                LocationBanner(text: warning)
             }
             if !model.log.isEmpty {
                 ScrollView {

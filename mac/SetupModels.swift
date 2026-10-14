@@ -125,7 +125,61 @@ struct GeoResult: Decodable, Identifiable {
 struct MergeResult: Decodable {
     let changed: Bool?
     let diff: String?
+    let before: JSONValue?
+    let after: JSONValue?
     let heavyGateThresholds: JSONValue?
+}
+
+/// Seuils heavy-gate de ce Mac, calculés par setup.js (même formule que heavy-gate.js).
+struct HeavyLimits {
+    /// Suites lourdes en parallèle (HEAVY_GATE_MAX).
+    let suites: Int
+    /// Processus node simultanés (HEAVY_GATE_MAX_NODE).
+    let nodes: Int
+}
+
+extension HeavyLimits {
+    init?(_ value: JSONValue?) {
+        guard case .object(let entries)? = value,
+              case .number(let suites)? = entries["HEAVY_GATE_MAX"],
+              case .number(let nodes)? = entries["HEAVY_GATE_MAX_NODE"] else { return nil }
+        self.init(suites: Int(suites), nodes: Int(nodes))
+    }
+}
+
+/// Ajouts de settings.json en phrases courtes, à partir des `before` et `after` de merge-settings.
+/// Niveau 2 pour hooks et env (hooks.SessionStart, env.VITEST_MAX_WORKERS), premier niveau pour le reste (statusLine).
+enum SettingsChanges {
+    static func lines(before: JSONValue?, after: JSONValue?) -> [String] {
+        let old = leaves(before)
+        let new = leaves(after)
+        var lines: [String] = []
+        for path in new.keys.sorted() {
+            guard let value = new[path] else { continue }
+            if let previous = old[path] {
+                if previous != value { lines.append("modifié : \(path)") }
+            } else {
+                lines.append("ajouté : \(path)")
+            }
+        }
+        for path in old.keys.sorted() where new[path] == nil {
+            lines.append("retiré : \(path)")
+        }
+        return lines
+    }
+
+    private static func leaves(_ root: JSONValue?) -> [String: String] {
+        guard case .object(let top)? = root else { return [:] }
+        var out: [String: String] = [:]
+        for (key, value) in top {
+            if key == "hooks" || key == "env", case .object(let inner) = value {
+                for (name, item) in inner { out["\(key).\(name)"] = (try? DojoPaths.json(item)) ?? "" }
+            } else {
+                out[key] = (try? DojoPaths.json(value)) ?? ""
+            }
+        }
+        return out
+    }
 }
 
 /// Format de ~/.config/claude-dojo/config.json (sentry est conservé tel quel).

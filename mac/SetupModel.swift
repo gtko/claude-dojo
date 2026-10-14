@@ -60,9 +60,11 @@ final class SetupModel: ObservableObject {
     @Published var statusLine: StatusLinePolicy = .replace
     @Published var heavyGate = true
     @Published var vitestWorkers = true
+    /// Aperçu : ajouts en phrases courtes, puis diff brut (merge-settings --dry-run, rien n'est écrit).
+    @Published var changes: [String] = []
     @Published var diff = ""
     @Published var previewError: String?
-    @Published var heavyThresholds: [String] = []
+    @Published var heavyLimits: HeavyLimits?
 
     // Démarrage et application
     @Published var autostart = true
@@ -136,8 +138,21 @@ final class SetupModel: ObservableObject {
             "Projets : \(validRoots) dossier(s), " + (onlyOwners ? "dépôts des propriétaires seulement" : "tous les dépôts"),
             "Calendriers : \(validCalendars)",
             "Claude Code : hooks Dojo \(hooks ? "oui" : "non"), barre de statut \(statusLineLabel), heavy-gate \(heavyGate ? "oui" : "non"), VITEST_MAX_WORKERS \(vitestWorkers ? "oui" : "non")",
-            "Démarrage automatique : \(autostart ? "oui" : "non")"
+            "Démarrage automatique : " + autostartLabel
         ]
+    }
+
+    /// Dojo lancé depuis le DMG monté ou une copie translocée : les LaunchAgents seraient installés vers un chemin temporaire.
+    static func appLocationWarning(for bundlePath: String) -> String? {
+        guard bundlePath.hasPrefix("/Volumes/") || bundlePath.contains("/AppTranslocation/") else { return nil }
+        return "Dojo est lancé depuis le disque d'installation ou une copie temporaire : le démarrage automatique ne peut pas être installé. Déplace DojoWallpaper.app dans Applications puis relance-la."
+    }
+
+    var appLocationWarning: String? { Self.appLocationWarning(for: Bundle.main.bundlePath) }
+
+    private var autostartLabel: String {
+        if !autostart { return "non" }
+        return appLocationWarning == nil ? "oui" : "bloqué (app hors Applications)"
     }
 
     // MARK: Chargement
@@ -269,16 +284,12 @@ final class SetupModel: ObservableObject {
             let args = [try DojoPaths.json(mergeOptions(dryRun: true))]
             let result: MergeResult = try await runner.call("merge-settings", args)
             diff = result.diff ?? ""
-            heavyThresholds = SetupModel.thresholdLines(result.heavyGateThresholds)
+            changes = SettingsChanges.lines(before: result.before, after: result.after)
+            heavyLimits = HeavyLimits(result.heavyGateThresholds)
             previewError = nil
         } catch {
             previewError = error.localizedDescription
         }
-    }
-
-    static func thresholdLines(_ value: JSONValue?) -> [String] {
-        guard case .object(let entries)? = value else { return [] }
-        return entries.sorted { $0.key < $1.key }.map { "\($0.key) : \($0.value.display)" }
     }
 
     func buildConfig() -> DojoConfig {
@@ -309,15 +320,19 @@ final class SetupModel: ObservableObject {
             let _: Ack = try await runner.call("install-files", [runner.runtimeDir.path], timeout: 120)
 
             note("Écriture de config.json…")
+            // JSON envoyé sur stdin (« - ») : la config contient des secrets (sentry), jamais dans argv.
             let config = try DojoPaths.json(buildConfig())
-            let _: Ack = try await runner.call("write-config", [config])
+            let _: Ack = try await runner.call("write-config", ["-"], stdin: Data(config.utf8))
 
             note("Mise à jour de settings.json…")
             let merge = try DojoPaths.json(mergeOptions(dryRun: false))
-            let _: MergeResult = try await runner.call("merge-settings", [merge], timeout: 120)
+            let _: MergeResult = try await runner.call("merge-settings", ["-"], timeout: 120, stdin: Data(merge.utf8))
 
             let launch = try DojoPaths.json(LaunchOptions(node: nodeExe, app: Bundle.main.bundlePath, dryRun: false))
-            if autostart {
+            if autostart, appLocationWarning != nil {
+                // Depuis le DMG, les LaunchAgents pointeraient vers un chemin qui disparaît à l'éjection : on ne les installe pas.
+                note("Démarrage automatique non installé : Déplace DojoWallpaper.app dans Applications puis relance-la.")
+            } else if autostart {
                 note("Démarrage automatique (LaunchAgents)…")
                 let _: Ack = try await runner.call("launchagents", ["install", launch])
             } else if hadAutostart {

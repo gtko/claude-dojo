@@ -109,17 +109,33 @@ extension SetupModel {
         model.statusLine = .keep
         model.heavyGate = true
         model.vitestWorkers = true
-        model.heavyThresholds = ["cpu > 85 %", "mémoire > 90 %", "durée > 20 min"]
-        model.diff = """
-        --- ~/.claude/settings.json (avant)
-        +++ ~/.claude/settings.json (après)
-        @@ hooks
-        +  "SessionStart": [{"hooks": [{"type": "command", "command": "node ~/.config/claude-dojo/hook.js"}]}]
-        @@ statusLine (conservée)
-           "statusLine": {"type": "command", "command": "ancienne-barre.js"}
-        @@ env
-        +  "VITEST_MAX_WORKERS": "2"
-        """
+        // Seuils de ce Mac (12 cœurs, 18 Go) : mêmes valeurs que setup.js renvoie pour heavy-gate.
+        model.heavyLimits = HeavyLimits(suites: 4, nodes: 36)
+        // Ajouts repris de la sortie réelle de merge-settings --dry-run (statusLine conservée, hooks et env ajoutés).
+        model.changes = [
+            "ajouté : env.VITEST_MAX_WORKERS",
+            "ajouté : hooks.Notification",
+            "ajouté : hooks.PreToolUse",
+            "ajouté : hooks.SessionEnd",
+            "ajouté : hooks.SessionStart",
+            "ajouté : hooks.Stop",
+            "ajouté : hooks.UserPromptSubmit"
+        ]
+        // Début du diff brut réel (chemins normalisés) ; la liste ci-dessus en donne l'ensemble.
+        model.diff = #"""
+        +   },
+        +   "hooks": {
+        +     "SessionStart": [
+        +       {
+        +         "hooks": [
+        +           {
+        +             "type": "command",
+        +             "command": "\"/Users/exemple/.local/bin/node\" \"/Users/exemple/.config/claude-dojo/hook.js\"",
+        +             "async": true
+        +           }
+        +         ]
+        +       }
+        """#
         model.autostart = true
         return model
     }
