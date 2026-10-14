@@ -31,20 +31,20 @@ ANSI = {
 
 # Random lists for the launcher: bounties (invented pirates) and seas or islands (invented or generic).
 LIST1 = [
-    "Sourire-de-Glace · 1 200 000 000 ฿",
+    "Sourire-de-Glace · 1 200 000 000 berrys",
     "Capitaine Coquille · 80 000 000 berrys",
     "Mousse Bancal · 15 000 000 berrys",
     "Vigie Sans-Nom · 500 000 000 berrys",
-    "Cuistot Flamme-Bleue · 330 000 000 ฿",
+    "Cuistot Flamme-Bleue · 330 000 000 berrys",
     "Épéiste Tranchemer · 1 000 000 000 berrys",
-    "Navigatrice Ondine · 3 000 000 000 ฿",
+    "Navigatrice Ondine · 3 000 000 000 berrys",
     "Tireur Cent-Balles · 120 000 000 berrys",
-    "Médecin Cul-de-Rhum · 60 000 000 ฿",
+    "Médecin Cul-de-Rhum · 60 000 000 berrys",
     "Charpentier Marteau-Doux · 45 000 000 berrys",
-    "Archère Aile-de-Corbeau · 210 000 000 ฿",
+    "Archère Aile-de-Corbeau · 210 000 000 berrys",
     "Musicien Chant-du-Flot · 88 000 000 berrys",
     "Ex-Marine Sabre-Gris · 25 000 000 berrys",
-    "Pilote Vent-d'Ouest · 2 000 000 000 ฿",
+    "Pilote Vent-d'Ouest · 2 000 000 000 berrys",
 ]
 LIST2 = [
     "Île du Ciel · cité suspendue aux nuages",
@@ -159,9 +159,9 @@ def _face(cv):
 
 
 def _needle(cv, phi):
-    """Coral north half, cream south half. Its centre is hidden under the hat."""
-    img = paint(_flank(cv, 0, CY, phi, 0.34, 0.07, +1), CORAL)
-    img = _over(img, paint(_flank(cv, 0, CY, phi, 0.34, 0.07, -1), CORAL))
+    """Coral north half, cream south half. The north half is short enough to end under the hat."""
+    img = paint(_flank(cv, 0, CY, phi, 0.12, 0.07, +1), CORAL)
+    img = _over(img, paint(_flank(cv, 0, CY, phi, 0.12, 0.07, -1), CORAL))
     south = phi + math.pi
     img = _over(img, paint(_flank(cv, 0, CY, south, 0.22, 0.07, +1), CREAM))
     img = _over(img, paint(_flank(cv, 0, CY, south, 0.22, 0.07, -1), CREAM_D))
@@ -169,12 +169,13 @@ def _needle(cv, phi):
 
 
 def _hat(cv):
-    """Simple straw hat: cream brim, domed crown in shade and light, coral band."""
-    brim = _ellipse(cv, 0, CY + 0.03, 0.20, 0.05)
-    crown = ImageChops.lighter(_ellipse(cv, 0, CY - 0.06, 0.10, 0.11),
-                               _rect(cv, -0.10, CY - 0.06, 0.10, CY + 0.03))
+    """Straw hat: cream brim (0.28 x 0.06), domed crown in shade and light, coral band at CY-0.02..CY+0.02."""
+    brim = _ellipse(cv, 0, CY, 0.28, 0.06)
+    dome = ImageChops.multiply(_ellipse(cv, 0, CY - 0.02, 0.11, 0.14),
+                               _rect(cv, -0.11, CY - 0.2, 0.11, CY - 0.02))
+    band = _rect(cv, -0.11, CY - 0.02, 0.11, CY + 0.02)
+    crown = ImageChops.lighter(dome, band)
     shade = ImageChops.multiply(crown, _rect(cv, 0.0, CY - 0.2, 0.2, CY + 0.1))
-    band = ImageChops.multiply(crown, _rect(cv, -0.11, CY - 0.10, 0.11, CY - 0.06))
     img = paint(brim, CREAM)
     img = _over(img, paint(crown, CREAM))
     img = _over(img, paint(shade, CREAM_D))

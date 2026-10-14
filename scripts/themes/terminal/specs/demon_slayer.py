@@ -17,7 +17,7 @@ TITLE = "Corps des Pourfendeurs"
 SUBTITLE = "Terminal du Corps · rang Hashira"
 FOOTER = "● souffle stable · nichirin prête"
 KEY1 = "souffle"
-KEY2 = "forme"
+KEY2 = "rang"
 ACCENT = (185, 162, 236)   # purple #b9a2ec: keys and cursor, the theme's main accent
 VALUE = (243, 238, 250)    # foreground #f3eefa of the theme.json palette
 FETCH = {"user": "pourfendeur", "host": "corps", "os": "nichirin", "cpu": "souffle",
@@ -30,36 +30,14 @@ ANSI = {
     9: "#f08a9a", 10: "#8fd4a8", 11: "#f2c26a", 12: "#a4b8f2", 13: "#f2a6c8", 14: "#a8e0d8",
 }
 
-# Breaths (souffles) for the launcher line, then forms (formes) with their ordinal.
+# Breaths (souffles) for the first launcher line, then the ranks of the Corps (rangs) for the second.
 LIST1 = [
-    "Eau", "Flamme", "Foudre", "Vent", "Pierre", "Brume", "Amour",
-    "Serpent", "Insecte", "Son", "Soleil", "Fleur", "Bête",
+    "Eau", "Flamme", "Foudre", "Bête", "Insecte", "Vent", "Pierre",
+    "Brume", "Amour", "Serpent", "Son", "Fleur", "Lune", "Soleil",
 ]
 LIST2 = [
-    "Première forme · Tranche de surface",
-    "Deuxième forme · Roue d'eau",
-    "Troisième forme · Danse fluide",
-    "Quatrième forme · Marée déferlante",
-    "Cinquième forme · Tourbillon",
-    "Sixième forme · Pluie bénie",
-    "Première forme · Feu inconscient",
-    "Deuxième forme · Soleil ardent",
-    "Troisième forme · Univers flamboyant",
-    "Quatrième forme · Tigre de feu",
-    "Première forme · Éclair et foudre",
-    "Deuxième forme · Éclair multiple",
-    "Première forme · Tourbillon de poussière",
-    "Deuxième forme · Griffe de vent",
-    "Première forme · Peau de pierre",
-    "Deuxième forme · Mur de roc",
-    "Première forme · Brume aveuglante",
-    "Deuxième forme · Voile de brouillard",
-    "Première forme · Cercle de l'amour",
-    "Première forme · Bête déchaînée",
-    "Deuxième forme · Mâchoire sauvage",
-    "Première forme · Danse du dieu du feu",
-    "Deuxième forme · Vague de chaleur",
-    "Première forme · Fleur de cerisier",
+    "Mizunoto", "Mizunoe", "Kanoto", "Kanoe", "Tsuchinoto", "Tsuchinoe",
+    "Hinoto", "Hinoe", "Kinoto", "Kinoe", "Pilier",
 ]
 
 # Palette of the artwork (theme.json values, plus two lighter tints for the highlights).

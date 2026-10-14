@@ -4,20 +4,20 @@ accent|247;214;112
 value|244;241;230
 cols|30
 rows|12
-l1|Sourire-de-Glace · 1 200 000 000 ฿
+l1|Sourire-de-Glace · 1 200 000 000 berrys
 l1|Capitaine Coquille · 80 000 000 berrys
 l1|Mousse Bancal · 15 000 000 berrys
 l1|Vigie Sans-Nom · 500 000 000 berrys
-l1|Cuistot Flamme-Bleue · 330 000 000 ฿
+l1|Cuistot Flamme-Bleue · 330 000 000 berrys
 l1|Épéiste Tranchemer · 1 000 000 000 berrys
-l1|Navigatrice Ondine · 3 000 000 000 ฿
+l1|Navigatrice Ondine · 3 000 000 000 berrys
 l1|Tireur Cent-Balles · 120 000 000 berrys
-l1|Médecin Cul-de-Rhum · 60 000 000 ฿
+l1|Médecin Cul-de-Rhum · 60 000 000 berrys
 l1|Charpentier Marteau-Doux · 45 000 000 berrys
-l1|Archère Aile-de-Corbeau · 210 000 000 ฿
+l1|Archère Aile-de-Corbeau · 210 000 000 berrys
 l1|Musicien Chant-du-Flot · 88 000 000 berrys
 l1|Ex-Marine Sabre-Gris · 25 000 000 berrys
-l1|Pilote Vent-d'Ouest · 2 000 000 000 ฿
+l1|Pilote Vent-d'Ouest · 2 000 000 000 berrys
 l2|Île du Ciel · cité suspendue aux nuages
 l2|Archipel des Tempêtes
 l2|Mer des Brumes · sans fond connu
