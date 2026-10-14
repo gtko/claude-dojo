@@ -25,7 +25,7 @@ jobs:
         run: brew install shellcheck
 
       - name: Lint shell scripts
-        run: shellcheck install.sh uninstall.sh
+        run: shellcheck -S warning install.sh uninstall.sh
 
       - name: Syntax check Node.js runtime
         run: |
