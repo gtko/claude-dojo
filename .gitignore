@@ -7,3 +7,4 @@ config.json
 *.bak-*
 dist/
 build/
+__pycache__/

@@ -1,0 +1,34 @@
+key1|rang de magie
+key2|sort
+accent|95;220;236
+value|230;246;239
+cols|30
+rows|12
+l1|Débutant · niv. 1
+l1|Intermédiaire · niv. 2
+l1|Avancé · niv. 3
+l1|Expert · niv. 4
+l1|Saint · niv. 5
+l1|Roi · niv. 6
+l1|Empereur · niv. 7
+l1|Dieu · niv. 8
+l1|Maîtrise de l'eau · niv. 4
+l1|Maîtrise du feu · niv. 3
+l1|Maîtrise de la terre · niv. 3
+l1|Maîtrise du vent · niv. 4
+l2|Boule de feu · projectile ardent
+l2|Mur de pierre · bouclier de terre
+l2|Soin · lumière apaisante
+l2|Lame de vent · tranchant invisible
+l2|Glace éternelle · pilier de givre
+l2|Éclair · foudre dirigée
+l2|Lévitation · pas dans l'air
+l2|Bouclier d'eau · voile liquide
+l2|Flèche de mana · trait pur
+l2|Téléportation · pas de l'ombre
+l2|Détection de mana · sens éveillé
+l2|Brume dissipante · voile levé
+l2|Pluie de pierres · éboulis
+l2|Tornade · colonne de vent
+l2|Lumière guérisseuse · aube douce
+l2|Barrière d'ombre · nuit close

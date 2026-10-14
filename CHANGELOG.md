@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup commands: `themes`, `set-theme <id>` and `set-background <path|default>` in `src/setup.js`.
 - Menu bar: a Theme menu to choose a theme or a custom background.
 - Setup assistant: a Theme step.
+- Terminal themes: each theme can style Ghostty and Terminal.app (a palette, four cursor shaders, a Terminal profile) and show a welcome header with the theme's logo and two lines from its universe. Each part is optional and reversible, from the Theme step or with `terminal status|apply|remove` in `src/setup.js`. `DOJO_WELCOME=off` and `DOJO_ANIM=0` turn the header off or keep the still logo.
+- Terminal generator: `scripts/themes/terminal/gen.py` builds a theme's terminal files from a spec in `scripts/themes/terminal/specs/`.
 
 ## [0.1.0] - 2026-10-14
 

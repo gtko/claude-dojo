@@ -9,6 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 const REPO = path.resolve(__dirname, '..');
@@ -380,18 +381,59 @@ test('install-files copie themes/ dans le HOME temporaire ; la copie installée 
   assert.ok(fs.existsSync(path.join(installed, 'themes', 'beta', 'theme.json')));
 });
 
-test('install-files : les thèmes réels de src/themes sont copiés à l identique', (t) => {
+// Empreintes de tous les fichiers d'un dossier, sous-dossiers compris (terminal/frames, terminal/shaders).
+// Un lien est comparé à sa cible écrite, jamais suivi.
+function treeHashes(root) {
+  const out = {};
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      const rel = path.relative(root, p);
+      if (e.isSymbolicLink()) out[rel] = 'lien:' + fs.readlinkSync(p);
+      else if (e.isDirectory()) walk(p);
+      else out[rel] = crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex');
+    }
+  };
+  walk(root);
+  return out;
+}
+
+test('install-files : terminal/ d un thème copié récursivement (frames/, shaders/) ; lien interne gardé, lien sortant refusé', () => {
+  const home = tmpDir();
+  const base = tmpDir();
+  const src = path.join(base, 'src');
+  const term = path.join(src, 'themes', 'alpha', 'terminal');
+  writeJson(path.join(src, 'themes', 'alpha', 'theme.json'), { id: 'alpha', name: 'Alpha' });
+  writeFile(path.join(term, 'frames', 'frame_01.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  writeFile(path.join(term, 'shaders', 'a.glsl'), 'void mainImage(){}');
+  fs.symlinkSync('a.glsl', path.join(term, 'shaders', 'link.glsl'));
+  const r = cli(home, ['install-files', src]);
+  assert.equal(r.code, 0, r.raw);
+  const copy = path.join(home, '.config', 'claude-dojo', 'themes', 'alpha', 'terminal');
+  assert.ok(fs.existsSync(path.join(copy, 'frames', 'frame_01.png')), 'frames/ copié');
+  assert.ok(fs.existsSync(path.join(copy, 'shaders', 'a.glsl')), 'shaders/ copié');
+  assert.ok(fs.lstatSync(path.join(copy, 'shaders', 'link.glsl')).isSymbolicLink(), 'lien interne conservé comme lien');
+  assert.equal(fs.readlinkSync(path.join(copy, 'shaders', 'link.glsl')), 'a.glsl');
+
+  // lien qui sort du dossier source : refusé avant toute copie
+  // depuis terminal/shaders/ : cinq « .. » mènent hors de src/ (base/outside.glsl)
+  fs.symlinkSync('../../../../../outside.glsl', path.join(term, 'shaders', 'out.glsl'));
+  writeFile(path.join(base, 'outside.glsl'), 'secret');
+  const home2 = tmpDir();
+  const bad = cli(home2, ['install-files', src]);
+  assert.equal(bad.code, 1, bad.raw);
+  assert.match(bad.out.error, /lien symbolique refusé/);
+  assert.equal(fs.existsSync(path.join(home2, '.config', 'claude-dojo', 'themes')), false, 'rien copié');
+});
+
+test('install-files : les thèmes réels de src/themes sont copiés à l identique (terminal/ compris)', (t) => {
   if (!fs.existsSync(THEMES_SRC)) { t.skip('src/themes absent'); return; }
   const home = tmpDir();
   const r = cli(home, ['install-files', path.join(REPO, 'src')]);
   assert.equal(r.code, 0, r.raw);
   const installed = path.join(home, '.config', 'claude-dojo', 'themes');
-  for (const id of fs.readdirSync(THEMES_SRC)) {
-    const dir = path.join(THEMES_SRC, id);
-    if (!fs.statSync(dir).isDirectory()) continue;
-    for (const f of fs.readdirSync(dir)) {
-      assert.deepEqual(fs.readFileSync(path.join(installed, id, f)), fs.readFileSync(path.join(dir, f)), `${id}/${f}`);
-    }
+  for (const id of THEME_IDS) {
+    assert.deepEqual(treeHashes(path.join(installed, id)), treeHashes(path.join(THEMES_SRC, id)), id);
   }
 });
 
