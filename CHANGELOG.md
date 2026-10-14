@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sources: each downloaded wallpaper is recorded with its Wallhaven page and resolution in `backgrounds/index.json`.
 - Setup commands: `wallpapers list`, `search`, `download`, `sync`, `progress`, `use`, `next` and `local` in `src/setup.js`.
 - Setup assistant: the Theme step shows the wallpaper strip of the active theme, with the download progress.
+- Window zone: an optional setting, off by default, that keeps the windows of other apps out of the wallpaper panels (left and right columns, and optionally the top band), with a margin. It uses the Accessibility API, so it needs the Accessibility permission and does nothing without it. Full screen apps, non-resizable windows, panels, dialogs, sheets, minimized windows, the Finder desktop, Dojo itself and an exclusion list are left alone. Stage Manager's left strip is reserved when it is on.
+- Window zone: a `windowZone` block in `config.json` (`enabled`, `margin`, `reserveTop`, `exclude`), validated by `write-config`, and a `window-zone` command in `src/setup.js`.
+- Window zone: a **Zone de travail** menu (checkbox, permission status, **Agrandir dans la zone**, **Moitié gauche**, **Moitié droite**), the global shortcuts ⌃⌥↩, ⌃⌥← and ⌃⌥→, and a step in the setup assistant.
+- Wallpaper page: `window.dojoReservedRects()` returns the rectangles of the panels, for the window zone.
+- Tests: the window zone geometry (zone computation, coordinate conversion, multiple and Retina screens, fitting a window) is plain Swift, tested by `scripts/test-swift.sh`, which CI runs.
+- Terminal themes: each theme can style Ghostty and Terminal.app (a palette, four cursor shaders, a Terminal profile) and show a welcome header with the theme's logo and two lines from its universe. Each part is optional and reversible, from the Theme step or with `terminal status|apply|remove` in `src/setup.js`. `DOJO_WELCOME=off` and `DOJO_ANIM=0` turn the header off or keep the still logo.
+- Terminal generator: `scripts/themes/terminal/gen.py` builds a theme's terminal files from a spec in `scripts/themes/terminal/specs/`.
 
 ### Changed
 

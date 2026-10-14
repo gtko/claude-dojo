@@ -12,6 +12,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var interactiveItem: NSMenuItem?
     private var mirrorItem: NSMenuItem?
     private var sizeItems: [NSMenuItem] = []
+    private var zoneMenu: NSMenu?
+    private var zoneToggleItem: NSMenuItem?
+    private var zoneStatusItem: NSMenuItem?
+    private var zoneAccessItem: NSMenuItem?
+    private var zoneHotKeysItem: NSMenuItem?
+    private var zoneActionItems: [NSMenuItem] = []
     private var themeMenu: NSMenu?
     private var themeItems: [NSMenuItem] = []
     /// Sous-menu « Fonds » : fonds présents du thème actif, relus à chaque ouverture.
@@ -37,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.menu = buildMenu()
         statusItem = item
         wallpaper.onChange = { [weak self] in self?.refreshMenu() }
+        wallpaper.zoneManager.onStateChange = { [weak self] in self?.refreshMenu() }
         refreshMenu()
         NotificationCenter.default.addObserver(self, selector: #selector(autoChangeSettingChanged),
                                                name: .wallpaperAutoChangeDidChange, object: nil)
@@ -96,12 +103,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ⌘→ : touche de droite, dans la même famille que ⌘R, ⌘, et ⌘Q du menu.
         menu.addItem(action("Fond suivant", #selector(nextWallpaper),
                             key: String(utf16CodeUnits: [unichar(NSRightArrowFunctionKey)], count: 1)))
+        menu.addItem(buildZoneMenu())
         menu.addItem(.separator())
         menu.addItem(action("Réglages…", #selector(openSettings), key: ","))
         menu.addItem(action("Désinstaller…", #selector(uninstall)))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quitter le Dojo", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         return menu
+    }
+
+    /// Sous-menu « Zone de travail » : case à cocher, état de l'autorisation Accessibilité, actions sur la fenêtre au premier plan.
+    private func buildZoneMenu() -> NSMenuItem {
+        let zone = NSMenuItem(title: "Zone de travail", action: nil, keyEquivalent: "")
+        let sub = NSMenu(title: "Zone de travail")
+        sub.delegate = self
+        sub.autoenablesItems = false
+        zoneMenu = sub
+        let toggle = action("Garder les fenêtres hors des panneaux", #selector(toggleWindowZone))
+        zoneToggleItem = toggle
+        sub.addItem(toggle)
+        let status = NSMenuItem(title: "Autorisation requise (Accessibilité)", action: nil, keyEquivalent: "")
+        status.isEnabled = false
+        zoneStatusItem = status
+        sub.addItem(status)
+        let access = action("Autoriser dans Réglages Système…", #selector(requestZoneAccess))
+        zoneAccessItem = access
+        sub.addItem(access)
+        let hotKeys = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        hotKeys.isEnabled = false
+        hotKeys.isHidden = true
+        zoneHotKeysItem = hotKeys
+        sub.addItem(hotKeys)
+        sub.addItem(.separator())
+        let actions: [(String, WindowZoneAction, String)] = [
+            ("Agrandir dans la zone", .maximize, "\r"),
+            ("Moitié gauche de la zone", .leftHalf, String(UnicodeScalar(NSLeftArrowFunctionKey)!)),
+            ("Moitié droite de la zone", .rightHalf, String(UnicodeScalar(NSRightArrowFunctionKey)!)),
+        ]
+        for (title, kind, key) in actions {
+            let entry = action(title, #selector(arrangeWindow(_:)), key: key)
+            entry.keyEquivalentModifierMask = [.control, .option]
+            entry.tag = kind == .maximize ? 0 : (kind == .leftHalf ? 1 : 2)
+            zoneActionItems.append(entry)
+            sub.addItem(entry)
+        }
+        zone.submenu = sub
+        return zone
     }
 
     private func action(_ title: String, _ selector: Selector, key: String = "") -> NSMenuItem {
@@ -116,6 +163,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for entry in sizeItems {
             entry.state = (entry.representedObject as? Double) == wallpaper.zoomSetting ? .on : .off
         }
+        let zone = wallpaper.zoneManager
+        let enabled = wallpaper.windowZone.enabled
+        zoneToggleItem?.state = enabled ? .on : .off
+        let needsAccess = enabled && !WindowZoneManager.isTrusted
+        zoneStatusItem?.isHidden = !needsAccess
+        zoneAccessItem?.isHidden = !needsAccess
+        for entry in zoneActionItems { entry.isEnabled = zone.isActive }
+        let refused = zone.refusedHotKeys
+        zoneHotKeysItem?.isHidden = refused.isEmpty
+        zoneHotKeysItem?.title = "Raccourcis déjà pris par une autre app : " + refused.joined(separator: " ")
     }
 
     @objc private func toggleInteractive() { wallpaper.interactive.toggle() }
@@ -123,6 +180,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleMirror() { wallpaper.mirror.toggle() }
     @objc private func pickSize(_ sender: NSMenuItem) { wallpaper.zoomSetting = sender.representedObject as? Double ?? 0 }
     @objc private func openSettings() { openSetup(editing: true) }
+
+    // MARK: Zone de travail
+
+    /// Relit windowZone (setup.js window-zone) et l'applique : gestionnaire, mesure des panneaux, menu.
+    private func loadWindowZone() async {
+        guard let response: WindowZoneResponse = try? await runner.call("window-zone") else { return }
+        wallpaper.applyWindowZone(response.windowZone ?? .defaults)
+        refreshMenu()
+    }
+
+    @objc private func toggleWindowZone() {
+        let enable = !wallpaper.windowZone.enabled
+        Task { @MainActor in
+            do {
+                let patch = Data(#"{"windowZone":{"enabled":\#(enable)}}"#.utf8)
+                let _: Ack = try await runner.call("write-config", ["-"], stdin: patch)
+                await loadWindowZone()
+                if enable && !WindowZoneManager.isTrusted { WindowZoneManager.requestAccess() }
+            } catch {
+                showFailure("Zone de travail non modifiée", error)
+            }
+        }
+    }
+
+    @objc private func requestZoneAccess() { WindowZoneManager.requestAccess() }
+
+    @objc private func arrangeWindow(_ sender: NSMenuItem) {
+        let kinds: [WindowZoneAction] = [.maximize, .leftHalf, .rightHalf]
+        guard kinds.indices.contains(sender.tag) else { return }
+        // Le menu se ferme et rend la main à l'app précédente avant d'agir : la fenêtre visée est celle du premier plan.
+        let action = kinds[sender.tag]
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.wallpaper.zoneManager.arrange(action) }
+    }
 
     // MARK: Thèmes et fond d'écran
 
@@ -160,6 +250,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 WallpaperSyncController.shared.themeChanged(id, needsSync: response.needsSync, runner: runner)
                 await reloadThemes()
                 GalleryOffer.offerIfNoDownloads(themeId: id, name: name, hasDownloads: response.hasDownloads, runner: runner)
+                // Réglages ouverts : l'étape Thème suit le même thème (rien n'est écrit par ce rafraîchissement).
+                await setupWindow?.model.refreshExternal()
+                // Terminal.app ouvert : le profil du nouveau thème s'importe par double-clic.
+                if let file = response.terminal?.profileToOpen { TerminalProfile.offerOpen(file) }
             } catch {
                 showFailure("Thème non appliqué", error)
             }
@@ -342,6 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !wallpaperStarted else { return }
         wallpaperStarted = true
         wallpaper.start()
+        Task { @MainActor in await self.loadWindowZone() }
     }
 
     /// Démarrage (app déjà configurée) : le pack du thème actif est vérifié une fois par session, en arrière-plan.
@@ -361,7 +456,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let model = SetupModel(runner: runner, editing: editing)
-        model.onApplied = { [weak self] in self?.startWallpaper() }
+        model.onApplied = { [weak self] in
+            self?.startWallpaper()
+            Task { @MainActor in await self?.loadWindowZone() }
+        }
         model.onClose = { [weak self] in self?.setupWindow?.close() }
         let window = SetupWindowController(model: model)
         window.onWillClose = { [weak self] in self?.setupWindow = nil }
@@ -430,6 +528,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
+        if menu === zoneMenu { wallpaper.zoneManager.reconcile() }      // relit l'autorisation, réessaie les raccourcis, met le menu à jour
         if menu === themeMenu {
             Task { @MainActor in await reloadThemes() }
         } else if menu === backgroundsMenu {

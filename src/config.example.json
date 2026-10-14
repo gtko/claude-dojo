@@ -18,5 +18,11 @@
   "sentry": {
     "token": "",
     "org": ""
+  },
+  "windowZone": {
+    "enabled": false,
+    "margin": 8,
+    "reserveTop": true,
+    "exclude": []
   }
 }

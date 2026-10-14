@@ -19,13 +19,13 @@ jobs:
           node-version: 20
 
       - name: Syntax check shell scripts
-        run: bash -n install.sh uninstall.sh
+        run: bash -n install.sh uninstall.sh scripts/test-swift.sh
 
       - name: Install shellcheck
         run: brew install shellcheck
 
       - name: Lint shell scripts
-        run: shellcheck -S warning install.sh uninstall.sh scripts/build-app.sh
+        run: shellcheck -S warning install.sh uninstall.sh scripts/build-app.sh scripts/test-swift.sh
 
       - name: Syntax check Node.js runtime
         run: |
@@ -49,6 +49,9 @@ jobs:
 
       - name: Unit tests (setup.js)
         run: node --test test/
+
+      - name: Unit tests (window zone geometry, Swift)
+        run: ./scripts/test-swift.sh
 
       - name: Build DojoWallpaper.app (universal, no DMG)
         run: ./scripts/build-app.sh --no-dmg --version 0.0.0-ci

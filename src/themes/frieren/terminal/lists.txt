@@ -1,0 +1,35 @@
+key1|sort
+key2|grimoire
+accent|226;189;122
+value|238;240;250
+cols|30
+rows|12
+l1|Zoltraak · trait de magie pure
+l1|Sort de défense · bouclier de givre
+l1|Sort pour faire fleurir · éveil des pétales
+l1|Lumière de l'aube · éclat sur la route
+l1|Flamme · boule de feu brève
+l1|Brume d'argent · voile de protection
+l1|Pas du vent · course légère
+l1|Sceau de l'elfe · marque de mana
+l1|Gel de la clairière · barrière bleue
+l1|Racine de songe · entrave végétale
+l1|Étoile du matin · flèche lumineuse
+l1|Mana de la forêt · soin doux
+l1|Pluie de pétales · illusion légère
+l1|Chant de mille ans · sort de mémoire
+l2|Le Recueil des fleurs oubliées
+l2|Traité des cercles de mana
+l2|Chronique du vent de l'Est
+l2|Grimoire des mille hivers
+l2|Carnet de route d'un elfe
+l2|Herbier des montagnes du nord
+l2|Journal de la clairière bleue
+l2|Codex des runes anciennes
+l2|Le Livre des sceaux dormants
+l2|Atlas des villages sans nom
+l2|Mémoires d'une mage solitaire
+l2|Psaumes pour les morts du soir
+l2|Notes sur la lenteur du temps
+l2|Almanach des pluies de pétales
+l2|Les Sept Serments de l'aube

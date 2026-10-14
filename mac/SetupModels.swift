@@ -189,8 +189,9 @@ struct DojoConfig: Codable {
     var github: GitHub?
     var projects: Projects?
     var sentry: JSONValue?
+    var windowZone: WindowZoneConfig?
 
-    private enum CodingKeys: String, CodingKey { case weather, calendars, github, projects, sentry }
+    private enum CodingKeys: String, CodingKey { case weather, calendars, github, projects, sentry, windowZone }
 
     /// Écriture vers setup.js : `weather` part toujours (null quand la météo est désactivée, pour retirer l'ancienne ville).
     /// Les autres sections absentes ne sont pas envoyées : setup.js les garde telles quelles.
@@ -201,6 +202,7 @@ struct DojoConfig: Codable {
         try c.encodeIfPresent(github, forKey: .github)
         try c.encodeIfPresent(projects, forKey: .projects)
         try c.encodeIfPresent(sentry, forKey: .sentry)
+        try c.encodeIfPresent(windowZone, forKey: .windowZone)
     }
 
     struct Weather: Codable {

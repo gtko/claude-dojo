@@ -1,0 +1,65 @@
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+  "logo": {
+    "width": 30,
+    "height": 12,
+    "padding": {
+      "top": 0,
+      "left": 2,
+      "right": 4
+    }
+  },
+  "display": {
+    "separator": "  ",
+    "color": {
+      "keys": "38;2;185;162;236",
+      "output": "38;2;243;238;250"
+    }
+  },
+  "modules": [
+    "break",
+    {
+      "type": "custom",
+      "format": "\u001b[38;2;185;162;236m◢◤ CORPS DES POURFENDEURS ◥◣\u001b[0m"
+    },
+    {
+      "type": "custom",
+      "format": "\u001b[38;2;164;184;242m── Terminal du Corps · rang Hashira ──\u001b[0m"
+    },
+    "break",
+    {
+      "type": "title",
+      "key": "✦ pourfendeur ",
+      "format": "{user-name}"
+    },
+    {
+      "type": "title",
+      "key": "✦ corps       ",
+      "format": "{host-name}"
+    },
+    {
+      "type": "os",
+      "key": "✦ nichirin    ",
+      "format": "{name} {version}"
+    },
+    {
+      "type": "cpu",
+      "key": "✦ souffle     ",
+      "format": "{name} · {cores-physical} cœurs"
+    },
+    {
+      "type": "memory",
+      "key": "✦ endurance   "
+    },
+    {
+      "type": "uptime",
+      "key": "✦ de garde    "
+    },
+    // @DYNAMIC@
+    "break",
+    {
+      "type": "custom",
+      "format": "\u001b[38;2;143;212;168m● souffle stable · nichirin prête\u001b[0m"
+    }
+  ]
+}
