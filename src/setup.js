@@ -1065,8 +1065,10 @@ function setBackground(arg) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   fs.chmodSync(dir, 0o700);
   const dest = path.join(dir, crypto.createHash('sha1').update(buf).digest('hex').slice(0, 12) + ext);
-  fs.writeFileSync(dest, buf, { mode: 0o600 });
-  fs.chmodSync(dest, 0o600);
+  // écriture dans un fichier temporaire puis rename : un lien symbolique déjà présent à ce nom est remplacé, jamais suivi
+  const tmp = `${dest}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, buf, { mode: 0o600, flag: 'wx' });
+  fs.renameSync(tmp, dest);
   writeConfig({ background: dest });
   return { ok: true, background: dest, removed: dropOldBackground(prev, dest) };
 }

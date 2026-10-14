@@ -727,7 +727,9 @@ const server = http.createServer(async (req, res) => {
         if (th) return sendFile(res, path.join(THEMES, th[1], th[2]), SANDBOX);
         if (u.pathname.startsWith('/themes/')) return send(res, 404, '{}');
         // la page du fond d'écran elle-même (hôte DojoWallpaper)
-        const rel = u.pathname === '/' ? 'index.html' : decodeURIComponent(u.pathname).replace(/^\/+/, '');
+        let rel;
+        try { rel = u.pathname === '/' ? 'index.html' : decodeURIComponent(u.pathname).replace(/^\/+/, ''); }
+        catch { return send(res, 404, '{}'); }   // encodage invalide (%E0%A4%A…)
         if (rel.includes('\0')) return send(res, 404, '{}');
         const file = path.join(WALL, rel);
         if (!file.startsWith(WALL + path.sep)) return send(res, 404, '{}');
