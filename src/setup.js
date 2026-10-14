@@ -604,6 +604,28 @@ function validateConfig(c) {
   if (c.background !== undefined && c.background !== null && !(typeof c.background === 'string' && path.isAbsolute(c.background))) {
     fail('background doit être null ou un chemin absolu.');
   }
+  validateWindowZone(c.windowZone);
+}
+
+// Zone de travail : { enabled, margin (pt), reserveTop, exclude: [bundle ids] }. Tous les champs sont facultatifs.
+const BUNDLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/;
+const WINDOW_ZONE_DEFAULTS = { enabled: false, margin: 8, reserveTop: true, exclude: [] };
+const WINDOW_ZONE_MAX_MARGIN = 100;
+const WINDOW_ZONE_MAX_EXCLUDE = 200;
+
+function validateWindowZone(z) {
+  if (z === undefined || z === null) return;
+  if (!isObj(z)) fail('windowZone doit être un objet {enabled, margin, reserveTop, exclude}.');
+  if (z.enabled !== undefined && typeof z.enabled !== 'boolean') fail('windowZone.enabled doit être un booléen.');
+  if (z.reserveTop !== undefined && typeof z.reserveTop !== 'boolean') fail('windowZone.reserveTop doit être un booléen.');
+  if (z.margin !== undefined && !(typeof z.margin === 'number' && Number.isFinite(z.margin) && z.margin >= 0 && z.margin <= WINDOW_ZONE_MAX_MARGIN)) {
+    fail(`windowZone.margin doit être un nombre entre 0 et ${WINDOW_ZONE_MAX_MARGIN} (points).`);
+  }
+  if (z.exclude !== undefined) {
+    if (!isStrList(z.exclude)) fail('windowZone.exclude doit être une liste d\'identifiants d\'application (bundle ids).');
+    if (z.exclude.length > WINDOW_ZONE_MAX_EXCLUDE) fail(`windowZone.exclude : ${WINDOW_ZONE_MAX_EXCLUDE} entrées au maximum.`);
+    if (!z.exclude.every((b) => BUNDLE_ID_RE.test(b))) fail('windowZone.exclude : identifiant d\'application invalide (ex. com.apple.Safari).');
+  }
 }
 
 // config.background (si fourni, non null) : même règle que set-background, c.-à-d. un fichier directement dans backgrounds/,
@@ -644,6 +666,19 @@ function writeConfig(input) {
   fs.renameSync(tmp, file);
   fs.chmodSync(file, 0o600);
   return { ok: true, path: file, mode: '0600', keys: Object.keys(merged) };
+}
+
+// Zone de travail effective : valeurs de config.json complétées par les défauts (désactivée par défaut).
+function windowZoneInfo() {
+  const cfg = readConfig();
+  const z = cfg && isObj(cfg.windowZone) ? cfg.windowZone : {};
+  const out = { ...WINDOW_ZONE_DEFAULTS, exclude: [] };
+  try { validateWindowZone(z); } catch { return { ok: true, windowZone: out }; }
+  if (typeof z.enabled === 'boolean') out.enabled = z.enabled;
+  if (typeof z.reserveTop === 'boolean') out.reserveTop = z.reserveTop;
+  if (typeof z.margin === 'number') out.margin = z.margin;
+  if (Array.isArray(z.exclude)) out.exclude = [...new Set(z.exclude)];
+  return { ok: true, windowZone: out };
 }
 
 // Géocodage Open-Meteo (même requête que install.sh, timeout 8 s).
@@ -1079,6 +1114,7 @@ const USAGE = [
   'node setup.js write-config <json|->',
   'node setup.js themes',
   'node setup.js set-theme <id>',
+  'node setup.js window-zone',
   'node setup.js set-background <chemin|default>',
   'node setup.js geocode <ville>',
   'node setup.js install-files <srcdir>',
@@ -1099,6 +1135,7 @@ async function main(argv) {
     case 'write-config': return writeConfig(parseJsonArg(a1));
     case 'themes': return themesInfo();
     case 'set-theme': return setTheme(a1);
+    case 'window-zone': return windowZoneInfo();
     case 'set-background': return setBackground(a1);
     case 'geocode': return geocode(readArg(a1));
     case 'install-files': return installFiles(readArg(a1));

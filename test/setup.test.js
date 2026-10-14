@@ -628,3 +628,65 @@ test('VITEST_MAX_WORKERS changé à la main après un merge Dojo : gardé à l u
   assert.equal(readJson(settingsFile(home)).env.VITEST_MAX_WORKERS, '5', 'valeur modifiée par l utilisateur gardée');
   assert.equal(fs.existsSync(stateFile(home)), false);
 });
+
+// ── Zone de travail (windowZone) ─────────────────────────────────────────
+
+test('window-zone : désactivée par défaut, sans config.json', () => {
+  const home = tmpHome();
+  const r = cli(home, ['window-zone']);
+  assert.equal(r.code, 0, r.raw);
+  assert.deepEqual(r.out.windowZone, { enabled: false, margin: 8, reserveTop: true, exclude: [] });
+});
+
+test('write-config windowZone : écrite, fusion profonde, relue avec les défauts', () => {
+  const home = tmpHome();
+  let r = cli(home, ['write-config', JSON.stringify({ windowZone: { enabled: true, exclude: ['com.apple.Safari', 'com.apple.Safari', 'org.mozilla.firefox'] } })]);
+  assert.equal(r.code, 0, r.raw);
+  r = cli(home, ['write-config', JSON.stringify({ windowZone: { margin: 16 } })]);
+  assert.equal(r.code, 0, r.raw);
+  const cfg = readJson(configFile(home));
+  assert.equal(cfg.windowZone.enabled, true, 'enabled conservé par la fusion');
+  assert.equal(cfg.windowZone.margin, 16);
+  const z = cli(home, ['window-zone']).out.windowZone;
+  assert.deepEqual(z, { enabled: true, margin: 16, reserveTop: true, exclude: ['com.apple.Safari', 'org.mozilla.firefox'] });
+  // Une liste remplace l'ancienne (pas de fusion), null retire la section
+  r = cli(home, ['write-config', JSON.stringify({ windowZone: { exclude: [] } })]);
+  assert.deepEqual(cli(home, ['window-zone']).out.windowZone.exclude, []);
+  r = cli(home, ['write-config', JSON.stringify({ windowZone: null })]);
+  assert.equal(readJson(configFile(home)).windowZone, undefined);
+  assert.equal(cli(home, ['window-zone']).out.windowZone.enabled, false);
+});
+
+test('write-config windowZone : valeurs invalides refusées, config.json inchangé', () => {
+  const home = tmpHome();
+  cli(home, ['write-config', JSON.stringify({ windowZone: { enabled: true } })]);
+  const before = fs.readFileSync(configFile(home), 'utf8');
+  const bad = [
+    { windowZone: 'oui' },
+    { windowZone: [] },
+    { windowZone: { enabled: 'true' } },
+    { windowZone: { reserveTop: 1 } },
+    { windowZone: { margin: -1 } },
+    { windowZone: { margin: 101 } },
+    { windowZone: { margin: 'abc' } },
+    { windowZone: { exclude: 'com.apple.Safari' } },
+    { windowZone: { exclude: [42] } },
+    { windowZone: { exclude: ['pas un bundle id'] } },
+    { windowZone: { exclude: ['../etc'] } },
+    { windowZone: { exclude: Array.from({ length: 201 }, (_, i) => `com.example.app${i}`) } },
+  ];
+  for (const patch of bad) {
+    const r = cli(home, ['write-config', JSON.stringify(patch)]);
+    assert.notEqual(r.code, 0, JSON.stringify(patch).slice(0, 80));
+    assert.match(r.out.error, /windowZone/);
+  }
+  assert.equal(fs.readFileSync(configFile(home), 'utf8'), before);
+});
+
+test('window-zone : config.json corrompu à la main, retombée sur les défauts', () => {
+  const home = tmpHome();
+  writeJson(configFile(home), { windowZone: { enabled: true, margin: 'x' } });
+  const r = cli(home, ['window-zone']);
+  assert.equal(r.code, 0, r.raw);
+  assert.deepEqual(r.out.windowZone, { enabled: false, margin: 8, reserveTop: true, exclude: [] });
+});
