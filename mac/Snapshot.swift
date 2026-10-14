@@ -5,7 +5,7 @@ import SwiftUI
 
 @MainActor
 enum SnapshotRenderer {
-    static let names = ["welcome", "dependencies", "weather", "github", "projects", "calendars", "claude", "autostart", "done"]
+    static let names = ["welcome", "dependencies", "weather", "github", "projects", "calendars", "claude", "autostart", "theme", "done"]
 
     static func run(into dir: String) -> Int32 {
         let out = URL(fileURLWithPath: dir, isDirectory: true)
@@ -137,6 +137,20 @@ extension SetupModel {
         +       }
         """#
         model.autostart = true
+
+        // Thèmes factices, sans vignettes (cadres neutres) : mêmes ids et noms que src/themes.
+        model.themes = [
+            ThemeInfo(id: "naruto", name: "Naruto", thumbnail: nil),
+            ThemeInfo(id: "stargate-sg1", name: "Stargate SG-1", thumbnail: nil),
+            ThemeInfo(id: "demon-slayer", name: "Demon Slayer", thumbnail: nil),
+            ThemeInfo(id: "frieren", name: "Frieren", thumbnail: nil),
+            ThemeInfo(id: "one-piece", name: "One Piece", thumbnail: nil),
+            ThemeInfo(id: "my-hero-academia", name: "My Hero Academia", thumbnail: nil),
+            ThemeInfo(id: "jujutsu-kaisen", name: "Jujutsu Kaisen", thumbnail: nil),
+            ThemeInfo(id: "mushoku-tensei", name: "Mushoku Tensei", thumbnail: nil)
+        ]
+        model.themesLoaded = true
+        model.themeChoice = "stargate-sg1"
         return model
     }
 }

@@ -1,0 +1,99 @@
+{
+  "id": "jujutsu-kaisen",
+  "name": "Jujutsu Kaisen",
+  "credit": "Fan art non officiel, sans lien avec les ayants droit de Jujutsu Kaisen.",
+  "accentFont": "\"Avenir Next Condensed\", \"Hiragino Sans\", sans-serif",
+  "palette": {
+    "bg": "rgba(10,6,20,.58)",
+    "line": "rgba(176,108,255,.34)",
+    "fg": "#f1ecfb",
+    "muted": "#b4acd2",
+    "dim": "#8c84b2",
+    "purple": "#b06cff",
+    "pink": "#e23a4e",
+    "orange": "#6fa8ff",
+    "yellow": "#5ef0e4"
+  },
+  "vocab": {
+    "title": "EXORCISTES DE TOKYO",
+    "empty": "Aucune malédiction détectée — Tokyo est calme.",
+    "labelWorking": "en exorcisme",
+    "labelWaiting": "attend ton OK",
+    "labelIdle": "dort",
+    "summaryWorking": "en exorcisme",
+    "summaryWaiting": "en alerte",
+    "summaryIdle": "en sommeil"
+  },
+  "prop": "doll",
+  "propColors": ["#d8cbb2", "#b3263a"],
+  "chars": [
+    {
+      "id": "itadori",
+      "name": "Yuji Itadori",
+      "hair": "#ff8cc0",
+      "hairStyle": "spikyUp",
+      "top": "#c4232f",
+      "topD": "#8a1420",
+      "body": "#1b2240",
+      "pants": "#1b2240",
+      "pantsD": "#131a31",
+      "iris": "#6a4628",
+      "band": null
+    },
+    {
+      "id": "megumi",
+      "name": "Megumi Fushiguro",
+      "hair": "#161827",
+      "hairStyle": "spikyUp",
+      "top": "#1b2240",
+      "topD": "#131a31",
+      "body": "#1b2240",
+      "pants": "#1b2240",
+      "pantsD": "#131a31",
+      "iris": "#2a6b6e",
+      "band": null
+    },
+    {
+      "id": "nobara",
+      "name": "Nobara Kugisaki",
+      "hair": "#b5622f",
+      "hair2": "#7a3c1c",
+      "hairStyle": "bob",
+      "top": "#1b2240",
+      "topD": "#131a31",
+      "body": "#1b2240",
+      "pants": "#151c36",
+      "pantsD": "#0f1528",
+      "iris": "#6b4a2b",
+      "band": null
+    },
+    {
+      "id": "gojo",
+      "name": "Satoru Gojo",
+      "hair": "#f2f3f7",
+      "hairStyle": "spikyUp",
+      "top": "#1b2240",
+      "topD": "#131a31",
+      "body": "#1b2240",
+      "pants": "#1b2240",
+      "pantsD": "#131a31",
+      "iris": "#8fd3ff",
+      "blindfold": "#0b0b10",
+      "band": null
+    },
+    {
+      "id": "sukuna",
+      "name": "Ryomen Sukuna",
+      "hair": "#e2609e",
+      "hairStyle": "spikyUp",
+      "top": "#f1ede4",
+      "topD": "#cfc8b8",
+      "body": "#f1ede4",
+      "pants": "#14101b",
+      "pantsD": "#0b0910",
+      "iris": "#d42a3c",
+      "markings": true,
+      "band": null
+    }
+  ]
+}

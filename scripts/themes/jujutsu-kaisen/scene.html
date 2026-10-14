@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Jujutsu Kaisen · scène procédurale</title>
+<style>
+  html, body { margin: 0; background: #05030a; overflow: hidden; }
+  canvas { display: block; width: 1440px; height: 900px; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<script>
+// Fond procédural original (aucun asset tiers) : sceau maudit, talismans, torii en ruine,
+// fissures d'énergie et particules. Tout est dessiné au canvas 2D à partir d'un PRNG seedé :
+// le rendu est identique à chaque exécution. window.__ready passe à true une fois dessiné.
+(function () {
+  'use strict';
+
+  var W = 1440, H = 900, K = 2;            // taille CSS et facteur de rendu (2880 x 1800)
+  var TAU = Math.PI * 2;
+  var SEED = 0x2a9f1d;                     // graine fixe
+  var SX = 470, SY = 410, R = 360;         // centre et rayon du sceau
+  var HZ = 690;                            // ligne d'horizon
+  var TDX = -110;                          // décalage horizontal du torii (centre-droite)
+
+  var canvas = document.getElementById('scene');
+  canvas.width = W * K;
+  canvas.height = H * K;
+  var ctx = canvas.getContext('2d');
+  ctx.setTransform(K, 0, 0, K, 0, 0);
+
+  // Palette alignée sur src/themes/jujutsu-kaisen/theme.json
+  var C = {
+    violet: [176, 108, 255],
+    violetDeep: [84, 40, 150],
+    red: [226, 58, 78],
+    blue: [111, 168, 255],
+    bluePale: [188, 222, 255],
+    paper: [240, 232, 210]
+  };
+
+  function rgba(c, a) { return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
+  function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+
+  // PRNG mulberry32 : un flux indépendant par section (id), pour que modifier une section ne décale pas les autres
+  function stream(id) {
+    var s = (SEED ^ Math.imul(id + 1, 0x9E3779B1)) | 0;
+    return function () {
+      var t = (s += 0x6D2B79F5);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function gauss(rnd) { return Math.sqrt(-2 * Math.log(rnd() + 1e-9)) * Math.cos(TAU * rnd()); }
+
+  // Halo radial doux : utilisé pour la brume, les particules et les lueurs
+  function blob(x, y, r, col, a) {
+    var g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, rgba(col, a));
+    g.addColorStop(1, rgba(col, 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+
+  // Facteur de visibilité des effets : 1 près du sceau, 0 à droite, en bas et loin du sceau
+  function fadeAt(x, y) {
+    var d = Math.hypot(x - SX, (y - SY) * 1.1);
+    return clamp(1 - (d - R) / (R * 1.4), 0, 1) *
+           clamp(1 - (x - 820) / 230, 0, 1) *
+           clamp(1 - (y - 700) / 90, 0, 1);
+  }
+
+  // Glyphes originaux : tracés sur une grille 3x3 générée (aucun caractère existant)
+  function makeGlyph(rnd) {
+    var strokes = [], n = 4 + Math.floor(rnd() * 3);
+    var dirs = [[1, 0], [0, 1], [1, 1], [1, -1]];
+    function jit() { return (rnd() - 0.5) * 0.08; }
+    for (var i = 0; i < n; i++) {
+      var x = Math.floor(rnd() * 3), y = Math.floor(rnd() * 3);
+      if (rnd() < 0.3) {
+        var q = Math.floor(rnd() * 4) * Math.PI / 2;
+        strokes.push(['A', x / 2, y / 2, 0.22 + rnd() * 0.14, q, q + Math.PI / 2]);
+        continue;
+      }
+      var d = dirs[Math.floor(rnd() * dirs.length)], len = 1 + Math.floor(rnd() * 2);
+      var x2 = x + d[0] * len, y2 = y + d[1] * len;
+      if (x2 < 0 || x2 > 2 || y2 < 0 || y2 > 2) {
+        strokes.push(['D', x / 2, y / 2, 0.035 + rnd() * 0.03]);
+        continue;
+      }
+      strokes.push(['L', x / 2 + jit(), y / 2 + jit(), x2 / 2 + jit(), y2 / 2 + jit()]);
+    }
+    return strokes;
+  }
+  // Dessine un glyphe centré en (x, y) sur une boîte de côté s (px) ; couleur = strokeStyle/fillStyle courants
+  function drawGlyph(strokes, x, y, s, lw) {
+    var ox = x - s / 2, oy = y - s / 2;
+    ctx.lineWidth = lw;
+    ctx.lineCap = 'round';
+    for (var i = 0; i < strokes.length; i++) {
+      var st = strokes[i];
+      ctx.beginPath();
+      if (st[0] === 'L') {
+        ctx.moveTo(ox + st[1] * s, oy + st[2] * s);
+        ctx.lineTo(ox + st[3] * s, oy + st[4] * s);
+        ctx.stroke();
+      } else if (st[0] === 'A') {
+        ctx.arc(ox + st[1] * s, oy + st[2] * s, st[3] * s, st[4], st[5]);
+        ctx.stroke();
+      } else {
+        ctx.arc(ox + st[1] * s, oy + st[2] * s, st[3] * s, 0, TAU);
+        ctx.fill();
+      }
+    }
+  }
+  var GLYPHS = [];
+  (function () { var g = stream(1); for (var i = 0; i < 40; i++) GLYPHS.push(makeGlyph(g)); })();
+
+  // ---- Ciel, brume, sol -------------------------------------------------------
+  function sky() {
+    var g = ctx.createLinearGradient(0, 0, 0, HZ);
+    g.addColorStop(0, '#04020a');
+    g.addColorStop(0.45, '#0a0514');
+    g.addColorStop(0.85, '#170a26');
+    g.addColorStop(1, '#210e35');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+  function stars() {
+    var rnd = stream(7);
+    for (var i = 0; i < 90; i++) {
+      var x = rnd() * 1000, y = rnd() * HZ * 0.75;
+      ctx.fillStyle = rgba([230, 220, 255], (0.15 + rnd() * 0.4) * (1 - y / HZ));
+      ctx.beginPath();
+      ctx.arc(x, y, 0.4 + rnd() * 0.6, 0, TAU);
+      ctx.fill();
+    }
+  }
+  function mistBack() {
+    var rnd = stream(3);
+    for (var i = 0; i < 46; i++) {
+      var x = rnd() * W * 1.1 - 60, y = HZ - 170 + rnd() * 210, r = 140 + rnd() * 280;
+      var k = clamp(1 - (x - 1000) / 420, 0.3, 1);
+      blob(x, y, r, i % 3 ? C.violetDeep : [120, 60, 190], (0.035 + rnd() * 0.05) * k);
+    }
+  }
+  // Nappes de brume horizontales (blobs étirés) pour la profondeur
+  function mistStreaks() {
+    var rnd = stream(10);
+    for (var i = 0; i < 16; i++) {
+      var x = rnd() * 1100, y = 500 + rnd() * 170, r = 90 + rnd() * 90;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(2.6, 1);
+      blob(0, 0, r, C.violet, 0.03 + rnd() * 0.03);
+      ctx.restore();
+    }
+  }
+  function ridge() {
+    function ridgeY(x) {
+      return HZ - 6 - 7 * Math.sin(x * 0.011 + 1.3) - 4 * Math.sin(x * 0.043 + 0.4) - 3 * Math.sin(x * 0.13);
+    }
+    ctx.beginPath();
+    ctx.moveTo(0, H);
+    for (var x = 0; x <= W; x += 12) ctx.lineTo(x, ridgeY(x));
+    ctx.lineTo(W, H);
+    ctx.closePath();
+    var g = ctx.createLinearGradient(0, HZ - 20, 0, H);
+    g.addColorStop(0, '#0c0616');
+    g.addColorStop(0.45, '#070410');
+    g.addColorStop(1, '#030207');
+    ctx.fillStyle = g;
+    ctx.fill();
+  }
+
+  // ---- Sceau -----------------------------------------------------------------
+  function seal() {
+    ctx.save();
+    ctx.translate(SX, SY);
+
+    // Halo rougeoyant (additif)
+    ctx.globalCompositeOperation = 'lighter';
+    var halo = ctx.createRadialGradient(0, 0, R * 0.2, 0, 0, R * 1.6);
+    halo.addColorStop(0, rgba(C.red, 0.34));
+    halo.addColorStop(0.45, rgba(C.violet, 0.14));
+    halo.addColorStop(1, rgba(C.violet, 0));
+    ctx.fillStyle = halo;
+    ctx.fillRect(-R * 1.6, -R * 1.6, R * 3.2, R * 3.2);
+
+    // Disque sombre pour la lisibilité des tracés
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(6,3,12,0.62)';
+    ctx.beginPath();
+    ctx.arc(0, 0, R, 0, TAU);
+    ctx.fill();
+    ctx.globalCompositeOperation = 'lighter';
+
+    function ring(r, w, col, a, dash, glow) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, TAU);
+      ctx.setLineDash(dash || []);
+      ctx.lineWidth = w;
+      ctx.strokeStyle = rgba(col, a);
+      if (glow) { ctx.shadowColor = rgba(col, 0.9); ctx.shadowBlur = glow; }
+      ctx.stroke();
+      ctx.restore();
+    }
+    ring(R, 2.4, C.red, 0.95, null, 22);
+    ring(R * 0.975, 1, C.violet, 0.7);
+    ring(R * 0.9, 1.6, C.violet, 0.75, [14, 5, 3, 5]);
+    ring(R * 0.745, 1, C.red, 0.6);
+    ring(R * 0.7, 1.4, C.violet, 0.6, [10, 4, 2, 4]);
+    ring(R * 0.58, 1, C.violet, 0.5);
+    ring(R * 0.27, 2, C.red, 0.85, null, 14);
+
+    // Graduations
+    for (var i = 0; i < 360; i++) {
+      var a = i / 360 * TAU, len = i % 30 === 0 ? 16 : (i % 10 === 0 ? 9 : 4);
+      var c = Math.cos(a), s = Math.sin(a);
+      ctx.beginPath();
+      ctx.moveTo(c * R * 0.975, s * R * 0.975);
+      ctx.lineTo(c * (R * 0.975 - len), s * (R * 0.975 - len));
+      ctx.strokeStyle = rgba(C.violet, i % 30 === 0 ? 0.9 : 0.45);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    // Bande de glyphes extérieure (18) : rouge pour un sur trois
+    for (var g = 0; g < 18; g++) {
+      var ga = g / 18 * TAU + 0.1, red = g % 3 === 0;
+      ctx.save();
+      ctx.translate(Math.cos(ga) * R * 0.82, Math.sin(ga) * R * 0.82);
+      ctx.rotate(ga + Math.PI / 2);
+      ctx.strokeStyle = ctx.fillStyle = rgba(red ? C.red : C.bluePale, red ? 0.95 : 0.7);
+      drawGlyph(GLYPHS[(g * 7) % GLYPHS.length], 0, 0, R * 0.105, 2.1);
+      ctx.restore();
+    }
+
+    // Étoile à sept branches (ordre 3) à l'intérieur de l'anneau central
+    var pts = [];
+    for (var p = 0; p < 7; p++) {
+      var pa = p / 7 * TAU - Math.PI / 2;
+      pts.push([Math.cos(pa) * R * 0.58, Math.sin(pa) * R * 0.58]);
+    }
+    ctx.strokeStyle = rgba(C.red, 0.32);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (var q = 0; q < 7; q++) {
+      var from = pts[q], to = pts[(q * 3) % 7];
+      ctx.moveTo(from[0], from[1]);
+      ctx.lineTo(to[0], to[1]);
+    }
+    ctx.stroke();
+
+    // Bande de glyphes intérieure (12)
+    for (var h = 0; h < 12; h++) {
+      var ha = h / 12 * TAU + 0.4;
+      ctx.save();
+      ctx.translate(Math.cos(ha) * R * 0.42, Math.sin(ha) * R * 0.42);
+      ctx.rotate(ha);
+      ctx.strokeStyle = ctx.fillStyle = rgba(h % 3 === 0 ? C.red : C.violet, 0.9);
+      drawGlyph(GLYPHS[(h * 11 + 5) % GLYPHS.length], 0, 0, R * 0.125, 1.6);
+      ctx.restore();
+    }
+
+    // Spirale centrale (trois tours)
+    ctx.beginPath();
+    for (var k = 0; k <= 200; k++) {
+      var th = k / 200 * 6 * Math.PI, rr = (k / 200) * R * 0.25;
+      var sx = Math.cos(th) * rr, sy = Math.sin(th) * rr;
+      if (k === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+    }
+    ctx.strokeStyle = rgba(C.red, 0.7);
+    ctx.lineWidth = 1.4;
+    ctx.shadowColor = rgba(C.red, 0.8);
+    ctx.shadowBlur = 8;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // Cœur incandescent
+    var core = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 0.09);
+    core.addColorStop(0, 'rgba(255,200,205,0.95)');
+    core.addColorStop(0.35, rgba(C.red, 0.7));
+    core.addColorStop(1, rgba(C.red, 0));
+    ctx.fillStyle = core;
+    ctx.fillRect(-R * 0.1, -R * 0.1, R * 0.2, R * 0.2);
+
+    ctx.restore();
+  }
+
+  // ---- Fissures d'énergie ----------------------------------------------------
+  function crackTree(rnd, x, y, ang, steps, depth, out, col, w) {
+    var pts = [[x, y]];
+    for (var i = 0; i < steps; i++) {
+      ang += (rnd() - 0.5) * 0.75;
+      var len = 10 + rnd() * 10;
+      x += Math.cos(ang) * len;
+      y += Math.sin(ang) * len;
+      pts.push([x, y]);
+      if (depth < 2 && rnd() < 0.05) {
+        crackTree(rnd, x, y, ang + (rnd() < 0.5 ? -1 : 1) * (0.5 + rnd() * 0.5),
+                  (steps * 0.5) | 0, depth + 1, out, col, w * 0.7);
+      }
+    }
+    out.push({ pts: pts, col: col, w: w });
+  }
+  function cracks() {
+    var rnd = stream(4), list = [];
+    var origins = [150, 185, 212, 246, 282, 318, 352, 28];
+    for (var k = 0; k < origins.length; k++) {
+      var deg = origins[k], a = deg * Math.PI / 180;
+      var x = SX + Math.cos(a) * R * 1.02, y = SY + Math.sin(a) * R * 1.02;
+      var col = k % 2 ? C.blue : C.red;
+      crackTree(rnd, x, y, a + (rnd() - 0.5) * 0.3, 26 + Math.floor(rnd() * 10), 0, list, col, 1.1 + rnd() * 0.6);
+    }
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    for (var c = 0; c < list.length; c++) {
+      var cr = list[c], pts = cr.pts;
+      var core = cr.col === C.red ? [255, 196, 200] : C.bluePale;
+      for (var i = 1; i < pts.length; i++) {
+        var a0 = pts[i - 1], b0 = pts[i];
+        var f = fadeAt((a0[0] + b0[0]) / 2, (a0[1] + b0[1]) / 2) * (1 - i / pts.length * 0.5);
+        if (f < 0.01) continue;
+        ctx.beginPath();
+        ctx.moveTo(a0[0], a0[1]);
+        ctx.lineTo(b0[0], b0[1]);
+        ctx.strokeStyle = rgba(cr.col, 0.07 * f); ctx.lineWidth = cr.w * 6; ctx.stroke();
+        ctx.strokeStyle = rgba(cr.col, 0.28 * f); ctx.lineWidth = cr.w * 2; ctx.stroke();
+        ctx.strokeStyle = rgba(core, 0.9 * f); ctx.lineWidth = cr.w * 0.6; ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  // ---- Silhouettes en ruine --------------------------------------------------
+  // Contour sombre avec liseré violet décalé vers le haut-gauche (lumière de la brume)
+  function silhouette(polys, dx) {
+    function path() {
+      for (var i = 0; i < polys.length; i++) {
+        var p = polys[i];
+        ctx.beginPath();
+        ctx.moveTo(p[0][0] + dx, p[0][1]);
+        for (var j = 1; j < p.length; j++) ctx.lineTo(p[j][0] + dx, p[j][1]);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    ctx.save();
+    ctx.fillStyle = rgba(C.violet, 0.3);
+    ctx.translate(-1.2, -1.6);
+    path();
+    ctx.restore();
+    ctx.save();
+    ctx.fillStyle = '#040208';
+    path();
+    ctx.restore();
+  }
+  function ruins() {
+    // Mur de temple effondré à gauche, tuiles tombées
+    silhouette([
+      [[108, 694], [110, 650], [126, 640], [138, 646], [150, 626], [168, 634], [180, 612], [196, 622], [212, 604], [230, 628], [248, 618], [256, 694]],
+      [[190, 600], [262, 582], [270, 592], [198, 612]],
+      [[276, 668], [300, 660], [304, 672], [280, 680]]
+    ], 0);
+
+    // Torii en ruine (coordonnées de référence décalées de TDX)
+    var torii = [
+      // kasagi, poutre supérieure brisée à droite
+      [[868, 456], [940, 466], [1010, 468], [1080, 466], [1092, 470], [1084, 476], [1094, 482], [1086, 486], [1010, 490], [940, 486], [868, 470]],
+      // nuki, poutre inférieure cassée
+      [[948, 546], [1066, 546], [1060, 552], [1068, 560], [1040, 566], [948, 566]],
+      // pilier gauche
+      [[958, 486], [976, 486], [978, 692], [956, 692]],
+      // pilier droit, sommet brisé
+      [[1040, 532], [1048, 524], [1058, 536], [1058, 692], [1040, 692]],
+      // socles
+      [[950, 680], [984, 680], [986, 694], [948, 694]],
+      [[1034, 680], [1064, 680], [1066, 694], [1032, 694]],
+      // débris au sol
+      [[1112, 640], [1140, 628], [1152, 646], [1126, 656]],
+      [[920, 684], [934, 676], [944, 682], [936, 694], [916, 694]],
+      [[1080, 684], [1094, 680], [1100, 694], [1078, 694]]
+    ];
+    silhouette(torii, TDX);
+
+    // Lueur de brume au pied du torii
+    blob(1010 + TDX, HZ + 4, 260, C.violet, 0.12);
+  }
+
+  // ---- Talismans (ofuda) -----------------------------------------------------
+  function talisman(x, y, w, h, rot, rnd) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.shadowColor = 'rgba(0,0,0,0.55)';
+    ctx.shadowBlur = 16;
+    ctx.shadowOffsetY = 6;
+    var g = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
+    g.addColorStop(0, '#cfc4a6');
+    g.addColorStop(0.45, '#f1e9d2');
+    g.addColorStop(1, '#c4b89a');
+    ctx.fillStyle = g;
+    ctx.fillRect(-w / 2, -h / 2, w, h);
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+
+    // Bordures rouges et colonne de traits
+    ctx.strokeStyle = 'rgba(150,18,34,0.9)';
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(-w / 2 + 4, -h / 2 + 4, w - 8, h - 8);
+    ctx.strokeStyle = ctx.fillStyle = 'rgba(44,10,18,0.9)';
+    for (var i = 0; i < 3; i++) {
+      drawGlyph(GLYPHS[Math.floor(rnd() * GLYPHS.length)], 0, -h * 0.26 + i * h * 0.17, w * 0.66, 1.5);
+    }
+    // Sceau de cinabre
+    ctx.fillStyle = 'rgba(176,24,40,0.95)';
+    ctx.beginPath();
+    ctx.arc(0, h * 0.33, w * 0.2, 0, TAU);
+    ctx.fill();
+    ctx.strokeStyle = ctx.fillStyle = 'rgba(246,236,214,0.9)';
+    drawGlyph(GLYPHS[Math.floor(rnd() * GLYPHS.length)], 0, h * 0.33, w * 0.26, 1);
+    ctx.restore();
+  }
+  function talismans() {
+    var rnd = stream(8);
+    var list = [
+      [250, 300, 40, 140, -0.16],
+      [214, 575, 36, 124, 0.14],
+      [700, 230, 38, 130, 0.2],
+      [790, 540, 36, 120, -0.12]
+    ];
+    for (var i = 0; i < list.length; i++) {
+      var t = list[i];
+      talisman(t[0], t[1], t[2], t[3], t[4], rnd);
+    }
+  }
+
+  // ---- Particules ------------------------------------------------------------
+  function particles() {
+    var rnd = stream(5);
+    for (var i = 0; i < 300; i++) {
+      var ang = rnd() * TAU, dist = R * (0.85 + Math.abs(gauss(rnd)) * 0.55);
+      var x = SX + Math.cos(ang) * dist, y = SY + Math.sin(ang) * dist * 0.96;
+      var f = fadeAt(x, y);
+      if (f < 0.02) continue;
+      var pick = rnd();
+      var col = pick < 0.45 ? C.violet : pick < 0.65 ? C.bluePale : pick < 0.85 ? C.red : C.paper;
+      var size = 0.6 + Math.pow(rnd(), 2) * 2.6;
+      var a = (0.2 + rnd() * 0.7) * f;
+      if (size > 1.5) blob(x, y, size * 5, col, a * 0.5);
+      ctx.fillStyle = rgba(col, a);
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  // ---- Brume avant, vignettage, zones sombres --------------------------------
+  function mistFront() {
+    var rnd = stream(6);
+    for (var i = 0; i < 26; i++) {
+      var x = rnd() * W, y = HZ + 10 + rnd() * 60;
+      blob(x, y, 160 + rnd() * 220, C.violet, 0.025 + rnd() * 0.035);
+    }
+  }
+  function vignette() {
+    var v = ctx.createRadialGradient(SX, SY, R * 1.1, W / 2, H / 2, W * 0.75);
+    v.addColorStop(0, 'rgba(0,0,0,0)');
+    v.addColorStop(0.55, 'rgba(0,0,0,0.3)');
+    v.addColorStop(1, 'rgba(0,0,0,0.85)');
+    ctx.fillStyle = v;
+    ctx.fillRect(0, 0, W, H);
+    var r = ctx.createLinearGradient(980, 0, W, 0);
+    r.addColorStop(0, 'rgba(3,1,8,0)');
+    r.addColorStop(1, 'rgba(3,1,8,0.6)');
+    ctx.fillStyle = r;
+    ctx.fillRect(980, 0, W - 980, H);
+    var b = ctx.createLinearGradient(0, 640, 0, H);
+    b.addColorStop(0, 'rgba(3,1,8,0)');
+    b.addColorStop(1, 'rgba(3,1,8,0.78)');
+    ctx.fillStyle = b;
+    ctx.fillRect(0, 640, W, H - 640);
+  }
+
+  // Grain très léger (±3 niveaux)
+  function grain() {
+    var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    var d = img.data, rnd = stream(9);
+    for (var i = 0; i < d.length; i += 4) {
+      var n = (rnd() - 0.5) * 6;
+      d[i] += n; d[i + 1] += n; d[i + 2] += n;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  // ---- Ordre de dessin -------------------------------------------------------
+  sky();
+  stars();
+  mistBack();
+  mistStreaks();
+  seal();
+  // Halo bleu à l'horizon, puis sol et silhouettes (le sol masque le bas du sceau)
+  blob(SX, HZ - 6, 520, C.violet, 0.12);
+  ridge();
+  ruins();
+  cracks();
+  talismans();
+  particles();
+  mistFront();
+  vignette();
+  grain();
+
+  window.__ready = true;
+})();
+</script>
+</body>
+</html>

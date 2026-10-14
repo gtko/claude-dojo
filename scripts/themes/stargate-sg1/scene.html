@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Stargate SG-1 · scène</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #03050b; overflow: hidden; }
+  canvas { display: block; width: 1440px; height: 900px; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<script>
+(function () {
+  'use strict';
+
+  // Scène originale : porte à anneau métallique, vortex d'eau, ciel étoilé et désert nocturne.
+  // Tout est dessiné en code (aucune image externe). Graine fixe : rendu identique à chaque passage.
+  var W = 1440, H = 900, DPR = 2, TAU = Math.PI * 2;
+  var canvas = document.getElementById('scene');
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  var ctx = canvas.getContext('2d');
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  // PRNG mulberry32 maison
+  var seed = 0x5a7e1337;
+  function rnd() {
+    seed = (seed + 0x6d2b79f5) | 0;
+    var t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  function rr(a, b) { return a + (b - a) * rnd(); }
+  function gauss() {
+    var u = rnd() || 1e-9, v = rnd();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v);
+  }
+  function rgba(c, a) { return 'rgba(' + c + ',' + a + ')'; }
+  function hexRgb(h) {
+    return [parseInt(h.substr(1, 2), 16), parseInt(h.substr(3, 2), 16), parseInt(h.substr(5, 2), 16)];
+  }
+  function mix(a, b, t) {
+    var pa = hexRgb(a), pb = hexRgb(b);
+    return 'rgb(' + Math.round(pa[0] + (pb[0] - pa[0]) * t) + ',' +
+      Math.round(pa[1] + (pb[1] - pa[1]) * t) + ',' +
+      Math.round(pa[2] + (pb[2] - pa[2]) * t) + ')';
+  }
+  // shadowBlur ignore la matrice de transformation : on le double avec DPR
+  function glow(px) { ctx.shadowBlur = px * DPR; }
+  function noGlow() { ctx.shadowBlur = 0; ctx.shadowColor = 'transparent'; }
+
+  // Géométrie de la porte (coordonnées CSS px)
+  var CX = 576, CY = 410;
+  var RO = 232, RM = 196, RI = 186;     // anneau extérieur, bord intérieur de l'anneau, vortex
+  var GLYPH_R = 214, SLOTS = 39;
+  var CHEVRONS = [0, 4, 9, 13, 17, 22, 26, 30, 35];   // 9 chevrons sur les 39 emplacements
+  var HORIZON = 636;
+
+  function slotAngle(k) { return -Math.PI / 2 + k * TAU / SLOTS; }
+
+  // Symboles abstraits inventés (ni copie ni réplique des glyphes officiels)
+  function makeGlyph() {
+    var n = 3 + Math.floor(rnd() * 3), ops = [];
+    for (var i = 0; i < n; i++) {
+      var t = rnd(), s = 5.2;
+      if (t < 0.3) {
+        ops.push(['L', rr(-s, s), rr(-s, s), rr(-s, s), rr(-s, s)]);
+      } else if (t < 0.48) {
+        ops.push(['C', rr(-3, 3), rr(-3, 3), rr(1.2, 3.4)]);
+      } else if (t < 0.7) {
+        var cx = rr(-3, 3), cy = rr(-3, 3), rad = rr(1.6, 4.4), a0 = rr(0, TAU);
+        ops.push(['A', cx, cy, rad, a0, a0 + rr(0.9, 3.0)]);
+      } else if (t < 0.8) {
+        ops.push(['D', rr(-s, s), rr(-s, s)]);
+      } else if (t < 0.92) {
+        ops.push(['T', rr(-s, s), rr(-s, s), rr(-s, s), rr(-s, s), rr(-s, s), rr(-s, s)]);
+      } else {
+        ops.push(['B', rr(-4, 1), rr(-4, 1), rr(2, 5), rr(2, 5)]);
+      }
+    }
+    return ops;
+  }
+  var GLYPHS = [];
+  for (var g = 0; g < SLOTS; g++) GLYPHS.push(makeGlyph());
+
+  function strokeOps(ops) {
+    ctx.beginPath();
+    ops.forEach(function (o) {
+      switch (o[0]) {
+        case 'L': ctx.moveTo(o[1], o[2]); ctx.lineTo(o[3], o[4]); break;
+        case 'C': ctx.moveTo(o[1] + o[3], o[2]); ctx.arc(o[1], o[2], o[3], 0, TAU); break;
+        case 'A': ctx.moveTo(o[1] + o[3] * Math.cos(o[4]), o[2] + o[3] * Math.sin(o[4]));
+          ctx.arc(o[1], o[2], o[3], o[4], o[5]); break;
+        case 'D': ctx.moveTo(o[1] + 0.9, o[2]); ctx.arc(o[1], o[2], 0.9, 0, TAU); break;
+        case 'T': ctx.moveTo(o[1], o[2]); ctx.lineTo(o[3], o[4]); ctx.lineTo(o[5], o[6]); ctx.closePath(); break;
+        case 'B': ctx.rect(o[1], o[2], o[3], o[4]); break;
+      }
+    });
+    ctx.stroke();
+  }
+
+  // ---------- Ciel ----------
+  function drawSky() {
+    var g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#03050c');
+    g.addColorStop(0.36, '#070d1d');
+    g.addColorStop(0.62, '#0c1932');
+    g.addColorStop(0.76, '#172840');
+    g.addColorStop(1, '#05070d');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    // lueur chaude très discrète au ras de l'horizon désertique
+    ctx.save();
+    ctx.translate(560, HORIZON);
+    ctx.scale(2.6, 1);
+    var hg = ctx.createRadialGradient(0, 0, 0, 0, 0, 300);
+    hg.addColorStop(0, rgba('224,168,74', 0.14));
+    hg.addColorStop(0.5, rgba('120,120,140', 0.05));
+    hg.addColorStop(1, rgba('0,0,0', 0));
+    ctx.fillStyle = hg;
+    ctx.fillRect(-400, -400, 800, 800);
+    ctx.restore();
+  }
+
+  function drawNebula() {
+    var blobs = [
+      [250, 140, 300, '70,160,200', 0.12],
+      [620, 70, 340, '90,80,170', 0.07],
+      [110, 360, 260, '40,100,180', 0.10],
+      [960, 200, 300, '60,130,170', 0.055],
+      [1340, 560, 260, '80,70,150', 0.04],
+      [520, 300, 240, '40,110,150', 0.05]
+    ];
+    blobs.forEach(function (b) {
+      var g = ctx.createRadialGradient(b[0], b[1], 0, b[0], b[1], b[2]);
+      g.addColorStop(0, rgba(b[3], b[4]));
+      g.addColorStop(0.45, rgba(b[3], b[4] * 0.45));
+      g.addColorStop(1, rgba(b[3], 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+    });
+    // grain de nébuleuse : petites nappes très faibles
+    for (var i = 0; i < 120; i++) {
+      var x = rnd() * W, y = rnd() * 520, r = rr(20, 70);
+      var c = rnd() < 0.7 ? '90,170,210' : '130,110,200';
+      var g2 = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g2.addColorStop(0, rgba(c, rr(0.012, 0.03).toFixed(3)));
+      g2.addColorStop(1, rgba(c, 0));
+      ctx.fillStyle = g2;
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+  }
+
+  function drawStars() {
+    var cols = ['255,255,255', '205,230,255', '255,236,200'];
+    var i, x, y, b, s;
+    // étoiles du ciel
+    for (i = 0; i < 1600; i++) {
+      x = rnd() * W;
+      y = Math.pow(rnd(), 1.4) * H * 0.7;
+      if (x > 1000 && rnd() < 0.55) continue;   // côté droit calme : moins d'étoiles
+      b = Math.pow(rnd(), 5);
+      s = 0.35 + b * 1.5;
+      var col = cols[(rnd() * 3) | 0];
+      ctx.fillStyle = rgba(col, (0.3 + b * 0.65).toFixed(3));
+      ctx.beginPath(); ctx.arc(x, y, s, 0, TAU); ctx.fill();
+      if (b > 0.55) {
+        var sg = ctx.createRadialGradient(x, y, 0, x, y, 6);
+        sg.addColorStop(0, rgba('200,225,255', 0.28));
+        sg.addColorStop(1, rgba('200,225,255', 0));
+        ctx.fillStyle = sg;
+        ctx.fillRect(x - 6, y - 6, 12, 12);
+      }
+    }
+    // bande de poussière stellaire diagonale, diffuse
+    for (i = 0; i < 900; i++) {
+      var t = rnd();
+      x = t * W + gauss() * 6;
+      y = 760 - t * 620 + gauss() * 46;
+      b = Math.pow(rnd(), 4);
+      ctx.fillStyle = rgba('210,225,245', (0.08 + b * 0.32).toFixed(3));
+      ctx.beginPath(); ctx.arc(x, y, 0.3 + b * 0.9, 0, TAU); ctx.fill();
+    }
+  }
+
+  // ---------- Désert et horizon ----------
+  function ridgeLine(base, amp, ph) {
+    var pts = [];
+    for (var x = 0; x <= W; x += 4) {
+      var v = 0.55 * Math.sin(x * 0.0042 + ph) + 0.3 * Math.sin(x * 0.0118 + ph * 2.1) + 0.15 * Math.sin(x * 0.033 + ph * 0.4);
+      if (v > 0.2) v = 0.2 + (v - 0.2) * 0.25;   // sommets plats, façon mesas
+      pts.push([x, base - amp * v]);
+    }
+    return pts;
+  }
+  function fillBelow(pts, fill) {
+    ctx.beginPath();
+    ctx.moveTo(0, H);
+    pts.forEach(function (p) { ctx.lineTo(p[0], p[1]); });
+    ctx.lineTo(W, H);
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+  function strokeLine(pts, style, lw) {
+    ctx.beginPath();
+    pts.forEach(function (p, i) { if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]); });
+    ctx.strokeStyle = style;
+    ctx.lineWidth = lw;
+    ctx.stroke();
+  }
+  function drawGround() {
+    var far = ridgeLine(606, 46, 1.3);
+    var fg = ctx.createLinearGradient(0, 556, 0, 640);
+    fg.addColorStop(0, '#111b2e');
+    fg.addColorStop(1, '#0b1220');
+    fillBelow(far, fg);
+    strokeLine(far, rgba('224,168,74', 0.12), 1.2);
+
+    var mid = ridgeLine(HORIZON, 22, 4.1);
+    var mg = ctx.createLinearGradient(0, 610, 0, H);
+    mg.addColorStop(0, '#222a3c');
+    mg.addColorStop(0.2, '#161c2a');
+    mg.addColorStop(0.5, '#0d1119');
+    mg.addColorStop(1, '#040508');
+    fillBelow(mid, mg);
+    strokeLine(mid, rgba('143,180,224', 0.14), 1);
+
+    // dune au premier plan : donne de la profondeur au désert
+    var near = ridgeLine(712, 14, 2.7);
+    var ng = ctx.createLinearGradient(0, 690, 0, H);
+    ng.addColorStop(0, '#0e1420');
+    ng.addColorStop(1, '#030407');
+    fillBelow(near, ng);
+    strokeLine(near, rgba('143,180,224', 0.08), 1);
+
+    // galets très discrets sur le sol
+    for (var i = 0; i < 260; i++) {
+      var x = rnd() * W, y = rr(645, 700);
+      ctx.fillStyle = rgba('200,190,170', rr(0.03, 0.1).toFixed(3));
+      ctx.beginPath(); ctx.arc(x, y, rr(0.4, 1.2), 0, TAU); ctx.fill();
+    }
+  }
+
+  // Ombre portée et reflet cyan au pied de la porte
+  function drawGateBase() {
+    ctx.save();
+    ctx.translate(CX, CY + RO + 6);
+    ctx.scale(1, 0.12);
+    var sg = ctx.createRadialGradient(0, 0, 0, 0, 0, 280);
+    sg.addColorStop(0, rgba('0,0,0', 0.75));
+    sg.addColorStop(1, rgba('0,0,0', 0));
+    ctx.fillStyle = sg;
+    ctx.fillRect(-300, -300, 600, 600);
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(CX, CY + RO + 12);
+    ctx.scale(1, 0.07);
+    var rg = ctx.createRadialGradient(0, 0, 0, 0, 0, 200);
+    rg.addColorStop(0, rgba('111,211,240', 0.30));
+    rg.addColorStop(1, rgba('111,211,240', 0));
+    ctx.fillStyle = rg;
+    ctx.fillRect(-220, -220, 440, 440);
+    ctx.restore();
+  }
+
+  function drawHalo() {
+    var hg = ctx.createRadialGradient(CX, CY, RO - 10, CX, CY, RO + 170);
+    hg.addColorStop(0, rgba('111,211,240', 0.22));
+    hg.addColorStop(0.35, rgba('111,211,240', 0.07));
+    hg.addColorStop(1, rgba('111,211,240', 0));
+    ctx.fillStyle = hg;
+    ctx.fillRect(CX - RO - 180, CY - RO - 180, 2 * (RO + 180), 2 * (RO + 180));
+  }
+
+  // ---------- Anneau de la porte ----------
+  function circlePath(r, ccw) {
+    ctx.beginPath();
+    ctx.arc(CX, CY, r, 0, TAU, !!ccw);
+  }
+  function drawRing() {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(CX, CY, RO, 0, TAU);
+    ctx.arc(CX, CY, RM, 0, TAU, true);
+    ctx.clip();
+
+    // métal gris-bleu, éclairé depuis le haut-gauche
+    var cg = ctx.createConicGradient(0, CX, CY);
+    var N = 64;
+    for (var i = 0; i <= N; i++) {
+      var t = i / N, th = t * TAU;
+      var b = 0.5 + 0.5 * Math.cos(th - 3.9270);
+      b = Math.pow(b, 2.4);
+      cg.addColorStop(t, mix('#1a222e', '#d6e1ee', b));
+    }
+    ctx.fillStyle = cg;
+    ctx.fillRect(CX - RO, CY - RO, 2 * RO, 2 * RO);
+
+    // stries de métal brossé, très faibles
+    for (var s = 0; s < 80; s++) {
+      var rad = rr(RM, RO);
+      circlePath(rad);
+      ctx.strokeStyle = rnd() < 0.5 ? rgba('255,255,255', rr(0.02, 0.06).toFixed(3)) : rgba('0,0,0', rr(0.03, 0.08).toFixed(3));
+      ctx.lineWidth = rr(0.5, 1.2);
+      ctx.stroke();
+    }
+
+    // modelé radial : bords sombres, léger reflet au tiers
+    var sh = ctx.createRadialGradient(CX, CY, RM, CX, CY, RO);
+    sh.addColorStop(0, rgba('0,0,0', 0.6));
+    sh.addColorStop(0.18, rgba('255,255,255', 0.10));
+    sh.addColorStop(0.5, rgba('0,0,0', 0));
+    sh.addColorStop(0.85, rgba('255,255,255', 0.06));
+    sh.addColorStop(1, rgba('0,0,0', 0.65));
+    ctx.fillStyle = sh;
+    ctx.fillRect(CX - RO, CY - RO, 2 * RO, 2 * RO);
+    ctx.restore();
+
+    // rainures et liserés de lumière sur les bords
+    circlePath(RO - 0.5); ctx.strokeStyle = rgba('0,0,0', 0.5); ctx.lineWidth = 1; ctx.stroke();
+    circlePath(RO + 0.8); ctx.strokeStyle = rgba('200,220,240', 0.22); ctx.lineWidth = 0.8; ctx.stroke();
+    circlePath(202); ctx.strokeStyle = rgba('0,0,0', 0.45); ctx.lineWidth = 1; ctx.stroke();
+    circlePath(226.5); ctx.strokeStyle = rgba('200,220,240', 0.14); ctx.lineWidth = 0.9; ctx.stroke();
+    circlePath(RM + 0.5); ctx.strokeStyle = rgba('200,220,240', 0.18); ctx.lineWidth = 0.9; ctx.stroke();
+    circlePath(256); ctx.strokeStyle = rgba('120,150,180', 0.22); ctx.lineWidth = 1; ctx.stroke();
+  }
+
+  function drawGlyphs() {
+    // creux gravé de la bande des symboles
+    ctx.beginPath();
+    ctx.arc(CX, CY, GLYPH_R + 11, 0, TAU);
+    ctx.arc(CX, CY, GLYPH_R - 11, 0, TAU, true);
+    ctx.fillStyle = rgba('6,12,22', 0.42);
+    ctx.fill();
+
+    for (var k = 0; k < SLOTS; k++) {
+      if (CHEVRONS.indexOf(k) >= 0) continue;
+      var a = slotAngle(k);
+      ctx.save();
+      ctx.translate(CX + Math.cos(a) * GLYPH_R, CY + Math.sin(a) * GLYPH_R);
+      ctx.rotate(a + Math.PI / 2);
+      glow(3);
+      ctx.shadowColor = rgba('111,211,240', 0.45);
+      ctx.strokeStyle = rgba('160,205,232', 0.7);
+      ctx.lineWidth = 1.1;
+      strokeOps(GLYPHS[k]);
+      ctx.restore();
+    }
+    noGlow();
+  }
+
+  function drawChevrons() {
+    var pts = [[-10, -221], [10, -221], [10, -236], [0, -247], [-10, -236]];
+    function path() {
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.closePath();
+    }
+    CHEVRONS.forEach(function (k) {
+      var a = slotAngle(k);
+      ctx.save();
+      ctx.translate(CX, CY);
+      ctx.rotate(a + Math.PI / 2);   // -y local = vers l'extérieur de l'anneau
+      var lg = ctx.createLinearGradient(0, -222, 0, -244);
+      lg.addColorStop(0, '#b86a1c');
+      lg.addColorStop(0.5, '#ffb545');
+      lg.addColorStop(1, '#fff0c4');
+      glow(18);
+      ctx.shadowColor = rgba('255,170,60', 0.95);
+      path();
+      ctx.fillStyle = lg;
+      ctx.fill();
+      glow(6);
+      path();
+      ctx.fill();
+      noGlow();
+      path();
+      ctx.strokeStyle = rgba('255,242,206', 0.85);
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+      ctx.restore();
+    });
+  }
+
+  // ---------- Vortex d'eau cristalline ----------
+  function drawVortex() {
+    ctx.beginPath();
+    ctx.arc(CX, CY, RM, 0, TAU);
+    ctx.fillStyle = '#060a10';
+    ctx.fill();
+
+    var vg = ctx.createRadialGradient(CX - 26, CY - 34, 0, CX, CY, RI + 6);
+    vg.addColorStop(0, '#eafcff');
+    vg.addColorStop(0.16, '#9be8ff');
+    vg.addColorStop(0.42, '#3aa6d8');
+    vg.addColorStop(0.72, '#15548a');
+    vg.addColorStop(1, '#071a33');
+    circlePath(RI);
+    ctx.fillStyle = vg;
+    ctx.fill();
+
+    ctx.save();
+    circlePath(RI);
+    ctx.clip();
+
+    // ondulations concentriques
+    for (var k = 0; k < 64; k++) {
+      var base = RI * Math.pow((k + 0.5) / 64, 0.92);
+      var ph = rr(0, TAU), amp = rr(0.8, 2.6), n = 3 + (k % 4) * 2;
+      ctx.beginPath();
+      for (var th = 0; th <= TAU + 0.001; th += 0.025) {
+        var rad = base + amp * Math.sin(n * th + ph + base * 0.04);
+        var x = CX + rad * Math.cos(th), y = CY + rad * Math.sin(th);
+        if (th === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = rgba('225,250,255', rr(0.03, 0.16).toFixed(3));
+      ctx.lineWidth = rr(0.6, 1.6);
+      ctx.stroke();
+    }
+    // reflets de courant
+    for (var s = 0; s < 9; s++) {
+      var sr = rr(40, RI - 10), sa = rr(0, TAU);
+      ctx.beginPath();
+      ctx.arc(CX + rr(-6, 6), CY + rr(-6, 6), sr, sa, sa + rr(0.4, 1.3));
+      ctx.strokeStyle = rgba('240,253,255', rr(0.12, 0.3).toFixed(3));
+      ctx.lineWidth = rr(2, 5);
+      ctx.stroke();
+    }
+    // bord intérieur assombri
+    var eg = ctx.createRadialGradient(CX, CY, RI - 36, CX, CY, RI);
+    eg.addColorStop(0, rgba('3,8,16', 0));
+    eg.addColorStop(1, rgba('3,8,16', 0.6));
+    ctx.fillStyle = eg;
+    ctx.fillRect(CX - RI, CY - RI, 2 * RI, 2 * RI);
+    // reflet spéculaire
+    var hg = ctx.createRadialGradient(CX - 70, CY - 92, 0, CX - 70, CY - 92, 90);
+    hg.addColorStop(0, rgba('255,255,255', 0.55));
+    hg.addColorStop(1, rgba('255,255,255', 0));
+    ctx.fillStyle = hg;
+    ctx.fillRect(CX - RI, CY - RI, 2 * RI, 2 * RI);
+    ctx.restore();
+
+    circlePath(RI);
+    ctx.strokeStyle = rgba('180,230,255', 0.35);
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  }
+
+  function drawForeground() {
+    var left = [[0, 820], [60, 790], [140, 805], [230, 770], [330, 830], [360, 900], [0, 900]];
+    var right = [[1440, 800], [1360, 790], [1290, 820], [1210, 860], [1180, 900], [1440, 900]];
+    [left, right].forEach(function (poly) {
+      ctx.beginPath();
+      ctx.moveTo(poly[0][0], poly[0][1]);
+      for (var i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
+      ctx.closePath();
+      ctx.fillStyle = rgba('5,7,11', 0.9);
+      ctx.fill();
+    });
+  }
+
+  // Assombrissement du bas et du coin haut-droit (zones des panneaux), puis vignettage
+  function grade() {
+    var bottom = ctx.createLinearGradient(0, 660, 0, H);
+    bottom.addColorStop(0, rgba('2,3,6', 0));
+    bottom.addColorStop(1, rgba('2,3,6', 0.88));
+    ctx.fillStyle = bottom;
+    ctx.fillRect(0, 0, W, H);
+
+    var tr = ctx.createRadialGradient(W, 0, 0, W, 0, 700);
+    tr.addColorStop(0, rgba('2,5,12', 0.55));
+    tr.addColorStop(1, rgba('2,5,12', 0));
+    ctx.fillStyle = tr;
+    ctx.fillRect(0, 0, W, H);
+
+    var vg = ctx.createRadialGradient(700, 430, 500, 700, 430, 1050);
+    vg.addColorStop(0, rgba('0,0,0', 0));
+    vg.addColorStop(1, rgba('0,0,0', 0.7));
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // Grain de luminance très faible (ne gonfle pas trop le JPEG)
+  function grain() {
+    var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    var d = img.data;
+    for (var p = 0; p < d.length; p += 4) {
+      var n = (rnd() - 0.5) * 4;
+      d[p] += n; d[p + 1] += n; d[p + 2] += n;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  // ---------- Rendu ----------
+  drawSky();
+  drawNebula();
+  drawStars();
+  drawGround();
+  drawGateBase();
+  drawHalo();
+  drawRing();
+  drawGlyphs();
+  drawChevrons();
+  drawVortex();
+  drawForeground();
+  grade();
+  grain();
+
+  window.__ready = true;
+})();
+</script>
+</body>
+</html>

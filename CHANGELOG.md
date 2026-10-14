@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Themes: eight themes (Naruto, the default, Stargate SG-1, Demon Slayer, Frieren, One Piece, My Hero Academia, Jujutsu Kaisen and Mushoku Tensei), each with its palette, labels, training object and characters.
+- Skin engine: a configurable engine that reads each theme from `src/themes/<id>/` (`theme.json`, `background.jpg`, `thumbnail.jpg`). A new theme needs no change to the page code.
+- Backgrounds: original illustrations drawn by code, rendered from one `scripts/themes/<id>/scene.html` per theme by `scripts/themes/render.cjs`. The Naruto background is unchanged.
+- Configuration: `theme` and `background` keys in `config.json`. A custom background (JPG, JPEG, PNG, HEIC or WebP) is copied to `~/.config/claude-dojo/backgrounds/`.
+- Setup commands: `themes`, `set-theme <id>` and `set-background <path|default>` in `src/setup.js`.
+- Menu bar: a Theme menu to choose a theme or a custom background.
+- Setup assistant: a Theme step.
+
 ## [0.1.0] - 2026-10-14
 
 Initial public release.

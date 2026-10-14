@@ -1,4 +1,6 @@
 {
+  "theme": "naruto",
+  "background": null,
   "weather": {
     "name": "Paris",
     "lat": 48.8566,

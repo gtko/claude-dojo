@@ -8,7 +8,7 @@ const path = require('path');
 const http = require('http');
 const { execFile, spawn } = require('child_process');
 
-const PORT = 7777;
+const PORT = Number(process.env.DOJO_PORT) || 7777;   // DOJO_PORT ne sert qu'aux tests (port libre)
 const HOME = os.homedir();
 const ROOT = __dirname;
 const WALL = path.join(ROOT, 'wallpaper');
@@ -642,14 +642,54 @@ async function sample() {
     hw, servers, media, battery, insights: readInsights(),
     uptime: Math.round(os.uptime()), time: Date.now(),
     icons,
+    themeKey: themeData().themeKey,
     pageVersion: (() => { try { return fs.statSync(path.join(WALL, 'index.html')).mtimeMs; } catch { return null; } })(),
   };
 }
 
+// ── Thèmes : src/themes/<id>/theme.json (palette, vocabulaire, persos, objet d'entraînement) ──
+const THEMES = path.join(ROOT, 'themes');
+const THEME_DEFAULT = 'naruto';
+const BG_DIR = path.join(HOME, '.config', 'claude-dojo', 'backgrounds');   // fonds personnels, copiés par l'installeur
+const readTheme = (id) => {   // theme.json d'un id valide, lisible et objet JSON ; sinon null
+  if (!/^[a-z0-9-]+$/.test(id)) return null;
+  const t = readJson(path.join(THEMES, id, 'theme.json'), null);
+  return t && typeof t === 'object' && !Array.isArray(t) ? t : null;
+};
+const BG_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.heic'];   // liste blanche : SVG et HTML jamais servis comme fond
+function customBg() {   // config.background : image réelle, confinée à BG_DIR (chemin résolu), sinon null
+  const f = config().background;
+  if (typeof f !== 'string' || !f) return null;
+  try {
+    const file = fs.realpathSync(f), dir = fs.realpathSync(BG_DIR);
+    if (!file.startsWith(dir + path.sep) || !BG_EXT.includes(path.extname(file).toLowerCase())) return null;
+    const st = fs.statSync(file);
+    return st.isFile() ? { file, mtime: Math.floor(st.mtimeMs) } : null;
+  } catch { return null; }
+}
+// wanted : id demandé en aperçu (GET /theme?id=…), sans toucher à la config ; absent : thème de la config.
+// Thème inconnu ou theme.json illisible : naruto. L'aperçu ignore le fond personnel.
+function themeData(wanted) {
+  const preview = wanted !== undefined;
+  let id = preview ? wanted : (typeof config().theme === 'string' ? config().theme : THEME_DEFAULT);
+  let t = readTheme(id);
+  if (!t) { id = THEME_DEFAULT; t = readTheme(id) || {}; }
+  const bg = preview ? null : customBg();
+  return {
+    id, name: t.name || id, credit: t.credit || '', accentFont: t.accentFont || null,
+    palette: t.palette || {}, vocab: t.vocab || {}, prop: t.prop || 'post', propColors: t.propColors || [],
+    chars: Array.isArray(t.chars) ? t.chars : [],
+    background: bg ? `/custom-bg?v=${bg.mtime}` : `/themes/${id}/background.jpg`,
+    themeKey: `${id}|${bg ? bg.mtime : ''}`,
+  };
+}
+
 // ── Serveur HTTP ───────────────────────────────────────────────────
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.jpg': 'image/jpeg', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json' };
-function send(res, code, body, type = 'application/json; charset=utf-8') {
-  res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.heic': 'image/heic', '.svg': 'image/svg+xml', '.json': 'application/json' };
+// Toutes les réponses : pas de reniflage de type (nosniff). Fichiers utilisateur et thèmes : CSP sandbox en plus.
+const SANDBOX = { 'Content-Security-Policy': 'sandbox' };
+function send(res, code, body, type = 'application/json; charset=utf-8', extra = {}) {
+  res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extra });
   res.end(body);
 }
 // Protection CSRF / DNS rebinding : seule la page servie par cet agent (même origine, loopback) peut
@@ -663,8 +703,8 @@ function isOwnRequest(req) {
   if (h['sec-fetch-site'] !== undefined && !['same-origin', 'none'].includes(h['sec-fetch-site'])) return false;
   return true;
 }
-function sendFile(res, file) {
-  fs.readFile(file, (e, b) => e ? send(res, 404, '{}') : send(res, 200, b, TYPES[path.extname(file)] || 'application/octet-stream'));
+function sendFile(res, file, extra = {}) {
+  fs.readFile(file, (e, b) => e ? send(res, 404, '{}') : send(res, 200, b, TYPES[path.extname(file)] || 'application/octet-stream', extra));
 }
 const server = http.createServer(async (req, res) => {
   try {
@@ -679,9 +719,18 @@ const server = http.createServer(async (req, res) => {
       case '/media': return send(res, 200, JSON.stringify({ result: 'ok', media: await mediaCmd(q('cmd')) }));
       case '/cover': return sendFile(res, COVER);
       case '/icon': return /^[a-z]+$/.test(q('a') || '') ? sendFile(res, path.join(ICONS, q('a') + '.png')) : send(res, 404, '{}');
+      case '/theme': return send(res, 200, JSON.stringify(themeData(u.searchParams.has('id') ? q('id') : undefined)));
+      case '/custom-bg': { const bg = customBg(); return bg ? sendFile(res, bg.file, SANDBOX) : send(res, 404, '{}'); }
       default: {
+        // fichiers des thèmes : id et nom de fichier en liste blanche
+        const th = /^\/themes\/([a-z0-9-]+)\/(background\.jpg|thumbnail\.jpg|theme\.json)$/.exec(u.pathname);
+        if (th) return sendFile(res, path.join(THEMES, th[1], th[2]), SANDBOX);
+        if (u.pathname.startsWith('/themes/')) return send(res, 404, '{}');
         // la page du fond d'écran elle-même (hôte DojoWallpaper)
-        const rel = u.pathname === '/' ? 'index.html' : decodeURIComponent(u.pathname).replace(/^\/+/, '');
+        let rel;
+        try { rel = u.pathname === '/' ? 'index.html' : decodeURIComponent(u.pathname).replace(/^\/+/, ''); }
+        catch { return send(res, 404, '{}'); }   // encodage invalide (%E0%A4%A…)
+        if (rel.includes('\0')) return send(res, 404, '{}');
         const file = path.join(WALL, rel);
         if (!file.startsWith(WALL + path.sep)) return send(res, 404, '{}');
         return sendFile(res, file);

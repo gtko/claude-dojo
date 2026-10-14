@@ -16,6 +16,7 @@
     --yellow: #f1fa8c;
     --mono: "CaskaydiaCove Nerd Font", "Cascadia Code", Consolas, monospace;
     --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --accent-font: var(--sans);   /* titres : police du thème (accentFont), sinon celle du texte */
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #1e1f29; }
@@ -42,6 +43,7 @@
   }
   .card { padding: 16px 18px; }
   .card h2, #dojo h2, #dojo2 h2 {
+    font-family: var(--accent-font);
     font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
     color: var(--muted); margin-bottom: 10px; display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
   }
@@ -343,9 +345,9 @@
 
 <div id="left">
   <section id="dojo" class="glass">
-    <h2>Dojo IA <small id="dojoSummary"></small></h2>
+    <h2><span data-v="title">Dojo IA</span><small id="dojoSummary"></small></h2>
     <div id="ninjas"></div>
-    <div id="empty">Aucune IA en session — le dojo est calme.</div>
+    <div id="empty" data-v="empty">Aucune IA en session — le dojo est calme.</div>
   </section>
 
   <section class="card glass" id="aiCard">
@@ -405,7 +407,7 @@
   <div id="offline" class="glass">Agent local injoignable — relance « Dojo agent ».</div>
 
   <section id="dojo2" class="glass" style="display:none">
-    <h2>Dojo IA <small>suite</small></h2>
+    <h2><span data-v="title">Dojo IA</span><small>suite</small></h2>
     <div id="ninjas2"></div>
   </section>
 
@@ -477,9 +479,14 @@
   </section>
 </div>
 
+<script src="props.js"></script>
 <script>
 // Agent local : en file:// (Lively) on appelle http://localhost:7777 ; servie par l'agent (http), l'URL reste relative.
 const API = (location.protocol === 'file:' ? 'http://localhost:7777' : '') + '/stats';
+const ORIGIN = API.replace('/stats', '');   // origine de l'agent (vide en http : chemins relatifs)
+// Démo navigateur : #demo (thème de la config) ou #demo:<id> (aperçu d'un thème, /theme?id=<id>)
+const isDemo = /^#demo(:|$)/.test(location.hash);
+const DEMO_THEME = (/^#demo:([a-z0-9-]+)$/.exec(location.hash) || [])[1] || null;
 // Même page sur les deux OS : Windows (Lively + agent.ps1) et macOS (DojoWallpaper.app + agent-mac.js).
 // Les réglages propres au Mac (encoche, miroir, Stage Manager) n'arrivent que via setSafe(), appelé par l'app Mac.
 const OS = /Mac/i.test(navigator.platform || navigator.userAgent) ? 'mac' : 'win';
@@ -895,18 +902,26 @@ const SKINS = {
 };
 const skinFor = (agent) => SKINS[agent] || { ...SKINS.other, label: agent || 'IA' };
 
-// Personnages : la 1re session est toujours Naruto, les suivantes tirent au hasard (sans doublon si possible)
-const CHARS = {
-  naruto:  { ...SKINS.claude },
-  hinata:  { hair: '#2e2a5c', hairStyle: 'long', top: '#d9d2ea', topD: '#aaa0c6', body: '#d9d2ea', pants: '#2f3150', pantsD: '#23243c', iris: '#e6e0f5', noPupil: true, band: null },
-  sasuke:  { hair: '#1f2440', hairStyle: 'duck', top: '#2b3a6b', topD: '#1f2a50', body: '#2b3a6b', pants: '#e8e6ef', pantsD: '#bdbbca', iris: '#2a2236' },
-  sakura:  { hair: '#ff9ecf', hairStyle: 'bob', top: '#d6334a', topD: '#a8243a', body: '#d6334a', pants: '#3c3f58', pantsD: '#2c2e44', iris: '#2fae66', band: '#2f4fb8' },
-  kakashi: { hair: '#d9dde6', hairStyle: 'kakashi', top: '#4f6b3a', topD: '#3b5230', body: '#2c3550', pants: '#2c3550', pantsD: '#20273d', iris: '#2a2236', mask: true },
-  lee:     { hair: '#141622', hairStyle: 'bowl', top: '#2f8f46', topD: '#226b34', body: '#2f8f46', pants: '#2f8f46', pantsD: '#226b34', iris: '#141622', band: null, belt: '#d6334a', brows: true },
-  gaara:   { hair: '#c7352b', hairStyle: 'gaara', top: '#7a2e2e', topD: '#5a2020', body: '#7a2e2e', pants: '#6b2a2a', pantsD: '#4f1f1f', iris: '#5fc2b0', band: null, noBrow: true, eyeRings: true, kanji: '愛', gourd: true },
-  itachi:  { hair: '#15161f', hairStyle: 'itachi', top: '#1b1b26', topD: '#121219', body: '#1b1b26', pants: '#1b1b26', pantsD: '#121219', iris: '#d42a2a', tear: true, scratch: true, clouds: true, ponytail: true },
-  jiraiya: { hair: '#f4f4f6', hairStyle: 'mane', top: '#c23a3a', topD: '#932828', body: '#4f7a3e', pants: '#4f7a3e', pantsD: '#3b5c2e', iris: '#2a2236', paint: true, sennin: true },
-};
+// Personnages intégrés (Naruto, repris de themes/naruto/theme.json) : utilisés si /theme est injoignable.
+// L'ordre compte : la 1re entrée est la 1re session, les suivantes tirent dans le reste (même ordre que l'ancienne liste).
+const FALLBACK_CHARS = [
+  { id: 'naruto', name: 'Naruto', ...SKINS.claude },
+  { id: 'hinata', name: 'Hinata', hair: '#2e2a5c', hairStyle: 'long', top: '#d9d2ea', topD: '#aaa0c6', body: '#d9d2ea', pants: '#2f3150', pantsD: '#23243c', iris: '#e6e0f5', noPupil: true, band: null },
+  { id: 'sasuke', name: 'Sasuke', hair: '#1f2440', hairStyle: 'duck', top: '#2b3a6b', topD: '#1f2a50', body: '#2b3a6b', pants: '#e8e6ef', pantsD: '#bdbbca', iris: '#2a2236' },
+  { id: 'sakura', name: 'Sakura', hair: '#ff9ecf', hairStyle: 'bob', top: '#d6334a', topD: '#a8243a', body: '#d6334a', pants: '#3c3f58', pantsD: '#2c2e44', iris: '#2fae66', band: '#2f4fb8' },
+  { id: 'jiraiya', name: 'Jiraiya', hair: '#f4f4f6', hairStyle: 'mane', top: '#c23a3a', topD: '#932828', body: '#4f7a3e', pants: '#4f7a3e', pantsD: '#3b5c2e', iris: '#2a2236', paint: true, sennin: true },
+  { id: 'kakashi', name: 'Kakashi', hair: '#d9dde6', hairStyle: 'kakashi', top: '#4f6b3a', topD: '#3b5230', body: '#2c3550', pants: '#2c3550', pantsD: '#20273d', iris: '#2a2236', mask: true },
+  { id: 'lee', name: 'Rock Lee', hair: '#141622', hairStyle: 'bowl', top: '#2f8f46', topD: '#226b34', body: '#2f8f46', pants: '#2f8f46', pantsD: '#226b34', iris: '#141622', band: null, belt: '#d6334a', brows: true },
+  { id: 'gaara', name: 'Gaara', hair: '#c7352b', hairStyle: 'gaara', top: '#7a2e2e', topD: '#5a2020', body: '#7a2e2e', pants: '#6b2a2a', pantsD: '#4f1f1f', iris: '#5fc2b0', band: null, noBrow: true, eyeRings: true, kanji: '愛', gourd: true },
+  { id: 'itachi', name: 'Itachi', hair: '#15161f', hairStyle: 'itachi', top: '#1b1b26', topD: '#121219', body: '#1b1b26', pants: '#1b1b26', pantsD: '#121219', iris: '#d42a2a', tear: true, scratch: true, clouds: true, ponytail: true },
+];
+// CHARS : personnages du thème courant, par id (dérivé de theme.chars) ; CHAR_IDS : leur ordre
+let CHARS = {}, CHAR_IDS = [];
+function setChars(list) {
+  CHARS = {}; CHAR_IDS = [];
+  for (const c of list) if (c && c.id && !CHARS[c.id]) { CHARS[c.id] = c; CHAR_IDS.push(c.id); }
+}
+setChars(FALLBACK_CHARS);
 // icônes des IA (SVG simples, lisibles en 16 px)
 const AI_ICON = {
   claude: '<svg viewBox="0 0 16 16"><path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4l-9.2 9.2" stroke="#1a1426" stroke-width="2.1" stroke-linecap="round"/></svg>',
@@ -915,24 +930,25 @@ const AI_ICON = {
 };
 let availIcons = new Set();   // IA dont l'agent fournit la vraie icône d'appli (Mac)
 const PER_SIDE = 5;   // ninjas par rangée de chaque côté
-const RANDOM_CHARS = ['hinata', 'sasuke', 'sakura', 'jiraiya', 'kakashi', 'lee', 'gaara', 'itachi'];
 // Stable : ordre par début de session (pas par dernier changement d'état), tirage dérivé de l'id
 // de la session → une session garde son personnage, même après un rechargement de la page.
 const hashId = (id) => [...String(id)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
 function assignChars(list) {
+  // 1re session : premier personnage du thème ; les suivantes tirent dans le reste de la liste (sans doublon si possible)
+  const ids = CHAR_IDS, pool = ids.length > 1 ? ids.slice(1) : ids;
   const used = new Set();
   if (location.hash === '#chars') {             // page de test : tous les personnages, dans l'ordre
-    list.forEach((d, i) => { const s = scenes.get(d.id); if (s) s.char = ['naruto', ...RANDOM_CHARS][i % (RANDOM_CHARS.length + 1)]; });
+    list.forEach((d, i) => { const s = scenes.get(d.id); if (s) s.char = ids[i % ids.length]; });
     return;
   }
   const order = [...list].sort((a, b) => (a.started || a.since || 0) - (b.started || b.since || 0) || String(a.id).localeCompare(String(b.id)));
   order.forEach((d, i) => {
     const s = scenes.get(d.id);
     if (!s) return;
-    if (i === 0) { s.char = 'naruto'; return; }
+    if (i === 0) { s.char = ids[0]; return; }
     const h = hashId(d.id);
-    let c = RANDOM_CHARS[h % RANDOM_CHARS.length];
-    for (let k = 0; k < RANDOM_CHARS.length && used.has(c); k++) c = RANDOM_CHARS[(h + k + 1) % RANDOM_CHARS.length];
+    let c = pool[h % pool.length];
+    for (let k = 0; k < pool.length && used.has(c); k++) c = pool[(h + k + 1) % pool.length];
     s.char = c; used.add(c);
   });
 }
@@ -954,12 +970,13 @@ function leg(x, hx, hy, [a1, a2], K, back) {
   const [dx1, dy1] = dir(a1, 10), kx = hx + dx1, ky = hy + dy1;
   const [dx2, dy2] = dir(a1 + a2, 10), ax = kx + dx2, ay = ky + dy2;
   line(x, [[hx, hy], [kx, ky], [ax, ay]], 8, back ? K.pantsD : K.pants);
-  if (!back) {                                   // bandage de cuisse
-    x.lineCap = 'butt'; x.strokeStyle = WRAP; x.lineWidth = 8;
+  const wrap = K.wrap === false ? null : K.wrap || WRAP;   // wrap: false = pas de bandage
+  if (!back && wrap) {                           // bandage de cuisse
+    x.lineCap = 'butt'; x.strokeStyle = wrap; x.lineWidth = 8;
     x.beginPath(); x.moveTo(kx + dx2 * .3, ky + dy2 * .3); x.lineTo(kx + dx2 * .62, ky + dy2 * .62); x.stroke();
   }
   const [fx, fy] = dir(a1 + a2 + 90, 5);
-  line(x, [[ax - fx * .4, ay - fy * .4], [ax + fx, ay + fy]], 5, SANDAL);
+  line(x, [[ax - fx * .4, ay - fy * .4], [ax + fx, ay + fy]], 5, K.shoe || SANDAL);
 }
 
 function arm(x, sx, sy, [a1, a2], K, back) {
@@ -967,7 +984,7 @@ function arm(x, sx, sy, [a1, a2], K, back) {
   const [dx2, dy2] = dir(a1 + a2, 8), wx = ex + dx2, wy = ey + dy2;
   line(x, [[sx, sy], [ex, ey], [wx, wy]], 7, back ? K.topD : K.top);
   const [hx, hy] = dir(a1 + a2, 1.6);
-  shape(x, () => { x.beginPath(); x.arc(wx + hx, wy + hy, 3.7, 0, 7); }, back ? SKIN_D : SKIN, 1.3);
+  shape(x, () => { x.beginPath(); x.arc(wx + hx, wy + hy, 3.7, 0, 7); }, back ? K.skinD || SKIN_D : K.skin || SKIN, 1.3);
 }
 
 function torso(x, K) {
@@ -976,22 +993,79 @@ function torso(x, K) {
     shape(x, () => { x.beginPath(); x.ellipse(-12.5, -21, 4.2, 4.2, 0, 0, 7); }, '#c9a26b', 1.2);
     x.strokeStyle = '#8b2a2a'; x.lineWidth = 1.6; x.beginPath(); x.moveTo(-17, -14); x.lineTo(-4, -6); x.stroke();
   }
+  if (K.cape) shape(x, () => { x.beginPath(); x.moveTo(-5, -21); x.lineTo(-14, -15); x.lineTo(-18, 13); x.lineTo(-9, 16); x.lineTo(-5, 0); x.closePath(); }, K.cape, 1.2);   // cape, dans le dos
+  if (K.backItem) backItem(x, K.backItem);       // bâton, épées, lance : dans le dos, sous le corps
   const path = () => { x.beginPath(); x.roundRect(-10, -21, 20, 23, 7); };
-  path(); x.fillStyle = K.body; x.fill();
+  path(); x.fillStyle = K.body || K.top; x.fill();   // body optionnel : à défaut, la couleur du haut
   x.save(); path(); x.clip();
-  x.fillStyle = K.top; x.fillRect(-12, -24, 26, 11);
-  x.fillStyle = 'rgba(0,0,0,.16)'; x.fillRect(-12, -24, 7, 30);
+  const haori = K.checker || K.flameCoat;        // haori qui couvre tout le haut du corps
+  x.fillStyle = K.top; x.fillRect(-12, -24, 26, haori ? 22 : 11);
+  if (K.checker) {                               // damier (Tanjiro)
+    const [c1, c2] = K.checker;
+    for (let i = 0; i < 7; i++) for (let j = 0; j < 6; j++) { x.fillStyle = (i + j) % 2 ? c2 : c1; x.fillRect(-12 + i * 4, -24 + j * 4, 4, 4); }
+  }
+  if (K.flameCoat) {                             // flammes du haori (Rengoku)
+    for (const [fx, fy] of [[-7, -3], [0, -5], [7, -2]]) {
+      x.fillStyle = '#d6322a';
+      x.beginPath(); x.moveTo(fx, fy - 6); x.quadraticCurveTo(fx + 4, fy - 2, fx + 1.5, fy + 1); x.quadraticCurveTo(fx, fy + 3, fx - 1.5, fy + 1); x.quadraticCurveTo(fx - 4, fy - 2, fx, fy - 6); x.fill();
+      x.fillStyle = '#ffb22e';
+      x.beginPath(); x.arc(fx, fy + .6, 1.3, 0, 7); x.fill();
+    }
+  }
+  if (!K.bare) { x.fillStyle = 'rgba(0,0,0,.16)'; x.fillRect(-12, -24, 7, 30); }
   if (K.belt) { x.fillStyle = K.belt; x.fillRect(-12, -3, 26, 3.5); }
+  if (K.pockets) {                               // poche de poitrine du treillis (O'Neill)
+    shape(x, () => { x.beginPath(); x.roundRect(-7.5, -11, 6.5, 6, 1.2); }, K.topD, 1);
+    x.strokeStyle = 'rgba(0,0,0,.3)'; x.lineWidth = .8; x.beginPath(); x.moveTo(-6.5, -8); x.lineTo(-2, -8); x.stroke();
+  }
   if (K.clouds) {                                // Itachi : nuages rouges de l'Akatsuki
     for (const [cx, cy, r] of [[-1, -12, 3], [5, -4, 2.6]]) {
       x.fillStyle = '#d42a2a'; x.strokeStyle = '#f2f2f2'; x.lineWidth = .8;
       x.beginPath(); x.arc(cx - r * .8, cy, r * .7, 0, 7); x.arc(cx, cy - r * .35, r * .85, 0, 7); x.arc(cx + r * .8, cy, r * .7, 0, 7); x.fill(); x.stroke();
     }
   }
+  if (K.bare) {                                  // torse nu : pectoraux
+    x.strokeStyle = 'rgba(120,70,40,.45)'; x.lineWidth = 1;
+    x.beginPath(); x.arc(-3.5, -13, 3, .3, 2.8); x.stroke();
+    x.beginPath(); x.arc(4.5, -13, 3, .3, 2.8); x.stroke();
+  }
+  if (K.markings) {                              // tatouages de Sukuna
+    x.strokeStyle = '#2a0f1f'; x.lineWidth = 1.2;
+    x.beginPath(); x.moveTo(-7, -15); x.lineTo(-3, -10); x.moveTo(-6, -5); x.lineTo(-1, -2.5); x.stroke();
+  }
   x.restore();
   path(); x.strokeStyle = OUT; x.lineWidth = 1.4; x.stroke();
   x.strokeStyle = 'rgba(0,0,0,.28)'; x.lineWidth = 1;
   x.beginPath(); x.moveTo(6, -12); x.lineTo(6, 1); x.stroke();
+  if (K.scarf) {                                 // écharpe au cou, pan dans le dos
+    shape(x, () => { x.beginPath(); x.roundRect(-11, -23.5, 22, 5, 2); }, K.scarf, 1.1);
+    shape(x, () => { x.beginPath(); x.moveTo(-8, -19); x.lineTo(-15, -6); x.lineTo(-10, -4); x.lineTo(-4, -18); x.closePath(); }, K.scarf, 1.1);
+  }
+}
+
+// Objets dans le dos (derrière le corps) : bâton de mage, épées, katana, fourreau, lance
+function backItem(x, kind) {
+  if (kind === 'staff') {                        // bâton, orbe bleu au sommet
+    line(x, [[-9, -28], [-18, 20]], 2.6, '#7a4f2b');
+    shape(x, () => { x.beginPath(); x.arc(-9.5, -30, 3, 0, 7); }, '#6ec8ff', 1.1);
+  } else if (kind === 'swords') {                // trois lames croisées dans le dos (Zoro)
+    sword(x, [-4, -25], [-15, 8], '#2a4a3a');
+    sword(x, [-8, -28], [-19, 4], '#2a4a3a');
+    sword(x, [-12, -26], [-22, -6], '#2a4a3a');
+  } else if (kind === 'katana') {
+    sword(x, [-7, -26], [-19, 10], '#2a2a35');
+  } else if (kind === 'sheath') {                // fourreau noir et vert (Tanjiro)
+    sword(x, [-6, -23], [-16, 12], '#1f3f35');
+  } else if (kind === 'spear') {                 // lance, pointe d'acier en haut
+    line(x, [[-11, -42], [-17, 28]], 2.2, '#8a5a33');
+    shape(x, () => { x.beginPath(); x.moveTo(-11, -48); x.lineTo(-14, -40); x.lineTo(-8, -40); x.closePath(); }, '#c9d1e0', 1);
+  }
+}
+// épée dans son fourreau : poignée h (au-dessus de l'épaule), pointe t
+function sword(x, h, t, sheath) {
+  line(x, [h, t], 2.8, sheath);
+  const dx = t[0] - h[0], dy = t[1] - h[1], l = Math.hypot(dx, dy), nx = -dy / l * 3.4, ny = dx / l * 3.4;
+  line(x, [[h[0] - nx, h[1] - ny], [h[0] + nx, h[1] + ny]], 1.8, '#c9a54e');   // garde
 }
 
 const HAIRS = {
@@ -1013,8 +1087,32 @@ const HAIRS = {
   itachi: [[13, -4], [12, -12], [4, -16], [-6, -15], [-13, -9], [-15, -1], [-14, 6], [-11, 6], [-10, -2], [-5, -6], [3, -8], [9, -6]],
   // Jiraiya : grande crinière blanche en pointes dans le dos
   mane: [[12, -6], [8, -15], [0, -19], [-8, -18], [-14, -13], [-22, -10], [-17, -5], [-26, 2], [-18, 4], [-25, 13], [-16, 12], [-21, 24], [-12, 18], [-11, 8], [-9, -2], [-4, -7], [3, -9], [8, -8]],
+  // Himmel, Oneill : coupe courte, frange sur le front
+  short: [[13, -4], [12, -12], [4, -16], [-6, -15], [-13, -10], [-15, -3], [-12, -1], [-9, -4], [-5, -7], [3, -9], [9, -7]],
+  // Luffy, Tanjiro, Zenitsu : cheveux ébouriffés, pointes irrégulières
+  messy: [[13, -4], [11, -11], [7, -17], [3, -15], [1, -24], [-3, -17], [-7, -22], [-9, -15], [-15, -17], [-14, -10], [-19, -7], [-15, -2], [-13, 3], [-10, -1], [-6, -6], [2, -9], [9, -7]],
+  // Teal'c : crâne rasé, simple liseré de cheveux
+  bald: [[12, -7], [9, -12], [2, -14.5], [-6, -14], [-12, -10], [-13, -6], [-9, -8], [-3, -9], [4, -9.5], [9, -8]],
+  // Frieren : frange droite, couettes derrière (dessinées à part)
+  twintail: [[13, -4], [12, -12], [4, -16], [-6, -15], [-13, -10], [-15, -4], [-10, -4], [-6, -7], [2, -10], [9, -7]],
+  // Deku : boucles en bouillonnement (contour dentelé + CURLS)
+  curly: [[13, -4], [11, -12], [4, -17], [-5, -17], [-12, -13], [-16, -6], [-14, 2], [-10, -2], [-5, -6], [3, -9], [9, -7]],
+  // Bakugo : pointes rayonnant depuis le crâne, comme une explosion
+  blast: [[12, -5], [15, -12], [10, -13], [13, -20], [5, -17], [4, -26], [-1, -18], [-7, -25], [-7, -17], [-16, -21], [-13, -12], [-22, -13], [-16, -6], [-21, -2], [-13, 1], [-14, 6], [-10, 2], [-6, -5], [3, -8], [9, -6]],
+  // Todoroki : mèche coupée en deux couleurs (HAIR2_ZONE : moitié avant)
+  split: [[13, -4], [12, -12], [4, -17], [-4, -16], [-13, -11], [-16, -2], [-12, 4], [-9, -2], [-5, -6], [3, -9], [9, -7]],
+  // All Might : deux mèches en V dressées au-dessus du crâne
+  antenna: [[13, -4], [12, -12], [7, -16], [11, -25], [12, -31], [6, -26], [2, -19], [-1, -24], [-6, -33], [-9, -24], [-12, -16], [-15, -3], [-12, 2], [-9, -3], [-5, -7], [3, -9], [9, -7]],
+  // Rengoku : flammes vers le haut et sur les côtés (pointes en hair2)
+  flame: [[13, -4], [12, -12], [7, -17], [9, -24], [2, -19], [0, -27], [-4, -19], [-9, -25], [-9, -17], [-16, -18], [-14, -11], [-20, -10], [-15, -4], [-19, 0], [-12, 1], [-12, 6], [-9, 2], [-5, -6], [3, -9], [9, -7]],
+  // Gojo, Itadori, Megumi, Sukuna : épis courts dressés
+  spikyUp: [[12, -6], [9, -13], [6, -17], [5, -25], [1, -18], [-2, -26], [-5, -18], [-11, -23], [-11, -16], [-18, -18], [-15, -10], [-21, -7], [-14, -2], [-11, 4], [-9, -3], [-4, -7], [3, -9], [8, -8]],
+  // Nezuko, Fern, Eris, Sylphiette : cheveux longs et droits, raie au milieu
+  longStraight: [[13, -4], [12, -12], [4, -16], [-6, -15], [-13, -10], [-17, -1], [-18, 12], [-16, 26], [-10, 28], [-9, 14], [-10, 4], [-6, -4], [-1, -9], [3, -9], [9, -7]],
+  // couette unique (dessinée à part) sur une coupe courte
+  pigtailOne: [[13, -4], [12, -12], [4, -16], [-6, -15], [-13, -10], [-15, -3], [-12, -1], [-9, -4], [-5, -7], [3, -9], [9, -7]],
 };
-// mèche devant le bandeau, par coiffure
+// mèche devant le bandeau, par coiffure ; null : pas de mèche (épis, boucles, crâne rasé)
 const LOCKS = {
   long: [[12, -4], [15, 12], [16.5, -4]],
   duck: [[11, -6], [16, 7], [15, -5]],
@@ -1024,11 +1122,102 @@ const LOCKS = {
   gaara: [[11, -8], [14, -3], [15, -8]],
   itachi: [[11, -5], [15, 11], [16.5, -4]],
   bowl: [[13, -6.6], [15, -4], [14.6, -6.6]],
+  bald: null, curly: null, blast: null, antenna: null, flame: null, spikyUp: null,
+  twintail: [[12, -4], [15, 9], [16.5, -4]],
+  longStraight: [[12, -4], [15, 12], [16.5, -4]],
+};
+// boucles de la coiffure curly : cercles [x, y, r] posés sur le contour
+const CURLS = {
+  curly: [[-11, -14, 3.6], [-3, -19, 3.8], [5, -18, 3.6], [11, -11, 3.2], [-16, -5, 3.4], [-15, 3, 3]],
+};
+// zone de la 2e couleur (hair2) selon la coiffure : moitié (split), pointes (flame, longStraight) ; défaut : nuque
+const HAIR2_ZONE = {
+  split: [[-2, -30], [30, -30], [30, 30], [-2, 30]],
+  flame: [[-30, -40], [30, -40], [30, -17], [-30, -17]],
+  longStraight: [[-30, 14], [30, 14], [30, 40], [-30, 40]],
 };
 const HAIR = [[-13, 6], [-20, 4], [-14, 0], [-23, -5], [-15, -8], [-21, -16], [-12, -15], [-15, -25], [-5, -17], [-3, -29],
               [3, -17], [9, -27], [9, -15], [18, -21], [13, -10], [20, -8], [13, -6], [6, -8], [0, -9], [-6, -8], [-10, -4], [-11, 2]];
 
+// crâne dégarni (flag balding, Hammond) : cheveux gardés sur les tempes et la nuque, front et dessus dégagés
+const HAIR_BALDING = [[13, -4], [12, -8], [9, -11], [4, -12.5], [-2, -12.5], [-8, -12], [-12, -10], [-14, -6], [-15, -2], [-12, 2], [-9, -2], [-8, -6], [-4, -10], [2, -10.5], [7, -10], [11, -7]];
+function hairPath(x, pts) {
+  x.beginPath(); pts.forEach(([px, py], i) => i ? x.lineTo(px, py) : x.moveTo(px, py)); x.closePath();
+}
+// 2e couleur : rognée sur la silhouette des cheveux, contour redessiné par-dessus
+function hairTwoTone(x, K, pts) {
+  const zone = HAIR2_ZONE[K.hairStyle] || [[-30, -30], [-6, -30], [-6, 40], [-30, 40]];
+  x.save();
+  hairPath(x, pts); x.clip();
+  x.beginPath(); zone.forEach(([px, py], i) => i ? x.lineTo(px, py) : x.moveTo(px, py)); x.closePath();
+  x.fillStyle = K.hair2; x.fill();
+  x.strokeStyle = OUT; x.lineWidth = 1; x.stroke();
+  x.restore();
+  hairPath(x, pts); x.strokeStyle = OUT; x.lineWidth = 1.4; x.stroke();
+}
+// couettes (twintail, deux) ou queue unique (pigtailOne), derrière la tête ; pointes en hair2
+function hairTails(x, K, wind) {
+  const tails = K.hairStyle === 'twintail'   // couettes basses : sortent de la nuque, pendent sous l'oreille
+    ? [[[-9, -5], [-17, 2], [-16 - wind * 2, 12]], [[-4, -7], [-11, 4], [-10 - wind * 2, 14]]]
+    : [[[-12, -6], [-20, 3], [-18 - wind * 2, 14]]];
+  for (const pts of tails) {
+    line(x, pts, 4.6, K.hair);
+    if (K.hair2) line(x, pts.slice(1), 4.6, K.hair2);
+  }
+}
+// oreille pointue (elfe), qui dépasse de la chevelure côté arrière
+function elfEar(x, SK) {
+  shape(x, () => { x.beginPath(); x.moveTo(-6, -2); x.lineTo(-19, -7); x.quadraticCurveTo(-13, 1, -7, 7); x.closePath(); }, SK, 1.2);
+}
+function earring(x, c) {                         // boucle d'oreille
+  x.save();
+  x.strokeStyle = OUT; x.lineWidth = 2.4; x.beginPath(); x.arc(-8.5, 9.5, 2, .5, 5.8); x.stroke();
+  x.strokeStyle = c; x.lineWidth = 1.2; x.beginPath(); x.arc(-8.5, 9.5, 2, .5, 5.8); x.stroke();
+  x.restore();
+}
+// masque de sanglier (Inosuke) : crâne et museau sur le visage, yeux percés dans l'os
+function boarMask(x) {
+  shape(x, () => { x.beginPath(); x.moveTo(-6, -11); x.quadraticCurveTo(4, -17, 11, -11); x.quadraticCurveTo(16, -6, 15.5, 2); x.quadraticCurveTo(15, 9, 9, 11); x.quadraticCurveTo(0, 12, -6, 5); x.closePath(); }, '#d9ccb0', 1.3);
+  x.fillStyle = OUT; x.beginPath(); x.ellipse(7.8, 2, 4.2, 4.6, 0, 0, 7); x.fill();
+  shape(x, () => { x.beginPath(); x.moveTo(6, 10); x.lineTo(8.5, 15); x.lineTo(11, 10); x.closePath(); }, '#fff6e6', 1);   // défense
+}
+// bois de cerf (Chopper), qui sortent du chapeau
+function antlers(x) {
+  const c = '#8a5a2b';
+  line(x, [[-3, -22], [-6, -30], [-9, -35]], 2, c);
+  line(x, [[-6, -28], [-12, -29]], 1.6, c);
+  line(x, [[4, -22], [7, -30], [10, -34]], 2, c);
+  line(x, [[7, -28], [13, -29]], 1.6, c);
+}
+// chapeaux, posés sur la tête (après les cheveux)
+const HAT_BAND = { straw: '#d7263d', pink: '#f9d6e4', witch: '#f6d98e', priest: '#d4af5a' };
+function hat(x, K) {
+  const band = K.hatBand || HAT_BAND[K.hat];
+  // ruban horizontal, rogné sur la forme du chapeau
+  const ribbon = (path, y) => { x.save(); path(); x.clip(); x.fillStyle = band; x.fillRect(-30, y, 60, 3.4); x.restore(); };
+  if (K.hat === 'straw') {                       // chapeau de paille (Luffy)
+    const crown = () => { x.beginPath(); x.roundRect(-9, -24, 18, 16, 6); };
+    shape(x, () => { x.beginPath(); x.ellipse(0, -10, 20, 5.2, 0, 0, 7); }, '#e9c46a', 1.3);
+    shape(x, crown, '#e9c46a', 1.3);
+    ribbon(crown, -12.5);
+  } else if (K.hat === 'pink') {                 // bonnet rose (Chopper)
+    const dome = () => { x.beginPath(); x.moveTo(-10, -11); x.quadraticCurveTo(-9, -25, 0, -25); x.quadraticCurveTo(9, -25, 10, -11); x.closePath(); };
+    shape(x, dome, '#f06fa0', 1.3);
+    ribbon(dome, -14);
+  } else if (K.hat === 'witch') {                // chapeau pointu de mage (Roxy)
+    const cone = () => { x.beginPath(); x.moveTo(-11, -12); x.quadraticCurveTo(-5, -22, -2, -41); x.quadraticCurveTo(7, -22, 11, -12); x.closePath(); };
+    shape(x, () => { x.beginPath(); x.ellipse(0, -12, 17, 4.5, 0, 0, 7); }, '#2b2f66', 1.3);
+    shape(x, cone, '#2b2f66', 1.3);
+    ribbon(cone, -17);
+  } else if (K.hat === 'priest') {               // calot de prêtre (Heiter)
+    const cap = () => { x.beginPath(); x.ellipse(0, -13, 10.5, 6.5, 0, 0, 7); };
+    shape(x, cap, '#2c5a3b', 1.3);
+    ribbon(cap, -13.5);
+  }
+}
+
 function head(x, K, f, t, wind) {
+  const SK = K.skin || SKIN, SKD = K.skinD || SKIN_D;
   // rubans du bandeau, qui flottent
   const band = K.band === null ? null : K.band || '#2f4fb8';
   const w1 = Math.sin(t / 110) * (wind + .25) * 2.2, w2 = Math.sin(t / 110 + 1.3) * (wind + .25) * 2.2;
@@ -1038,15 +1227,24 @@ function head(x, K, f, t, wind) {
   }
 
   if (K.ponytail) line(x, [[-12, 3], [-18 - wind * 2, 9], [-21 - wind * 4, 18]], 4.2, K.hair);   // Itachi : queue de cheval
-  shape(x, () => { x.beginPath(); x.ellipse(0, 1, 14, 13.5, 0, 0, 7); }, SKIN);
+  if (K.hairStyle === 'twintail' || K.hairStyle === 'pigtailOne') hairTails(x, K, wind);       // couettes derrière la tête
+  shape(x, () => { x.beginPath(); x.ellipse(0, 1, 14, 13.5, 0, 0, 7); }, SK);
   x.fillStyle = 'rgba(255,140,140,.35)';                                      // joue
   x.beginPath(); x.ellipse(6, 8.5, 3, 1.8, 0, 0, 7); x.fill();
-  shape(x, () => { x.beginPath(); x.ellipse(-8.5, 4, 2.4, 3.2, -.2, 0, 7); }, SKIN_D, 1.1);   // oreille
+  if (K.freckles) {                                                          // taches de rousseur (Deku)
+    x.fillStyle = 'rgba(140,80,50,.75)';
+    for (const [a, b] of [[4, 5], [7, 4.2], [5.5, 7.5], [9, 7], [2.5, 7], [7.5, 10]]) { x.beginPath(); x.arc(a, b, .75, 0, 7); x.fill(); }
+  }
+  shape(x, () => { x.beginPath(); x.ellipse(-8.5, 4, 2.4, 3.2, -.2, 0, 7); }, SKD, 1.1);   // oreille
 
-  const hairPts = HAIRS[K.hairStyle] || HAIR;
-  shape(x, () => { x.beginPath(); hairPts.forEach(([px, py], i) => i ? x.lineTo(px, py) : x.moveTo(px, py)); x.closePath(); }, K.hair);
-  x.fillStyle = 'rgba(255,255,255,.28)';
-  x.beginPath(); x.ellipse(-3, -15, 6, 2.2, -.35, 0, 7); x.fill();
+  const hairPts = K.balding ? HAIR_BALDING : (HAIRS[K.hairStyle] || HAIR);
+  shape(x, () => hairPath(x, hairPts), K.hair);
+  if (K.hair2) hairTwoTone(x, K, hairPts);
+  if (CURLS[K.hairStyle]) for (const [cx, cy, r] of CURLS[K.hairStyle]) shape(x, () => { x.beginPath(); x.arc(cx, cy, r, 0, 7); }, K.hair, 1.1);
+  if (!K.balding) {                              // reflet (absent sur le crâne dégarni, où il tomberait sur la peau)
+    x.fillStyle = 'rgba(255,255,255,.28)';
+    x.beginPath(); x.ellipse(-3, -15, 6, 2.2, -.35, 0, 7); x.fill();
+  }
 
   // bandeau + plaque
   if (band) {
@@ -1075,9 +1273,20 @@ function head(x, K, f, t, wind) {
     x.fillStyle = '#c62f2f'; x.font = 'bold 6px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
     x.fillText(K.kanji, 8.5, -5);
   }
-  // mèche devant le bandeau
-  const lock = LOCKS[K.hairStyle] || [[12, -4], [15.5, 3], [16.5, -5]];
-  shape(x, () => { x.beginPath(); lock.forEach(([px, py], i) => i ? x.lineTo(px, py) : x.moveTo(px, py)); x.closePath(); }, K.hair, 1.2);
+  // mèche devant le bandeau (pas de mèche si la coiffure n'en a pas : LOCKS à null)
+  const lock = Object.prototype.hasOwnProperty.call(LOCKS, K.hairStyle) ? LOCKS[K.hairStyle] : [[12, -4], [15.5, 3], [16.5, -5]];
+  if (lock && !K.balding) shape(x, () => { x.beginPath(); lock.forEach(([px, py], i) => i ? x.lineTo(px, py) : x.moveTo(px, py)); x.closePath(); }, K.hair, 1.2);
+  if (K.boarMask) boarMask(x);                   // Inosuke : masque par-dessus les cheveux, avant les yeux
+  if (K.ears === 'elf') elfEar(x, SK);           // oreilles pointues (Frieren, Sylphiette)
+  if (K.earrings) earring(x, K.earrings);
+  if (K.gem) {                                   // emblème du front (Teal'c, Ruijerd)
+    shape(x, () => { x.beginPath(); x.moveTo(4, -12.2); x.lineTo(6.2, -9.5); x.lineTo(4, -6.8); x.lineTo(1.8, -9.5); x.closePath(); }, K.gem, 1);
+  }
+  if (K.horn) {                                  // corne de démon sur le front (Nezuko)
+    shape(x, () => { x.beginPath(); x.moveTo(-1, -9); x.quadraticCurveTo(3, -17, 6, -22); x.quadraticCurveTo(7.5, -14, 6.5, -9); x.closePath(); }, '#b5203a', 1.1);
+  }
+  if (K.hat) hat(x, K);
+  if (K.antlers) antlers(x);
 
   // yeux
   if (f.sleep) {
@@ -1093,9 +1302,35 @@ function head(x, K, f, t, wind) {
     if (!K.noPupil) { x.fillStyle = OUT; x.beginPath(); x.arc(9, 2.6, 1, 0, 7); x.fill(); }   // Hinata : Byakugan sans pupille
     x.fillStyle = '#fff'; x.beginPath(); x.arc(9.5, 1.6, .75, 0, 7); x.fill();
   }
+  if (K.eyeHidden) {                             // mèche qui tombe sur un œil (Sanji) : pan arrondi, pointe vers la joue
+    shape(x, () => { x.beginPath(); x.moveTo(-1, -11); x.lineTo(15, -10); x.quadraticCurveTo(16.5, -2, 13.5, 3); x.quadraticCurveTo(10, 7, 5.5, 5); x.quadraticCurveTo(2, 2, 1, -4); x.closePath(); }, K.hair, 1.2);
+    x.strokeStyle = 'rgba(255,255,255,.45)'; x.lineWidth = .9; x.beginPath(); x.moveTo(10.5, -7.5); x.quadraticCurveTo(14, -5, 13.5, -1); x.stroke();   // reflet
+  }
+  if (K.blindfold) {                             // bandeau sur les yeux (Gojo), pan qui flotte
+    line(x, [[-14, w2], [-2, 0], [16, 2.4]], 5.2, K.blindfold);
+    line(x, [[-2, 0], [-12, -2 + w1], [-20, 1 + w2]], 2.8, K.blindfold);
+  }
   x.strokeStyle = OUT; x.lineWidth = K.brows ? 3.4 : 1.3;          // Lee : gros sourcils
   if (!K.noBrow) { x.beginPath(); x.moveTo(4.6, K.brows ? -2.6 : -2); x.lineTo(10.8, f.angry ? -1 : K.brows ? -3.4 : -2.8); x.stroke(); }   // Gaara : pas de sourcils
 
+  if (K.glasses) {                               // lunettes (Daniel) : monture autour de l'œil
+    x.save(); x.strokeStyle = K.glasses === true ? '#2b2b2b' : K.glasses; x.lineWidth = 1.3;
+    x.beginPath(); x.arc(8, 2, 4.6, 0, 7); x.stroke();
+    x.lineWidth = 1; x.beginPath(); x.moveTo(3.4, .6); x.lineTo(-4, -.4); x.stroke();
+    x.restore();
+  }
+  if (K.scarFace) {                              // cicatrice : front (Tanjiro), sous l'œil (Luffy, Todoroki), joue
+    x.save(); x.strokeStyle = '#8c3a3a'; x.lineWidth = 1.2; x.beginPath();
+    if (K.scarFace === 'forehead') { x.moveTo(2.5, -11); x.lineTo(6, -6); }
+    else if (K.scarFace === 'eye') { x.moveTo(3.5, 4); x.lineTo(8.5, 7); }
+    else { x.moveTo(3, 9.5); x.lineTo(7, 7); }
+    x.stroke(); x.restore();
+  }
+  if (K.markings) {                              // tatouages de Sukuna, sur le front et la joue
+    x.save(); x.strokeStyle = '#2a0f1f'; x.lineWidth = 1.1; x.beginPath();
+    x.moveTo(1, -6); x.lineTo(4, -3); x.moveTo(-2, -2); x.lineTo(2, .5); x.moveTo(3, 6); x.lineTo(7, 8.5); x.stroke();
+    x.restore();
+  }
   if (K.tear) {                                  // Itachi : traits sous les yeux
     x.strokeStyle = 'rgba(70,40,50,.75)'; x.lineWidth = .9;
     x.beginPath(); x.moveTo(5.6, 5.6); x.lineTo(6.6, 8.2); x.moveTo(9.6, 5.8); x.lineTo(10, 8.4); x.stroke();
@@ -1113,7 +1348,7 @@ function head(x, K, f, t, wind) {
   if (K.mask) {                                  // masque façon Kakashi
     shape(x, () => { x.beginPath(); x.moveTo(-1, 5); x.lineTo(14.2, 4.2); x.quadraticCurveTo(13, 14, 4, 14.4); x.quadraticCurveTo(-1, 12, -1, 5); }, '#2c3550', 1.1);
   } else {
-    x.fillStyle = SKIN_D; x.beginPath(); x.arc(13.4, 5.6, .9, 0, 7); x.fill();
+    x.fillStyle = SKD; x.beginPath(); x.arc(13.4, 5.6, .9, 0, 7); x.fill();
     if (f.shout) {
       shape(x, () => { x.beginPath(); x.ellipse(11.4, 10.4, 1.9, 2.3, 0, 0, 7); }, '#7a1f2b', 1);
     } else if (f.sleep) {
@@ -1121,6 +1356,11 @@ function head(x, K, f, t, wind) {
     } else {
       x.strokeStyle = OUT; x.lineWidth = 1.2; x.beginPath(); x.arc(11, 8.8, 2.2, rad(30), rad(150)); x.stroke();
     }
+  }
+  if (K.gag) line(x, [[-3, 9.4], [4, 9.8], [16, 8.4]], 2.2, '#c9a05a');   // bâillon de bambou (Nezuko)
+  if (K.cigarette) {                             // cigarette au coin des lèvres (Sanji)
+    line(x, [[11, 9.6], [18.5, 6.8]], 1.6, '#f4f1ea');
+    x.fillStyle = '#ff8a1f'; x.beginPath(); x.arc(19, 6.5, .9, 0, 7); x.fill();
   }
   if (f.bubble) {                               // bulle de nez
     const r = f.bubble;
@@ -1182,6 +1422,32 @@ function makeScene(id) {
   return { el, canvas, ctx, dpr, seed, lines: [], dust: [], shuriken: null, sparks: [], zs: [], data: null };
 }
 
+function groundShadow(x, cx, rx) {
+  x.fillStyle = 'rgba(0,0,0,.35)';
+  x.beginPath(); x.ellipse(cx, GROUND + 1, rx, 3.5, 0, 0, 7); x.fill();
+}
+
+// Poteau d'entraînement. colors : [bois, bandes] (propColors du thème)
+function drawPost(x, px, colors = []) {
+  const [main = '#8a5530', band = '#e8d9b0'] = colors;
+  groundShadow(x, px + 6, 9);
+  shape(x, () => { x.beginPath(); x.roundRect(px, 52, 13, GROUND - 52, 3); }, main, 1.3);
+  x.fillStyle = '#6a3d20'; x.fillRect(px + 9, 53, 3, GROUND - 54);
+  x.fillStyle = band; x.fillRect(px - 1, 64, 15, 3); x.fillRect(px - 1, 86, 15, 3);
+  x.strokeStyle = 'rgba(0,0,0,.25)'; x.lineWidth = 1;
+  x.beginPath(); x.ellipse(px + 6.5, 52.5, 6.5, 2, 0, 0, 7); x.stroke();
+}
+
+// Objet d'entraînement du thème (champ prop) : les objets autres que le poteau sont dans props.js
+// (window.DOJO_PROPS[kind]) ; absent, le poteau est dessiné
+function drawProp(x, kind, px, colors) {
+  // propriété propre seulement : « constructor », « toString »… tombent sur le poteau (Object.hasOwn exige Safari 15.4, macOS 12.0 est le minimum)
+  const props = window.DOJO_PROPS || {};
+  const fn = Object.prototype.hasOwnProperty.call(props, kind) ? props[kind] : null;
+  if (typeof fn === 'function') return fn(x, px, colors, GROUND);
+  drawPost(x, px, colors);
+}
+
 function sceneMode(s, t) {
   const st = s.data.state;
   if (s.data.mode) return s.data.mode;
@@ -1197,10 +1463,7 @@ function drawScene(s, t, dt) {
   const mode = sceneMode(s, t);
   const tt = t + s.seed * 131;
 
-  const shadow = (cx, rx) => {
-    x.fillStyle = 'rgba(0,0,0,.35)';
-    x.beginPath(); x.ellipse(cx, GROUND + 1, rx, 3.5, 0, 0, 7); x.fill();
-  };
+  const shadow = (cx, rx) => groundShadow(x, cx, rx);
 
   if (mode === 'run') {
     const p = tt / 95;
@@ -1224,12 +1487,7 @@ function drawScene(s, t, dt) {
 
   else if (mode === 'fight') {
     const px = 118;
-    shadow(px + 6, 9);
-    shape(x, () => { x.beginPath(); x.roundRect(px, 52, 13, GROUND - 52, 3); }, '#8a5530', 1.3);
-    x.fillStyle = '#6a3d20'; x.fillRect(px + 9, 53, 3, GROUND - 54);
-    x.fillStyle = '#e8d9b0'; x.fillRect(px - 1, 64, 15, 3); x.fillRect(px - 1, 86, 15, 3);
-    x.strokeStyle = 'rgba(0,0,0,.25)'; x.lineWidth = 1;
-    x.beginPath(); x.ellipse(px + 6.5, 52.5, 6.5, 2, 0, 0, 7); x.stroke();
+    drawProp(x, PROP.kind, px, PROP.colors);
 
     const beatLen = 300, beat = Math.floor(tt / beatLen), i = beat % 4;
     const f = Math.min(1, ((tt % beatLen) / beatLen) * 1.7);
@@ -1351,9 +1609,9 @@ function renderSessions(list, now) {
     const st = s.el.querySelector('.st');
     st.className = 'st ' + d.state;
     const dur = ago(now - d.since);
-    st.innerHTML = d.state === 'working' ? `${esc(d.tool || 'au travail')} · ${dur}`
-                 : d.state === 'waiting' ? `attend ton OK · ${dur}`
-                 : `dort · ${dur}`;
+    st.innerHTML = d.state === 'working' ? `${esc(d.tool || V.labelWorking)} · ${dur}`
+                 : d.state === 'waiting' ? `${esc(V.labelWaiting)} · ${dur}`
+                 : `${esc(V.labelIdle)} · ${dur}`;
     // avec un titre, le projet passe sur une ligne à part sous la pastille (il n'est plus dans l'étiquette)
     let pj = s.el.querySelector('.pj');
     if (!pj) { pj = document.createElement('div'); pj.className = 'pj'; st.after(pj); }
@@ -1364,7 +1622,7 @@ function renderSessions(list, now) {
   const wa = list.filter((s) => s.state === 'waiting').length;
   $('empty').style.display = list.length ? 'none' : 'block';
   $('dojoSummary').textContent = list.length
-    ? [w && `${w} en mission`, wa && `${wa} en attente`, (list.length - w - wa) && `${list.length - w - wa} au repos`].filter(Boolean).join(' · ')
+    ? [w && `${w} ${V.summaryWorking}`, wa && `${wa} ${V.summaryWaiting}`, (list.length - w - wa) && `${list.length - w - wa} ${V.summaryIdle}`].filter(Boolean).join(' · ')
     : '';
 }
 
@@ -1445,6 +1703,46 @@ function fit() {
 }
 addEventListener('resize', fit);
 
+/* ── Thème (agent : GET /theme) ──────────────────────────────── */
+// Sans agent (ou agent Windows sans thèmes) : palette, fond, vocabulaire et persos intégrés (Naruto) restent en place.
+const PALETTE_KEYS = ['bg', 'line', 'fg', 'muted', 'dim', 'purple', 'pink', 'orange', 'yellow'];
+const DEFAULT_VOCAB = {
+  title: 'Dojo IA', empty: 'Aucune IA en session — le dojo est calme.',
+  labelWorking: 'au travail', labelWaiting: 'attend ton OK', labelIdle: 'dort',
+  summaryWorking: 'en mission', summaryWaiting: 'en attente', summaryIdle: 'au repos',
+};
+let V = DEFAULT_VOCAB;                       // vocabulaire courant (textes de l'interface)
+let PROP = { kind: 'post', colors: [] };      // objet d'entraînement du thème
+let themeKey = null, themeLoading = false;   // clé du thème appliqué (themeKey de /stats)
+
+function applyTheme(t) {
+  const root = document.documentElement.style, pal = t.palette || {};
+  // une couleur valide seulement, jamais une url() : theme.json ne peut pas charger de ressource
+  const isColor = (v) => typeof v === 'string' && !/url\s*\(/i.test(v) && CSS.supports('color', v);
+  for (const k of PALETTE_KEYS) {
+    if (isColor(pal[k])) root.setProperty('--' + k, pal[k]); else root.removeProperty('--' + k);   // absent ou refusé : défaut de :root
+  }
+  root.setProperty('--accent-font', t.accentFont || 'var(--sans)');
+  document.body.style.backgroundImage = t.background ? `url("${ORIGIN}${t.background}")` : '';
+  V = { ...DEFAULT_VOCAB, ...(t.vocab || {}) };
+  document.querySelectorAll('[data-v]').forEach((el) => { el.textContent = V[el.dataset.v]; });
+  // sans champ band : bandeau bleu de Konoha par défaut (Naruto), pas de bandeau dans les autres thèmes
+  const own = Array.isArray(t.chars) && t.chars.length;
+  setChars(own ? t.chars.map((c) => c.band === undefined && t.id !== 'naruto' ? { ...c, band: null } : c) : FALLBACK_CHARS);
+  PROP = { kind: t.prop || 'post', colors: Array.isArray(t.propColors) ? t.propColors : [] };
+}
+// query : '' (thème de la config) ou '?id=<id>' (aperçu). Échec : on garde le thème déjà appliqué.
+async function loadTheme(query, key) {
+  if (themeLoading) return;
+  themeLoading = true;
+  try {
+    const r = await fetch(ORIGIN + '/theme' + query, { cache: 'no-store' });
+    if (!r.ok) throw new Error('theme ' + r.status);
+    applyTheme(await r.json());
+    themeKey = key;
+  } catch {} finally { themeLoading = false; }
+}
+
 /* ── Boucles ─────────────────────────────────────────────────── */
 async function poll() {
   try {
@@ -1452,7 +1750,9 @@ async function poll() {
     const d = await r.json();
     document.body.classList.remove('offline');
     renderSystem(d);
-    if (/^#(demo|chars)$/.test(location.hash)) {
+    // thème changé dans la config (ou fond perso) : appliqué à chaud, sans recharger la page
+    if (!DEMO_THEME && d.themeKey && d.themeKey !== themeKey) loadTheme('', d.themeKey);
+    if (isDemo || location.hash === '#chars') {
       const n = d.time;
       d.sessions = [
         { id: 'd1', agent: 'claude', cwd: '~/code/acme-api', title: 'Fix login redirect', state: 'working', tool: 'Edit', since: n - 65e3, mode: 'run' },
@@ -1471,7 +1771,7 @@ async function poll() {
     availIcons = new Set(d.icons || []);
     renderSessions(d.sessions || [], d.time);
     renderHw(d.hw);
-    if (location.hash === '#demo') {
+    if (isDemo) {
       d.servers = [
         { pid: 1, name: 'node', what: 'vite', project: 'acme-web', ports: [5173], mem: 312e6, cpu: 1.2, since: d.time - 42 * 6e4 },
         { pid: 2, name: 'workerd', what: 'wrangler', project: 'acme-api', ports: [8787, 9229], mem: 188e6, cpu: .3, since: d.time - 3 * 36e5 },
@@ -1495,7 +1795,8 @@ async function poll() {
 // Démo navigateur (#demo) : la zone sûre de l'encoche vient normalement de l'app Mac (pushSafe).
 // Valeurs telles que pushSafe les envoie pour un MacBook Pro 16" (1728 pt de large, zoom 0,68) :
 // encoche 200 × 32 pt, zone sûre haute 32 pt, divisées par le zoom (32 / 0,68 = 47 ; 200 / 0,68 = 294).
-if (location.hash === '#demo') setSafe({ top: 47, left: 0, notchW: 294, notchH: 47, mirror: false });
+if (isDemo) setSafe({ top: 47, left: 0, notchW: 294, notchH: 47, mirror: false });
+if (DEMO_THEME) loadTheme('?id=' + DEMO_THEME, 'demo:' + DEMO_THEME);   // aperçu : thème demandé, config intacte
 poll();
 setInterval(poll, 2000);
 

@@ -34,7 +34,7 @@ Then open DojoWallpaper from Applications. On the first launch, the setup assist
 
 ### 3. Follow the setup assistant
 
-The assistant has nine steps. Steps 3 to 6 are optional, and nothing is changed until you click **Apply** on the last step.
+The assistant has ten steps. Steps 3 to 6 are optional, and nothing is changed until you click **Apply** on the last step.
 
 1. **Welcome**: what the assistant sets up.
 2. **Dependencies**: checks for Node.js 18 or later, which is required. `macmon` and `media-control` are optional, and missing ones can be installed with Homebrew from this step. `gh` is optional; it needs `gh auth login` in a terminal.
@@ -44,7 +44,8 @@ The assistant has nine steps. Steps 3 to 6 are optional, and nothing is changed 
 6. **Calendars**: the ICS or webcal addresses of your calendars.
 7. **Claude Code**: the hooks, the status line, and the optional heavy-gate and `VITEST_MAX_WORKERS` settings. The changes to `~/.claude/settings.json` are shown before anything is written.
 8. **Automatic start**: starts Dojo at login. No administrator rights are needed.
-9. **Done**: a summary of your choices. Click **Apply** to make the changes.
+9. **Thème**: the [theme](#themes) and the background of the wallpaper. They are applied when you click **Apply**.
+10. **Done**: a summary of your choices. Click **Apply** to make the changes.
 
 <p align="center">
   <img src="docs/screenshots/setup-01-welcome.webp" alt="Setup assistant, step 1: welcome" width="360">
@@ -60,7 +61,7 @@ The assistant has nine steps. Steps 3 to 6 are optional, and nothing is changed 
 
 ### What the assistant changes
 
-- `~/.config/claude-dojo/`: the Dojo files, the `config.json` file (mode `0600`, because it can contain private URLs), and the cache.
+- `~/.config/claude-dojo/`: the Dojo files (including the `themes/` folder with the eight themes), the `config.json` file (mode `0600`, because it can contain private URLs), the cache, and, once you choose a custom background, the `backgrounds/` folder.
 - `~/Library/LaunchAgents/`: `io.github.claude-dojo.agent` (local agent and collector) and `io.github.claude-dojo.wallpaper` (wallpaper app), which start at login.
 - `~/.claude/settings.json`: the six Dojo hooks, the status line according to your choice (keep yours, replace it, or leave it alone), and, if you choose them, heavy-gate and `VITEST_MAX_WORKERS=2` in the `env` block, unless that variable is already set. `model`, `effort`, `plugins` and `permissions` are never touched. Before any change, the file is copied to `settings.json.bak-<timestamp>`.
 
@@ -70,6 +71,7 @@ The assistant has nine steps. Steps 3 to 6 are optional, and nothing is changed 
 
 The Dojo icon in the menu bar gives you the options listed in [Features](#features), plus:
 
+- **Thème**: chooses one of the [themes](#themes), or a custom background (**Choisir un fond…**).
 - **Réglages…** (⌘,): reopens the assistant to change your choices.
 - **Désinstaller…**: removes Dojo. See [Uninstall](#uninstall).
 - **Quitter le Dojo**: quits the app.
@@ -98,10 +100,130 @@ This writes `dist/DojoWallpaper.app` (universal binary, minimum macOS 12.0) and 
 - **AI usage**: estimated cost in euros for today and the last 7 days, a 14-day chart, a breakdown by model and effort level, and your Claude and Codex quotas. Claude Code and Codex sessions are both read.
 - **Dev panel**: open GitHub pull requests and their CI status, your contribution streak, and local Git repositories with uncommitted changes or unpushed commits.
 - **Optional panels**: unresolved Sentry issues from the last 24 hours, a 3-day weather forecast, upcoming calendar events from ICS feeds, and the track currently playing.
-- **Menu bar icon** to toggle interactive mode, reload the page, mirror the layout, change the size, open the assistant (Réglages…), uninstall, or quit.
+- **Menu bar icon** to toggle interactive mode, reload the page, mirror the layout, change the size, choose a theme or a custom background (**Thème**), open the assistant (Réglages…), uninstall, or quit.
 - **Private by default**: the local agent listens on `127.0.0.1` only and rejects requests from other origins (protection against CSRF and DNS rebinding), so a web page open in your browser cannot read your data or trigger actions. Every panel that needs the network is optional.
 
-**Language and artwork**: the wallpaper labels are in French for now. Pull requests that add translations (i18n) are welcome. The background image is third-party fan art, included as a demo. To use your own, replace `~/.config/claude-dojo/wallpaper/background.jpg`, then choose Reload in the menu bar icon. Re-running `install.sh` copies the bundled image again, so keep a copy of your own image.
+**Language and artwork**: the wallpaper labels are in French for now, and each theme has its own. Pull requests that add translations (i18n) are welcome. The artwork is original and drawn by code, except the Naruto background, which is third-party fan art included as a demo. To use your own picture, see [Use your own background](#use-your-own-background).
+
+## Themes
+
+The wallpaper has eight themes. A theme sets the background, the colour palette, the labels, the training object where your sessions work, and the characters that stand for them. The default theme is Naruto.
+
+<p align="center">
+  <img src="docs/screenshots/themes.webp" alt="The eight themes: Naruto, Stargate SG-1, Demon Slayer, Frieren, One Piece, My Hero Academia, Jujutsu Kaisen and Mushoku Tensei" width="720">
+</p>
+
+*The eight built-in themes.*
+
+| Id | Theme | Characters | Credit |
+|---|---|---|---|
+| `naruto` (default) | Naruto | Naruto, Hinata, Sasuke, Sakura, Jiraiya, Kakashi, Rock Lee, Gaara, Itachi | Unofficial fan art, not affiliated |
+| `stargate-sg1` | Stargate SG-1 | Jack O'Neill, Samantha Carter, Daniel Jackson, Teal'c, Général Hammond | Unofficial fan art, not affiliated |
+| `demon-slayer` | Demon Slayer | Tanjiro Kamado, Nezuko Kamado, Zenitsu Agatsuma, Inosuke Hashibira, Kyojuro Rengoku | Unofficial fan art, not affiliated |
+| `frieren` | Frieren | Frieren, Fern, Stark, Himmel, Heiter | Unofficial fan art, not affiliated |
+| `one-piece` | One Piece | Luffy, Zoro, Nami, Sanji, Chopper | Unofficial fan art, not affiliated |
+| `my-hero-academia` | My Hero Academia | Izuku Midoriya, Katsuki Bakugo, Shoto Todoroki, Ochaco Uraraka, All Might | Unofficial fan art, not affiliated |
+| `jujutsu-kaisen` | Jujutsu Kaisen | Yuji Itadori, Megumi Fushiguro, Nobara Kugisaki, Satoru Gojo, Ryomen Sukuna | Unofficial fan art, not affiliated |
+| `mushoku-tensei` | Mushoku Tensei | Rudeus Greyrat, Roxy Migurdia, Eris Boreas Greyrat, Sylphiette, Ruijerd Superdia | Unofficial fan art, not affiliated |
+
+Each theme is unofficial fan art, not affiliated with the rights holders of its franchise. Naruto, Stargate SG-1, Demon Slayer, Frieren, One Piece, My Hero Academia, Jujutsu Kaisen and Mushoku Tensei are the property of their respective rights holders, who keep all rights. The illustrations contain no official artwork: they are original drawings generated by code (canvas and SVG). The one exception is the Naruto background, a third-party fan art image included as a demo, kept unchanged.
+
+### Change the theme
+
+- **Menu bar**: click the Dojo icon, choose **Thème**, then the theme you want.
+- **Assistant**: open **Réglages…** (⌘,) and go to the **Thème** step.
+- **Terminal**: `node ~/.config/claude-dojo/setup.js set-theme <id>`, for example `set-theme frieren`. To list the themes and the current choice as JSON, run `node ~/.config/claude-dojo/setup.js themes`.
+
+The wallpaper applies the change live, without reloading the page.
+
+### Use your own background
+
+A custom image replaces the background of the current theme. The palette, labels and characters stay those of the theme.
+
+- **Menu bar**: choose **Thème** › **Choisir un fond…**, then pick an image.
+- **Terminal**: `node ~/.config/claude-dojo/setup.js set-background /path/to/image.jpg`
+
+Accepted formats are JPG, JPEG, PNG, HEIC and WebP, up to 50 MB. The image is copied to `~/.config/claude-dojo/backgrounds/`, under a name built from its content, so you can move or delete the original. Replacing a background removes the previous copy from that folder. A file you chose from elsewhere is never deleted.
+
+To go back to the theme's background, choose **Fond du thème** in the menu, or run `node ~/.config/claude-dojo/setup.js set-background default`. The choice is stored in the `background` key of [config.json](#configuration).
+
+### Create a theme
+
+A theme is data: a folder in `src/themes/`, named after its id. Ids use lowercase letters, digits and hyphens.
+
+```
+src/themes/<id>/
+├── theme.json        palette, labels, training object and characters
+├── background.jpg    2880 × 1800 pixels, 900 KB at most
+└── thumbnail.jpg     preview, about 480 × 300 pixels
+```
+
+`theme.json` is plain JSON. The example below uses comments to explain each field; remove them in the real file. The `id` must match the folder name, and each character needs an `id` that is unique within the theme.
+
+```jsonc
+{
+  "id": "stargate-sg1",                        // must match the folder name
+  "name": "Stargate SG-1",                     // name shown in the menu and the assistant
+  "credit": "Unofficial fan art, not affiliated with the rights holders of Stargate SG-1.",
+  "accentFont": "\"Optima\", sans-serif",      // macOS system fonts only, or null: nothing is downloaded
+  "palette": {                                 // CSS colours
+    "bg": "rgba(14, 22, 34, .55)",             // translucent panel background, alpha .45 to .6
+    "line": "rgba(214, 170, 90, .28)",         // panel border
+    "fg": "#eef2f6",                           // main text, contrast of at least 4.5:1
+    "muted": "#9fb3c8",                        // secondary text, contrast of at least 3:1
+    "dim": "#5b7088",                          // tertiary text
+    "purple": "#8fb4e0", "pink": "#6fd3f0",    // accent colours of bars and titles
+    "orange": "#e0a84a", "yellow": "#f2d27a"
+  },
+  "vocab": {                                   // labels in the interface (French)
+    "title": "SGC · ÉQUIPES SG",
+    "empty": "Aucune équipe SG en mission — la base est calme.",
+    "labelWorking": "en mission", "labelWaiting": "attend l'autorisation", "labelIdle": "dort",
+    "summaryWorking": "en mission", "summaryWaiting": "en attente", "summaryIdle": "au repos"
+  },
+  "prop": "dhd",                               // training object: post, dhd, log, grimoire, barrel, robot, doll or staff
+  "propColors": ["#a9825a", "#6fd3f0"],        // two colours for the training object
+  "chars": [                                   // at least 5 characters
+    {
+      "id": "oneill",                          // unique within the theme: [a-z0-9-]+
+      "name": "Jack O'Neill",
+      "hair": "#c9ced6", "hairStyle": "short", // sprite fields, listed below
+      "skin": "#f2c9a5", "skinD": "#dca57f",
+      "top": "#4f5d3a", "topD": "#3b4730", "body": "#4f5d3a",
+      "pants": "#4f5d3a", "pantsD": "#3b4730", "shoe": "#3a2e24",
+      "iris": "#2f6fb0"
+    }
+    // four more characters
+  ]
+}
+```
+
+The first character is used for the first session, and the other sessions take the other characters in turn. The `bg` colour must be dark, because the panels are translucent on top of the background. The tests check the text contrast: `fg` at least 4.5:1 and `muted` at least 3:1, measured on the panel background over a dark backdrop.
+
+Each character accepts these sprite fields. All are optional, and unknown fields are ignored:
+
+| Group | Fields |
+|---|---|
+| Hair | `hair`, `hair2`, `hairStyle`: `spiky` (default), `long`, `duck`, `bob`, `kakashi`, `bowl`, `gaara`, `itachi`, `mane`, `short`, `messy`, `bald`, `twintail`, `curly`, `blast`, `split`, `antenna`, `flame`, `spikyUp`, `longStraight`, `pigtailOne` |
+| Skin | `skin` (default `#ffd8b0`), `skinD` (default `#efb68b`) |
+| Clothes | `top`, `topD`, `body`, `pants`, `pantsD`, `shoe` (default `#34406e`), `belt`, `band`, `scarf`, `cape`, `wrap` (leg bandage, `false` for none), `bare` (bare chest, where `top` is the skin colour), `flameCoat`, `checker` (`[c1, c2]`) |
+| Face | `iris`, `brows`, `noBrow`, `noPupil`, `eyeRings`, `glasses`, `scarFace` (`forehead`, `cheek` or `eye`), `freckles`, `markings`, `paint`, `tear`, `scratch`, `whiskers`, `mask`, `boarMask`, `gag`, `eyeHidden`, `blindfold`, `gem`, `earrings`, `ears` (`elf`) |
+| Head | `hat` (`straw`, `pink`, `witch` or `priest`), `hatBand`, `horn`, `antlers`, `ponytail`, `clouds`, `sennin` |
+| Held or worn | `kanji`, `gourd`, `backItem` (`staff`, `swords`, `katana`, `spear` or `sheath`), `cigarette`, `tag` |
+
+To add a theme, follow these steps:
+
+1. **Background**: draw the scene in `scripts/themes/<id>/scene.html`. It is a self-contained page that sets `window.__ready = true` once it is drawn. Then run:
+
+   ```sh
+   node scripts/themes/render.cjs <id>
+   ```
+
+   It renders the page at 2880 × 1800 in headless Chrome and writes `src/themes/<id>/background.jpg`, lowering the JPEG quality until the file is at most 900 KB. It needs macOS (`sips`) and Chrome or Chromium; set `CHROME_PATH` if they are not found. `--png <path>` also keeps the intermediate PNG.
+2. **Screenshots and thumbnail**: run `node scripts/screenshots.cjs --themes`. It captures each theme's page to `docs/screenshots/themes/<id>.webp`, writes the preview `src/themes/<id>/thumbnail.jpg` (480 × 300 pixels, except for Naruto, whose thumbnail is kept as it is), and builds the board `docs/screenshots/themes.webp` shown at the top of this section.
+3. **Tests**: run `node --test test/`. The theme tests check the eight themes, the fields of each `theme.json`, the minimum of five characters, the size and format of each background, and the text contrast.
+
+The installer and the assistant copy `src/themes/` to `~/.config/claude-dojo/themes/`, so run `./install.sh` again, or apply the assistant, to get a new theme. After you edit a theme's files, choose **Reload** in the menu bar icon.
 
 ## Gallery
 
@@ -201,6 +323,8 @@ The file is `~/.config/claude-dojo/config.json`. Every block is optional. Withou
 
 | Key | Purpose |
 |---|---|
+| `theme` | Id of the [theme](#themes): `naruto` (default), `stargate-sg1`, `demon-slayer`, `frieren`, `one-piece`, `my-hero-academia`, `jujutsu-kaisen` or `mushoku-tensei` |
+| `background` | Path of a [custom background](#use-your-own-background), copied to `~/.config/claude-dojo/backgrounds/`. `null` (default) uses the background of the theme |
 | `weather.name` | City label shown in the weather panel |
 | `weather.lat`, `weather.lon` | City coordinates |
 | `weather.timezone` | IANA time zone, for example `Europe/Paris` |
@@ -214,6 +338,7 @@ Example (placeholder values, replace them and delete the blocks you do not use):
 
 ```json
 {
+  "theme": "naruto",
   "weather": { "name": "Paris", "lat": 48.8566, "lon": 2.3522, "timezone": "Europe/Paris" },
   "calendars": ["https://calendar.example.com/feed.ics"],
   "github": { "owners": ["octocat"] },
@@ -222,7 +347,7 @@ Example (placeholder values, replace them and delete the blocks you do not use):
 }
 ```
 
-- The file is reloaded automatically. When it changes, the weather, calendar, Sentry and projects panels refresh without restarting the agent.
+- The file is reloaded automatically. When it changes, the weather, calendar, Sentry and projects panels refresh without restarting the agent. A new `theme` or `background` is applied the same way.
 - The installer never overwrites this file. It creates it with mode `0600` on first install.
 
 **Privacy**: never publish this file, in a Git repository or anywhere else. It can contain private calendar URLs, which give access to your agenda, and tokens (Sentry).
@@ -232,6 +357,7 @@ Example (placeholder values, replace them and delete the blocks you do not use):
 ### Local data
 
 - **Claude Code sessions**: the hooks write the state of each session to `~/.claude/dojo/`. The status line writes the model, effort and quota data to `~/.claude/dojo/status/`.
+- **Custom background**: a picture you choose with **Choose a background…** or `set-background` is copied to `~/.config/claude-dojo/backgrounds/`.
 - **Transcripts**: the collector reads `~/.claude/projects` and `~/.codex/sessions` to compute usage and costs. The results are cached in `~/.config/claude-dojo/cache/`.
 - **Claude quota**: read-only, from `~/.claude/.credentials.json` or, if that file does not exist, from the macOS Keychain item `Claude Code-credentials`. Nothing is copied or written elsewhere.
 - **Costs**: estimated locally from the public API prices in the collector. They are converted to euros with the exchange rate below.
@@ -281,12 +407,12 @@ From the clone:
 
 Options:
 
-- `--yes`, `-y`: no questions. Keeps `config.json`, the cache and `~/.claude/dojo`;
+- `--yes`, `-y`: no questions. Keeps `config.json`, the cache, the custom backgrounds and `~/.claude/dojo`;
 - `--no-launchd`: does not touch launchd (the plists stay in place);
-- `--purge`: also deletes `~/.config/claude-dojo` (configuration and cache) without asking;
+- `--purge`: also deletes `~/.config/claude-dojo` (configuration, cache and custom backgrounds) without asking;
 - `--help`: shows the help.
 
-The uninstaller stops and removes the LaunchAgents, deletes `~/Applications/DojoWallpaper.app`, and removes the Dojo entries from `~/.claude/settings.json` (hooks, status line, heavy-gate, and `VITEST_MAX_WORKERS` when it was set by the installer). Before changing `settings.json`, it saves a backup as `settings.json.bak-<timestamp>`. It asks separately before deleting the session state in `~/.claude/dojo`. Nothing else is changed.
+The uninstaller stops and removes the LaunchAgents, deletes `~/Applications/DojoWallpaper.app`, and removes the Dojo entries from `~/.claude/settings.json` (hooks, status line, heavy-gate, and `VITEST_MAX_WORKERS` when it was set by the installer). Before changing `settings.json`, it saves a backup as `settings.json.bak-<timestamp>`. It asks separately before deleting the session state in `~/.claude/dojo`. Without `--purge`, your personal background stays in `~/.config/claude-dojo/backgrounds` after uninstalling. Nothing else is changed.
 
 ## Troubleshooting
 
@@ -322,6 +448,7 @@ launchctl kickstart -k gui/$(id -u)/io.github.claude-dojo.wallpaper
 ## Development
 
 - `src/setup.js` is the single source of truth for installing and uninstalling: the files, `config.json`, `settings.json` and the LaunchAgents. `install.sh`, `uninstall.sh` and the Swift assistant in `mac/` all call it, so the terminal and the app do the same thing.
+- The themes are data in `src/themes/`, so adding one needs no change to the engine, as long as its fields are the ones listed in [Create a theme](#create-a-theme).
 - The unit tests run with `node --test test/`.
 - CI runs the checks below, and also an install, reinstall and uninstall in a temporary `HOME`.
 
@@ -348,6 +475,6 @@ Installation : téléchargez `ClaudeDojo-<version>.dmg` depuis la page [Releases
 
 Installation depuis les sources (développeurs) : `git clone https://github.com/gtko/claude-dojo.git && cd claude-dojo && ./install.sh` (Node 18 ou plus et Xcode Command Line Tools requis).
 
-Les sections en anglais détaillent tout : [Install](#install), [Requirements](#requirements), [What the installer does and asks](#what-the-installer-does-and-asks), [Configuration](#configuration), [Uninstall](#uninstall) et [Troubleshooting](#troubleshooting).
+Les sections en anglais détaillent tout : [Install](#install), [Requirements](#requirements), [What the installer does and asks](#what-the-installer-does-and-asks), [Configuration](#configuration), [Themes](#themes), [Uninstall](#uninstall) et [Troubleshooting](#troubleshooting).
 
 Ne publiez jamais `~/.config/claude-dojo/config.json` : il peut contenir des URL de calendrier privées et des tokens.

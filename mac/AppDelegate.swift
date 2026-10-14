@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var interactiveItem: NSMenuItem?
     private var mirrorItem: NSMenuItem?
     private var sizeItems: [NSMenuItem] = []
+    private var themeMenu: NSMenu?
+    private var themeItems: [NSMenuItem] = []
     private var setupWindow: SetupWindowController?
     private var wallpaperStarted = false
 
@@ -28,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wallpaper.onChange = { [weak self] in self?.refreshMenu() }
         refreshMenu()
         Task { @MainActor in await self.bootstrap() }
+        Task { @MainActor in await self.reloadThemes() }
     }
 
     // MARK: Menu
@@ -53,6 +56,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         size.submenu = sub
         menu.addItem(size)
+        // Thèmes : la liste et les coches sont relues à chaque ouverture du sous-menu (menuWillOpen).
+        let theme = NSMenuItem(title: "Thème", action: nil, keyEquivalent: "")
+        let themes = NSMenu(title: "Thème")
+        themes.delegate = self
+        themeMenu = themes
+        themes.addItem(.separator())
+        themes.addItem(action("Choisir un fond…", #selector(chooseBackground)))
+        themes.addItem(action("Fond du thème", #selector(useThemeBackground)))
+        theme.submenu = themes
+        menu.addItem(theme)
         menu.addItem(.separator())
         menu.addItem(action("Réglages…", #selector(openSettings), key: ","))
         menu.addItem(action("Désinstaller…", #selector(uninstall)))
@@ -80,6 +93,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleMirror() { wallpaper.mirror.toggle() }
     @objc private func pickSize(_ sender: NSMenuItem) { wallpaper.zoomSetting = sender.representedObject as? Double ?? 0 }
     @objc private func openSettings() { openSetup(editing: true) }
+
+    // MARK: Thèmes et fond d'écran
+
+    /// Relit la liste et le thème courant (setup.js themes) : reconstruit les thèmes si la liste a changé, coches à jour.
+    private func reloadThemes() async {
+        guard let response: ThemesResponse = try? await runner.call("themes") else { return }
+        let list = response.themes ?? []
+        if list.map(\.id) != themeItems.compactMap({ $0.representedObject as? String }) {
+            rebuildThemeItems(list)
+        }
+        for item in themeItems {
+            item.state = (item.representedObject as? String) == response.theme ? .on : .off
+        }
+    }
+
+    private func rebuildThemeItems(_ list: [ThemeInfo]) {
+        guard let menu = themeMenu else { return }
+        themeItems.forEach { menu.removeItem($0) }
+        themeItems = list.enumerated().map { index, theme in
+            let entry = action(theme.name, #selector(pickTheme(_:)))
+            entry.representedObject = theme.id
+            menu.insertItem(entry, at: index)
+            return entry
+        }
+    }
+
+    @objc private func pickTheme(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        Task { @MainActor in
+            do {
+                let _: Ack = try await runner.call("set-theme", [id])
+                await reloadThemes()
+            } catch {
+                showFailure("Thème non appliqué", error)
+            }
+        }
+    }
+
+    @objc private func chooseBackground() {
+        guard let path = BackgroundPicker.pick() else { return }
+        setBackground(path)
+    }
+
+    @objc private func useThemeBackground() { setBackground("default") }
+
+    /// set-background (chemin d'image, ou « default ») en tâche de fond ; l'agent reprend le fond à chaud.
+    private func setBackground(_ value: String) {
+        Task { @MainActor in
+            do {
+                let _: Ack = try await runner.call("set-background", [value], timeout: 120)
+            } catch {
+                showFailure("Fond d'écran non appliqué", error)
+            }
+        }
+    }
+
+    private func showFailure(_ title: String, _ error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = error.localizedDescription
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
 
     // MARK: Démarrage
 
@@ -181,5 +258,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = "Claude Dojo est désinstallé. Cette application est dans un dossier que Dojo ne peut pas modifier : \(path)"
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
+    }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === themeMenu else { return }
+        Task { @MainActor in await reloadThemes() }
     }
 }

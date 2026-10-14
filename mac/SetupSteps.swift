@@ -1,4 +1,4 @@
-// Contenu des neuf étapes de l'assistant, et petits composants partagés.
+// Contenu des dix étapes de l'assistant, et petits composants partagés.
 import SwiftUI
 
 struct SetupStepView: View {
@@ -14,6 +14,7 @@ struct SetupStepView: View {
         case .calendars: CalendarsStep(model: model)
         case .claude: ClaudeStep(model: model)
         case .autostart: AutostartStep(model: model)
+        case .theme: ThemeStep(model: model)
         case .done: DoneStep(model: model)
         }
     }

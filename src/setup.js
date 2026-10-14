@@ -10,6 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 const { execFile, execFileSync } = require('child_process');
 
 const LABEL_AGENT = 'io.github.claude-dojo.agent';
@@ -23,6 +24,11 @@ const RE = {
 };
 const RE_ANY_HEAVY = /heavy-gate\.js/;
 const AGENT_PORT = 7777;
+// Thèmes : un dossier par thème (themes/<id>/). Fonds personnalisés : copiés dans backgrounds/.
+const THEME_ID_RE = /^[a-z0-9-]+$/;
+const DEFAULT_THEME = 'naruto';
+const BG_EXT = ['.jpg', '.jpeg', '.png', '.heic', '.webp'];
+const BG_MAX_BYTES = 50 * 1024 * 1024;
 
 class SetupError extends Error {}
 const fail = (msg) => { throw new SetupError(msg); };
@@ -42,6 +48,9 @@ const paths = {
   stateDir: () => path.join(home(), '.claude', 'dojo'),
   launchAgents: () => path.join(home(), 'Library', 'LaunchAgents'),
   app: () => path.join(appDirs()[0], APP_NAME),
+  backgrounds: () => path.join(paths.dojo(), 'backgrounds'),
+  // DOJO_THEMES_DIR ne sert qu'aux tests (dossier de thèmes factice) ; sinon ceux du runtime.
+  themes: () => path.join(process.env.DOJO_THEMES_DIR || __dirname, 'themes'),
 };
 
 // ── Utilitaires ──────────────────────────────────────────────────────────
@@ -556,6 +565,7 @@ function normalizePatch(p) {
   if (isObj(out.projects) && Array.isArray(out.projects.roots)) {
     out.projects.roots = out.projects.roots.map((r) => (typeof r === 'string' ? expandHome(r) : r));
   }
+  if (typeof out.background === 'string') out.background = expandHome(out.background);
   return out;
 }
 
@@ -588,11 +598,31 @@ function validateConfig(c) {
       if (c.sentry[k] !== undefined && typeof c.sentry[k] !== 'string') fail(`sentry.${k} doit être une chaîne.`);
     }
   }
+  if (c.theme !== undefined && c.theme !== null && !(typeof c.theme === 'string' && THEME_ID_RE.test(c.theme))) {
+    fail('theme doit être un identifiant (lettres minuscules, chiffres, tirets).');
+  }
+  if (c.background !== undefined && c.background !== null && !(typeof c.background === 'string' && path.isAbsolute(c.background))) {
+    fail('background doit être null ou un chemin absolu.');
+  }
+}
+
+// config.background (si fourni, non null) : même règle que set-background, c.-à-d. un fichier directement dans backgrounds/,
+// extension autorisée, jamais un lien symbolique. Vérifié sur la seule valeur envoyée, pas sur config.json entier.
+function checkBackgroundPath(p) {
+  const file = path.resolve(p);
+  const dir = paths.backgrounds();
+  if (path.dirname(file) !== dir || !BG_EXT.includes(path.extname(file).toLowerCase())) {
+    fail(`background doit être null ou une image copiée dans ${dir} (jpg, jpeg, png, heic ou webp). Utilisez set-background.`);
+  }
+  let lst = null;
+  try { lst = fs.lstatSync(file); } catch {}
+  if (lst && lst.isSymbolicLink()) fail(`background : lien symbolique refusé : ${file}`);
 }
 
 // Écrit config.json (0600, dossier 0700). Ne renvoie jamais les valeurs (le jeton Sentry en fait partie).
 function writeConfig(input) {
   const patch = normalizePatch(input);
+  if (typeof patch.background === 'string') checkBackgroundPath(patch.background);
   const dir = paths.dojo();
   const file = path.join(dir, 'config.json');
   let existing = {};
@@ -644,7 +674,7 @@ async function geocode(city) {
 // ── Copie du runtime ─────────────────────────────────────────────────────
 const isInside = (child, parent) => child === parent || child.startsWith(parent + path.sep);
 const RUNTIME_FILES = new Set(['package.json', 'package-lock.json', 'config.example.json']);
-const RUNTIME_DIRS = new Set(['wallpaper', 'node_modules']);
+const RUNTIME_DIRS = new Set(['wallpaper', 'themes', 'node_modules']);
 
 // Cible d'un lien symbolique : son realpath, ou sa cible lexicale s'il est cassé.
 function linkTarget(link) {
@@ -948,10 +978,108 @@ async function status() {
   };
 }
 
+// ── Thèmes et fonds d'écran ──────────────────────────────────────────────
+// Un thème = un dossier themes/<id>/ avec un theme.json valide (id = nom du dossier). Les autres dossiers sont ignorés.
+function listThemes() {
+  const root = paths.themes();
+  let names = [];
+  try { names = fs.readdirSync(root).sort(); } catch { return []; }
+  const themes = [];
+  for (const id of names) {
+    if (!THEME_ID_RE.test(id)) continue;
+    const dir = path.join(root, id);
+    try { if (!fs.statSync(dir).isDirectory()) continue; } catch { continue; }
+    let meta;
+    try { meta = JSON.parse(fs.readFileSync(path.join(dir, 'theme.json'), 'utf8')); } catch { continue; }
+    if (!isObj(meta) || meta.id !== id || typeof meta.name !== 'string' || meta.name.trim() === '') continue;
+    const thumb = path.join(dir, 'thumbnail.jpg');
+    themes.push({
+      id,
+      name: meta.name,
+      thumbnail: fs.existsSync(thumb) ? thumb : null,
+      background: path.join(dir, 'background.jpg'),
+    });
+  }
+  // Le thème par défaut d'abord, les autres dans l'ordre alphabétique.
+  const i = themes.findIndex((t) => t.id === DEFAULT_THEME);
+  if (i > 0) themes.unshift(...themes.splice(i, 1));
+  return themes;
+}
+
+// Liste des thèmes, thème courant (défaut naruto) et fond personnalisé (null = fond du thème).
+function themesInfo() {
+  const cfg = readConfig() || {};
+  const theme = typeof cfg.theme === 'string' && THEME_ID_RE.test(cfg.theme) ? cfg.theme : DEFAULT_THEME;
+  const background = typeof cfg.background === 'string' && cfg.background !== '' ? cfg.background : null;
+  return { ok: true, themes: listThemes(), theme, background };
+}
+
+function setTheme(arg) {
+  const id = String(arg ?? '');
+  if (!THEME_ID_RE.test(id)) fail('identifiant de thème attendu (lettres minuscules, chiffres, tirets).');
+  const known = listThemes().map((t) => t.id);
+  if (!known.includes(id)) fail(`thème inconnu : ${id}. Thèmes disponibles : ${known.join(', ') || 'aucun'}.`);
+  writeConfig({ theme: id });
+  return { ok: true, theme: id };
+}
+
+// Supprime l'ancienne copie si elle est dans backgrounds/ : un chemin choisi par l'utilisateur n'est jamais touché.
+function dropOldBackground(prev, keep) {
+  if (typeof prev !== 'string' || prev === keep) return null;
+  if (!isInside(path.resolve(prev), paths.backgrounds())) return null;
+  fs.rmSync(prev, { force: true });
+  return prev;
+}
+
+// Signature (magic bytes) de chaque format accepté : le contenu doit correspondre à l'extension.
+const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const BG_KIND_OF_EXT = { '.jpg': 'jpeg', '.jpeg': 'jpeg', '.png': 'png', '.webp': 'webp', '.heic': 'heic' };
+function bgKind(buf) {
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpeg';
+  if (buf.length >= 8 && buf.subarray(0, 8).equals(PNG_SIG)) return 'png';
+  if (buf.length >= 12 && buf.toString('latin1', 0, 4) === 'RIFF' && buf.toString('latin1', 8, 12) === 'WEBP') return 'webp';
+  if (buf.length >= 12 && buf.toString('latin1', 4, 8) === 'ftyp' && ['heic', 'heix', 'mif1', 'msf1'].includes(buf.toString('latin1', 8, 12))) return 'heic';
+  return null;
+}
+
+// set-background <chemin|default> : l'image est copiée dans backgrounds/ (nom = sha1 court + extension).
+function setBackground(arg) {
+  const value = String(arg ?? '');
+  if (value === '') fail('chemin de l\'image attendu, ou « default » pour revenir au fond du thème.');
+  const prev = (readConfig() || {}).background;
+  if (value === 'default') {
+    writeConfig({ background: null });
+    return { ok: true, background: null, removed: dropOldBackground(prev, null) };
+  }
+  const src = path.resolve(expandHome(value));
+  const ext = path.extname(src).toLowerCase();
+  if (!BG_EXT.includes(ext)) fail(`format refusé (${ext || 'sans extension'}) : jpg, jpeg, png, heic ou webp attendu.`);
+  let st;
+  try { st = fs.lstatSync(src); } catch { fail(`fichier introuvable : ${src}`); }
+  if (st.isSymbolicLink()) fail(`lien symbolique refusé : ${src}. Indiquez le fichier réel.`);
+  if (!st.isFile()) fail(`fichier attendu, pas un dossier : ${src}`);
+  if (st.size > BG_MAX_BYTES) fail('image trop lourde : 50 Mo maximum.');
+  const buf = fs.readFileSync(src);
+  if (bgKind(buf) !== BG_KIND_OF_EXT[ext]) fail(`contenu incohérent avec l'extension ${ext} : ce fichier n'est pas une image ${BG_KIND_OF_EXT[ext].toUpperCase()} valide.`);
+  const dir = paths.backgrounds();
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
+  const dest = path.join(dir, crypto.createHash('sha1').update(buf).digest('hex').slice(0, 12) + ext);
+  // écriture dans un fichier temporaire puis rename : un lien symbolique déjà présent à ce nom est remplacé, jamais suivi
+  const tmp = `${dest}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, buf, { mode: 0o600, flag: 'wx' });
+  fs.renameSync(tmp, dest);
+  writeConfig({ background: dest });
+  return { ok: true, background: dest, removed: dropOldBackground(prev, dest) };
+}
+
 // ── Dispatch CLI ─────────────────────────────────────────────────────────
 const USAGE = [
   'node setup.js detect',
   'node setup.js write-config <json|->',
+  'node setup.js themes',
+  'node setup.js set-theme <id>',
+  'node setup.js set-background <chemin|default>',
   'node setup.js geocode <ville>',
   'node setup.js install-files <srcdir>',
   'node setup.js npm-install [node]',
@@ -969,6 +1097,9 @@ async function main(argv) {
       return { ok: true, usage: USAGE };
     case 'detect': return detect();
     case 'write-config': return writeConfig(parseJsonArg(a1));
+    case 'themes': return themesInfo();
+    case 'set-theme': return setTheme(a1);
+    case 'set-background': return setBackground(a1);
     case 'geocode': return geocode(readArg(a1));
     case 'install-files': return installFiles(readArg(a1));
     case 'npm-install': return npmInstall(a1 || null);
