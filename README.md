@@ -72,6 +72,7 @@ The assistant has ten steps. Steps 3 to 6 are optional, and nothing is changed u
 The Dojo icon in the menu bar gives you the options listed in [Features](#features), plus:
 
 - **Thème**: chooses one of the [themes](#themes), or a custom background (**Choisir un fond…**).
+- **Fonds**, **Fond suivant** (⌘→) and **Fonds d'écran…**: switch wallpaper within the active theme, or browse the gallery. See [Wallpapers](#wallpapers).
 - **Réglages…** (⌘,): reopens the assistant to change your choices.
 - **Désinstaller…**: removes Dojo. See [Uninstall](#uninstall).
 - **Quitter le Dojo**: quits the app.
@@ -103,7 +104,7 @@ This writes `dist/DojoWallpaper.app` (universal binary, minimum macOS 12.0) and 
 - **Menu bar icon** to toggle interactive mode, reload the page, mirror the layout, change the size, choose a theme or a custom background (**Thème**), open the assistant (Réglages…), uninstall, or quit.
 - **Private by default**: the local agent listens on `127.0.0.1` only and rejects requests from other origins (protection against CSRF and DNS rebinding), so a web page open in your browser cannot read your data or trigger actions. Every panel that needs the network is optional.
 
-**Language and artwork**: the wallpaper labels are in French for now, and each theme has its own. Pull requests that add translations (i18n) are welcome. The artwork is original and drawn by code, except the Naruto background, which is third-party fan art included as a demo. To use your own picture, see [Use your own background](#use-your-own-background).
+**Language and artwork**: the wallpaper labels are in French for now, and each theme has its own. Pull requests that add translations (i18n) are welcome. The built-in artwork is original and drawn by code, except the Naruto background, which is third-party fan art included as a demo. The wallpaper gallery downloads third-party pictures from Wallhaven, see [Wallpapers](#wallpapers). To use your own picture, see [Use your own background](#use-your-own-background).
 
 ## Themes
 
@@ -225,6 +226,68 @@ To add a theme, follow these steps:
 
 The installer and the assistant copy `src/themes/` to `~/.config/claude-dojo/themes/`, so run `./install.sh` again, or apply the assistant, to get a new theme. After you edit a theme's files, choose **Reload** in the menu bar icon.
 
+## Wallpapers
+
+<p align="center">
+  <img src="docs/screenshots/gallery.webp" alt="The wallpaper gallery window: the Selection tab with a grid of thumbnails for the active theme" width="720">
+</p>
+
+*The wallpaper gallery: real wallpapers from Wallhaven for the active theme.*
+
+Each theme has a curated pack of wallpapers from [Wallhaven](https://wallhaven.cc). The repository stores only the Wallhaven ids of each pack, in the `wallpapers` field of `src/themes/<id>/theme.json`. The Wallhaven images themselves are not part of the repository or the DMG.
+
+- **Safe for work only**: searches ask Wallhaven for SFW content only, and an image that is not SFW is refused.
+- **The theme's own background stays available**: it is listed first for Naruto and last for the other themes.
+- **Offline**: when Wallhaven cannot be reached, the download stops and what was already downloaded is kept. Without a downloaded wallpaper, the theme's own background is used.
+
+### Automatic download
+
+<p align="center">
+  <img src="docs/screenshots/theme-wallpapers.webp" alt="The Theme step of the setup assistant: the wallpaper strip of the active theme, with the download progress" width="360">
+</p>
+
+*The Theme step: the wallpaper strip of the active theme, with the download progress.*
+
+- At launch, and when you switch theme, the pack of the active theme is downloaded in the background. Only the missing images are downloaded, and the theme's default wallpaper comes first.
+- Requests are spaced one second apart.
+- The progress is shown in the **Fonds** menu (for example `Téléchargement… 5/18`) and in the Theme step of the setup assistant. A failed download is reported there, in a short message.
+- The default wallpaper is applied as soon as it is downloaded, if that theme is active, no background has been chosen for it, and the current background is not a picture you added yourself.
+- This version has no option to turn the automatic download off.
+
+### Rights and sources
+
+- These are third-party pictures from Wallhaven, not the original drawings included with each theme. They may show characters from the franchises of the themes, and claude-dojo is not affiliated with their rights holders.
+- Each image belongs to its author, and the gallery footer says so. The images stay on your Mac, in `~/.config/claude-dojo/backgrounds/<theme>/`, readable by you only.
+- The source of each image (its Wallhaven page, where the author is credited) is kept in `~/.config/claude-dojo/backgrounds/index.json`. **Ouvrir la source** opens that page in your browser.
+- Check the author's terms on the source page before you use an image outside your desktop.
+
+### Change the wallpaper
+
+- **Menu bar, Fonds**: lists the wallpapers of the active theme, the theme's own background included. The one in use has a check mark, and clicking another one applies it.
+- **Menu bar, Fond suivant** (⌘→): moves to the next wallpaper of the active theme, and starts again after the last one.
+- **Menu bar, Fonds d'écran…**: opens the gallery window, with three tabs. **Sélection** shows the curated pack, **Plus** shows more Wallhaven results for the theme, page by page, and **Téléchargés** shows the wallpapers on your Mac. Clicking a thumbnail downloads the wallpaper if needed, then applies it.
+- **Réglages…** (⌘,), Theme step, **Changer de fond automatiquement**: changes the wallpaper every 30 minutes, every hour, every day, or never. It uses the same list as Fond suivant. The setting is kept in the app's preferences, not in `config.json`.
+- **Terminal**: `node ~/.config/claude-dojo/setup.js wallpapers <command>` prints JSON.
+
+| Command | What it does |
+|---|---|
+| `list <theme>` | Shows the curated pack, with the details from Wallhaven |
+| `search <theme> [page]` | Shows the Wallhaven results for the theme, page by page |
+| `download <id> [theme]` | Downloads one wallpaper |
+| `sync [theme]` | Downloads the missing images of the pack |
+| `progress <theme>` | Shows the progress of the current download |
+| `use <id> [theme]` | Applies a downloaded wallpaper, by its Wallhaven id |
+| `use <file>` | Applies a file from the gallery, or a picture of your own, which is copied as with `set-background` |
+| `use theme` | Applies the theme's own background (`use bundled` does the same) |
+| `next` | Applies the next wallpaper of the active theme |
+| `local <theme>` | Lists the wallpapers on your Mac, the theme's own background included |
+
+Each theme remembers its background in the `backgroundByTheme` key of [config.json](#configuration), so switching theme brings back the background you chose for it.
+
+### Network
+
+The gallery talks only to `wallhaven.cc` (search and API), `w.wallhaven.cc` (full images) and `th.wallhaven.cc` (thumbnails), over HTTPS. The requests are public: there is no account and no API key. They carry the theme's search terms, wallpaper ids and page numbers, and the header `User-Agent: claude-dojo/<version>`, which Wallhaven requires. Apart from these requests, which show your IP address to Wallhaven as any website does, nothing about you is sent. The full list is in [Outgoing network requests](#outgoing-network-requests).
+
 ## Gallery
 
 <p align="center">
@@ -325,6 +388,7 @@ The file is `~/.config/claude-dojo/config.json`. Every block is optional. Withou
 |---|---|
 | `theme` | Id of the [theme](#themes): `naruto` (default), `stargate-sg1`, `demon-slayer`, `frieren`, `one-piece`, `my-hero-academia`, `jujutsu-kaisen` or `mushoku-tensei` |
 | `background` | Path of a [custom background](#use-your-own-background), copied to `~/.config/claude-dojo/backgrounds/`. `null` (default) uses the background of the theme |
+| `backgroundByTheme` | Background remembered for each theme: a theme id mapped to the path of a wallpaper, or to `theme` for the theme's own background. Written by the [gallery](#wallpapers) and by `wallpapers use` |
 | `weather.name` | City label shown in the weather panel |
 | `weather.lat`, `weather.lon` | City coordinates |
 | `weather.timezone` | IANA time zone, for example `Europe/Paris` |
@@ -358,13 +422,14 @@ Example (placeholder values, replace them and delete the blocks you do not use):
 
 - **Claude Code sessions**: the hooks write the state of each session to `~/.claude/dojo/`. The status line writes the model, effort and quota data to `~/.claude/dojo/status/`.
 - **Custom background**: a picture you choose with **Choose a background…** or `set-background` is copied to `~/.config/claude-dojo/backgrounds/`.
+- **Wallpaper gallery**: the wallpapers you download are kept in `~/.config/claude-dojo/backgrounds/<theme>/`, readable by you only. Their sources are listed in `~/.config/claude-dojo/backgrounds/index.json`.
 - **Transcripts**: the collector reads `~/.claude/projects` and `~/.codex/sessions` to compute usage and costs. The results are cached in `~/.config/claude-dojo/cache/`.
 - **Claude quota**: read-only, from `~/.claude/.credentials.json` or, if that file does not exist, from the macOS Keychain item `Claude Code-credentials`. Nothing is copied or written elsewhere.
 - **Costs**: estimated locally from the public API prices in the collector. They are converted to euros with the exchange rate below.
 
 ### Outgoing network requests
 
-These are the only network destinations used by the collector:
+These are the only network destinations used by the collector and the wallpaper gallery:
 
 | Destination | Frequency | What is sent |
 |---|---|---|
@@ -374,6 +439,7 @@ These are the only network destinations used by the collector:
 | `api.anthropic.com` | Quota every 5 min | Your Claude Code OAuth token, to read subscription quotas. This endpoint is undocumented: if it fails, the panel falls back to the quota data from the status line |
 | `api.frankfurter.app` | Every 6 hours | A USD to EUR exchange rate request. No personal data |
 | `sentry.io` (only if configured) | Every 5 min | Your Sentry token |
+| `wallhaven.cc`, `w.wallhaven.cc`, `th.wallhaven.cc` (see [Wallpapers](#wallpapers)) | Pack at launch and on theme change, one request per second. Gallery when you open or search it | Public requests: search terms, wallpaper ids and page numbers, with the `User-Agent: claude-dojo/<version>` header. No account, no API key |
 
 Links clicked in the wallpaper open in your default browser.
 
@@ -475,6 +541,8 @@ Installation : téléchargez `ClaudeDojo-<version>.dmg` depuis la page [Releases
 
 Installation depuis les sources (développeurs) : `git clone https://github.com/gtko/claude-dojo.git && cd claude-dojo && ./install.sh` (Node 18 ou plus et Xcode Command Line Tools requis).
 
-Les sections en anglais détaillent tout : [Install](#install), [Requirements](#requirements), [What the installer does and asks](#what-the-installer-does-and-asks), [Configuration](#configuration), [Themes](#themes), [Uninstall](#uninstall) et [Troubleshooting](#troubleshooting).
+Fonds d'écran : chaque thème propose une galerie de vrais fonds [Wallhaven](https://wallhaven.cc), en contenu SFW uniquement. Ils sont téléchargés en arrière-plan et restent sur votre Mac, avec la source de chaque image. Hors ligne et sans fond téléchargé, c'est le fond du thème qui s'affiche. Le menu **Fonds** permet de les changer.
+
+Les sections en anglais détaillent tout : [Install](#install), [Requirements](#requirements), [What the installer does and asks](#what-the-installer-does-and-asks), [Configuration](#configuration), [Themes](#themes), [Wallpapers](#wallpapers), [Uninstall](#uninstall) et [Troubleshooting](#troubleshooting).
 
 Ne publiez jamais `~/.config/claude-dojo/config.json` : il peut contenir des URL de calendrier privées et des tokens.

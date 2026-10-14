@@ -16,6 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup commands: `themes`, `set-theme <id>` and `set-background <path|default>` in `src/setup.js`.
 - Menu bar: a Theme menu to choose a theme or a custom background.
 - Setup assistant: a Theme step.
+- Wallpaper gallery: real Wallhaven wallpapers curated for each theme (the `wallpapers` field of `theme.json`, which stores only the Wallhaven ids). SFW only: searches request safe-for-work content and an image that is not SFW is refused. The window **Fonds d'écran…** has three tabs: Sélection, Plus (more Wallhaven results, page by page) and Téléchargés. Each image links to its Wallhaven page with **Ouvrir la source**.
+- Automatic download: the pack of the active theme is downloaded in the background at launch and when the theme changes, the default wallpaper first, with one request per second. Only missing images are downloaded. Offline, the download stops and what is already downloaded is kept.
+- Menu bar: a **Fonds** submenu lists the wallpapers of the active theme and shows the download progress, with **Fond suivant** (⌘→) and **Fonds d'écran…**.
+- Rotation: **Changer de fond automatiquement** in the Theme step of the assistant (never, every 30 minutes, every hour or every day). The setting is stored in the app's preferences.
+- Sources: each downloaded wallpaper is recorded with its Wallhaven page and resolution in `backgrounds/index.json`.
+- Setup commands: `wallpapers list`, `search`, `download`, `sync`, `progress`, `use`, `next` and `local` in `src/setup.js`.
+- Setup assistant: the Theme step shows the wallpaper strip of the active theme, with the download progress.
+
+### Changed
+
+- Backgrounds are remembered per theme in `backgroundByTheme` (`config.json`). Switching theme brings back the background chosen for that theme.
+- Each theme has a default wallpaper (`wallpapers.default` in `theme.json`). It is applied once downloaded, when that theme is active, no background has been chosen for it, and the current background is not a picture the user added.
+- `/custom-bg` also serves a background stored in one subfolder per theme (`backgrounds/<theme>/`). Symbolic links are refused.
 
 ## [0.1.0] - 2026-10-14
 
