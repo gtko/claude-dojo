@@ -11,10 +11,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
 
@@ -25,20 +25,72 @@ jobs:
         run: brew install shellcheck
 
       - name: Lint shell scripts
-        run: shellcheck -S warning install.sh uninstall.sh
+        run: shellcheck -S warning install.sh uninstall.sh scripts/build-app.sh
 
       - name: Syntax check Node.js runtime
         run: |
-          for f in src/*.js; do node --check "$f"; done
+          # node --check only checks its first file argument, so loop over every file.
+          for f in src/*.js scripts/*.cjs; do node --check "$f"; done
 
-      - name: Compile the wallpaper host
-        run: swiftc -O mac/DojoWallpaper.swift -o /tmp/DojoWallpaper -framework Cocoa -framework WebKit
+      - name: Scan for personal terms
+        # Runs before the build steps so that dist/ and build/ are not scanned.
+        run: |
+          pattern='gtko|grego|mus-inn|Minzac|CascadeProjects|dotworld|mediamodifier|hermes'
+          # The repository URL is allowed: remove it before matching.
+          hits="$(grep -rniaE "$pattern" --exclude-dir=.git --exclude=ci.yml . \
+            | sed -E 's#gtko/claude-dojo##g' \
+            | grep -iaE "$pattern" || true)"
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "Personal terms found outside the repository URL." >&2
+            exit 1
+          fi
+          echo "No personal terms found."
+
+      - name: Unit tests (setup.js)
+        run: node --test test/
+
+      - name: Build DojoWallpaper.app (universal, no DMG)
+        run: ./scripts/build-app.sh --no-dmg --version 0.0.0-ci
+
+      - name: Verify DojoWallpaper.app
+        run: |
+          set -euo pipefail
+          app="dist/DojoWallpaper.app"
+          bin="$app/Contents/MacOS/DojoWallpaper"
+
+          archs="$(lipo -archs "$bin")"
+          echo "Architectures: $archs"
+          for arch in x86_64 arm64; do
+            case " $archs " in
+              *" $arch "*) ;;
+              *) echo "Missing $arch slice in $bin" >&2; exit 1 ;;
+            esac
+          done
+
+          codesign --verify --deep --strict "$app"
+          echo "Code signature OK"
+
+          want="$(wc -w <<< "$archs" | tr -d ' ')"
+          vtool -show-build "$bin" | awk -v want="$want" '
+            $1 == "minos" { seen++; if ($2 != "12.0") bad++ }
+            END {
+              printf "minos: %d slice(s), %d not 12.0\n", seen, bad + 0
+              exit (seen == want && bad == 0) ? 0 : 1
+            }'
+
+      - name: Build ClaudeDojo DMG and verify it
+        run: |
+          set -euo pipefail
+          ./scripts/build-app.sh --version 0.0.0-ci
+          hdiutil verify "dist/ClaudeDojo-0.0.0-ci.dmg"
 
       - name: Install, reinstall and uninstall in a temporary HOME
         shell: bash
         run: |
           set -euo pipefail
-          export HOME="$(mktemp -d)"
+          HOME="$(mktemp -d)"
+          export HOME
           echo "Temporary HOME: $HOME"
 
           CHECK="${RUNNER_TEMP:-/tmp}/check-install.js"
@@ -90,17 +142,3 @@ jobs:
           echo "Reinstall kept $second claude-dojo hook(s), no duplicates."
 
           ./uninstall.sh --yes --no-launchd --purge
-
-      - name: Scan for personal terms
-        run: |
-          pattern='gtko|grego|mus-inn|Minzac|CascadeProjects|dotworld|mediamodifier|hermes'
-          # The repository URL is allowed: remove it before matching.
-          hits="$(grep -rniaE "$pattern" --exclude-dir=.git --exclude=ci.yml . \
-            | sed -E 's#gtko/claude-dojo##g' \
-            | grep -iaE "$pattern" || true)"
-          if [ -n "$hits" ]; then
-            echo "$hits"
-            echo "Personal terms found outside the repository URL." >&2
-            exit 1
-          fi
-          echo "No personal terms found."

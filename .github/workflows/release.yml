@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build the macOS app and publish the DMG
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+
+      - name: Build DojoWallpaper.app and ClaudeDojo DMG
+        run: ./scripts/build-app.sh --version "${GITHUB_REF_NAME#v}"
+
+      - name: Verify DMG
+        run: hdiutil verify "dist/ClaudeDojo-${GITHUB_REF_NAME#v}.dmg"
+
+      - name: Write SHA-256 checksum
+        run: |
+          set -euo pipefail
+          dmg="ClaudeDojo-${GITHUB_REF_NAME#v}.dmg"
+          cd dist
+          shasum -a 256 "$dmg" > "$dmg.sha256"
+          shasum -a 256 -c "$dmg.sha256"
+
+      - name: Resolve version
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish DMG and its checksum to the GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          files: |
+            dist/ClaudeDojo-${{ steps.version.outputs.value }}.dmg
+            dist/ClaudeDojo-${{ steps.version.outputs.value }}.dmg.sha256
+          generate_release_notes: true

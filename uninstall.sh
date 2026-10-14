@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # Claude Dojo : désinstallation (LaunchAgents, app, entrées dojo de settings.json).
+# Mince wrapper : les questions restent ici, toute la logique est dans src/setup.js.
 # Ne retire que ce que install.sh a ajouté. Usage : ./uninstall.sh [--yes] [--no-launchd] [--purge]
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SETUP="$SCRIPT_DIR/src/setup.js"
 DOJO="$HOME/.config/claude-dojo"
 APP="$HOME/Applications/DojoWallpaper.app"
-LA="$HOME/Library/LaunchAgents"
-CLAUDE_DIR="$HOME/.claude"
-SETTINGS="$CLAUDE_DIR/settings.json"
-STATE_DIR="$CLAUDE_DIR/dojo"
-STAMP="$(date +%Y%m%d-%H%M%S)"
+SETTINGS="$HOME/.claude/settings.json"
+STATE_DIR="$HOME/.claude/dojo"
+export DOJO_DETECT_NO_GH_AUTH=1
+
+NODE=""
 
 say()  { printf '==> %s\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
@@ -30,6 +33,7 @@ Les autres hooks, réglages et plugins ne sont jamais modifiés.
 TXT
 }
 
+# ── Options ──────────────────────────────────────────────────────────────
 YES=0
 NO_LAUNCHD=0
 PURGE=0
@@ -66,7 +70,7 @@ node_ok() {
   [ -n "${1:-}" ] && [ -x "$1" ] && "$1" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 18 ? 0 : 1)' >/dev/null 2>&1
 }
 
-# Node 18+ : mêmes emplacements que install.sh (PATH, Homebrew, volta, fnm, nvm).
+# Seul moyen de lancer setup.js : trouver un node 18+ (mêmes emplacements que install.sh).
 find_node() {
   local c list
   c="$(command -v node 2>/dev/null || true)"
@@ -88,6 +92,28 @@ EOF
   return 1
 }
 
+# Champ d'une réponse JSON de setup.js : json_field <json> <expression sur d> (vide si null ou absent).
+json_field() {
+  printf '%s' "$1" | "$NODE" -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));const v=($2);process.stdout.write(v==null?'':(typeof v==='object'?JSON.stringify(v):String(v)))"
+}
+
+# Options JSON à partir de paires clé=valeur (true et false reconnus, le reste en texte).
+kv_json() {
+  "$NODE" -e 'const o={};for(const a of process.argv.slice(1)){const i=a.indexOf("=");const k=a.slice(0,i);const v=a.slice(i+1);o[k]=v==="true"?true:v==="false"?false:v;}process.stdout.write(JSON.stringify(o))' "$@"
+}
+
+bool() { if [ "$1" = 1 ]; then printf true; else printf false; fi; }
+
+# Lance setup.js, renvoie sa réponse JSON. Erreur : arrête avec le message de setup.js.
+setup() {
+  local out err
+  if ! out="$("$NODE" "$SETUP" "$@")"; then
+    err="$(json_field "$out" 'd.error' 2>/dev/null || true)"
+    die "${err:-setup.js a échoué ($1)}"
+  fi
+  printf '%s' "$out"
+}
+
 [ "$(uname -s)" = Darwin ] || die "Claude Dojo ne s'installe que sur macOS, rien à désinstaller ici."
 
 if [ "$YES" = 0 ] && [ "$INTERACTIVE" = 1 ]; then
@@ -97,145 +123,73 @@ if [ "$YES" = 0 ] && [ "$INTERACTIVE" = 1 ]; then
   fi
 fi
 
-# ── 1. LaunchAgents ──────────────────────────────────────────────────────
+NODE_BIN="$(find_node || true)"
+if [ -z "$NODE_BIN" ]; then
+  die "Node.js 18 ou plus est introuvable : setup.js ne peut pas tourner. Installe node (brew install node), puis relance."
+fi
+NODE="$(cd "$(dirname "$NODE_BIN")" && pwd -P)/$(basename "$NODE_BIN")"
+
+# Questions : config.json (si présent, sans --purge) et états de session
+DROP_CFG=$PURGE
+if [ -d "$DOJO" ] && [ "$PURGE" = 0 ]; then
+  if ask_yn "Supprimer $DOJO (config.json avec tes réglages, cache) ?" n; then DROP_CFG=1; fi
+fi
+DROP_STATES=0
+if [ -d "$STATE_DIR" ]; then
+  if ask_yn "Supprimer les états de session $STATE_DIR (utilisés par le fond d'écran) ?" n; then DROP_STATES=1; fi
+fi
+
+# ── Désinstallation (setup.js : LaunchAgents, app, settings.json, config, états) ──
+OUT="$(setup uninstall "$(kv_json noLaunchd="$(bool "$NO_LAUNCHD")" purge="$(bool "$DROP_CFG")" states="$(bool "$DROP_STATES")")")"
+
 say "LaunchAgents"
-UIDN="$(id -u)"
 if [ "$NO_LAUNCHD" = 1 ]; then
   info "--no-launchd : launchd n'est pas touché (les plists restent en place)."
 else
-  for label in io.github.claude-dojo.agent io.github.claude-dojo.wallpaper; do
-    launchctl bootout "gui/$UIDN/$label" 2>/dev/null || true
-  done
-  # Labels actuels et anciens (com.<auteur>.claude-dojo.*) uniquement : pas de glob *claude-dojo*.
-  for p in "$LA/io.github.claude-dojo.agent.plist" "$LA/io.github.claude-dojo.wallpaper.plist" "$LA"/com.*.claude-dojo.agent.plist "$LA"/com.*.claude-dojo.wallpaper.plist; do
-    [ -e "$p" ] || continue
-    name="$(basename "$p" .plist)"
-    launchctl bootout "gui/$UIDN/$name" 2>/dev/null || true
-    rm -f "$p"
-    info "déchargé et supprimé : $name"
-  done
+  while IFS= read -r name; do
+    [ -n "$name" ] && info "déchargé et supprimé : $name"
+  done <<EOF
+$(json_field "$OUT" 'd.launchAgents.removed.join("\n")')
+EOF
 fi
 
-# ── 2. Application ───────────────────────────────────────────────────────
 say "Application"
-if [ -e "$APP" ]; then
-  rm -rf "${APP:?}"
-  info "supprimée : $APP"
+REMOVED_APPS="$(json_field "$OUT" 'd.appRemoved.join("\n")')"
+if [ -n "$REMOVED_APPS" ]; then
+  while IFS= read -r p; do
+    [ -n "$p" ] && info "supprimée : $p"
+  done <<EOF
+$REMOVED_APPS
+EOF
 else
   info "absente : $APP"
 fi
-
-# ── 3. settings.json (entrées dojo uniquement) ───────────────────────────
-say "Claude Code : settings.json"
-NODE_BIN="$(find_node || true)"
-if [ -z "$NODE_BIN" ]; then
-  warn "node introuvable : settings.json non modifié. Retire à la main les entrées claude-dojo, ou relance avec node installé."
-elif [ ! -f "$SETTINGS" ]; then
-  info "absent : rien à retirer"
-else
-  NODE="$(cd "$(dirname "$NODE_BIN")" && pwd -P)/$(basename "$NODE_BIN")"
-  clean_settings() {
-    "$NODE" - "$SETTINGS" "$STAMP" <<'JS'
-const fs = require('fs');
-const path = require('path');
-const [file, stamp] = process.argv.slice(2);
-const RE = {
-  hook: /claude-dojo\/hook\.js/,
-  heavy: /claude-dojo\/heavy-gate\.js/,
-  statusline: /claude-dojo\/statusline\.js/,
-};
-const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
-const cmdOf = (h) => [h.command, ...(Array.isArray(h.args) ? h.args : [])].join(' ');
-const isDojo = (h, re) => isObj(h) && re.test(cmdOf(h));
-
-let before;
-let s;
-try {
-  before = fs.readFileSync(file, 'utf8');
-  s = before.trim() === '' ? {} : JSON.parse(before);
-} catch (e) {
-  console.error(file + ' : JSON invalide (' + e.message + ')');
-  process.exit(2);
-}
-if (!isObj(s)) { console.error(file + ' : un objet JSON est attendu'); process.exit(2); }
-
-let touched = false;
-let heavyRemoved = false;
-if (isObj(s.hooks)) {
-  for (const ev of Object.keys(s.hooks)) {
-    const list = s.hooks[ev];
-    if (!Array.isArray(list)) continue;
-    let evTouched = false;
-    const out = [];
-    for (const g of list) {
-      if (!isObj(g) || !Array.isArray(g.hooks)) { out.push(g); continue; }
-      const kept = g.hooks.filter((h) => {
-        if (isDojo(h, RE.heavy)) { heavyRemoved = true; return false; }
-        return !isDojo(h, RE.hook);
-      });
-      if (kept.length === g.hooks.length) { out.push(g); continue; }
-      evTouched = true;
-      if (kept.length) out.push({ ...g, hooks: kept });
-    }
-    if (evTouched) {
-      touched = true;
-      if (out.length) s.hooks[ev] = out; else delete s.hooks[ev];
-    }
-  }
-  if (touched && Object.keys(s.hooks).length === 0) delete s.hooks;
-}
-if (isDojo(s.statusLine, RE.statusline)) { delete s.statusLine; touched = true; }
-// VITEST_MAX_WORKERS n'est retiré que s'il vaut "2" et que heavy-gate dojo vient d'être retiré
-if (heavyRemoved && isObj(s.env) && s.env.VITEST_MAX_WORKERS === '2') {
-  delete s.env.VITEST_MAX_WORKERS;
-  touched = true;
-  if (Object.keys(s.env).length === 0) delete s.env;
-}
-
-if (!touched) { console.log('RESULT:unchanged'); process.exit(0); }
-const bak = file + '.bak-' + stamp;
-fs.copyFileSync(file, bak);
-console.log('BACKUP:' + bak);
-fs.writeFileSync(file, JSON.stringify(s, null, 2) + '\n');
-console.log('RESULT:updated');
-JS
-  }
-  if OUT="$(clean_settings)"; then
-    case "$OUT" in
-      *RESULT:updated*) info "entrées dojo retirées (hooks, statusline, heavy-gate si présent)" ;;
-      *) info "aucune entrée dojo : fichier inchangé, aucune sauvegarde" ;;
-    esac
-    case "$OUT" in
-      *BACKUP:*) info "sauvegarde : $(printf '%s\n' "$OUT" | sed -n 's/^BACKUP://p')" ;;
-    esac
-  else
-    warn "settings.json illisible ou invalide : laissé tel quel."
-  fi
+REMAINING_APP="$(json_field "$OUT" 'd.appRemaining')"
+if [ -n "$REMAINING_APP" ]; then
+  warn "DojoWallpaper.app non retiré (dossier non inscriptible) : $REMAINING_APP. Glisse-le dans la Corbeille."
 fi
 
-# ── 4. Configuration et états ────────────────────────────────────────────
+say "Claude Code : settings.json"
+if [ "$(json_field "$OUT" 'd.settings.error' 2>/dev/null || true)" != "" ]; then
+  warn "settings.json illisible ou invalide : laissé tel quel."
+elif [ ! -f "$SETTINGS" ]; then
+  info "absent : rien à retirer"
+elif [ "$(json_field "$OUT" 'd.settings.changed')" = true ]; then
+  info "entrées dojo retirées (hooks, statusline, heavy-gate si présent)"
+  BACKUP="$(json_field "$OUT" 'd.settings.backup' 2>/dev/null || true)"
+  [ -z "$BACKUP" ] || info "sauvegarde : $BACKUP"
+else
+  info "aucune entrée dojo : fichier inchangé, aucune sauvegarde"
+fi
+
 say "Configuration"
-if [ -d "$DOJO" ]; then
-  if [ "$PURGE" = 1 ]; then
-    rm -rf "${DOJO:?}"
-    info "supprimée (--purge) : $DOJO"
-  elif ask_yn "Supprimer $DOJO (config.json avec tes réglages, cache) ?" n; then
-    rm -rf "${DOJO:?}"
-    info "supprimée : $DOJO"
-  else
-    info "conservée : $DOJO (relance avec --purge pour la supprimer)"
-  fi
+if [ "$(json_field "$OUT" 'd.config.existed')" = true ]; then
+  if [ "$DROP_CFG" = 1 ]; then info "supprimée : $DOJO"; else info "conservée : $DOJO (relance avec --purge pour la supprimer)"; fi
 else
   info "absente : $DOJO"
 fi
-
 if [ -d "$STATE_DIR" ]; then
-  if ask_yn "Supprimer les états de session $STATE_DIR (utilisés par le fond d'écran) ?" n; then
-    rm -rf "${STATE_DIR:?}"
-    info "supprimés : $STATE_DIR"
-  else
-    info "conservés : $STATE_DIR"
-  fi
+  if [ "$DROP_STATES" = 1 ]; then info "supprimés : $STATE_DIR"; else info "conservés : $STATE_DIR"; fi
 fi
 
 say "Claude Dojo est désinstallé"

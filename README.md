@@ -12,6 +12,85 @@
 
 An animated macOS desktop wallpaper that shows every active Claude Code session as a ninja, surrounded by live panels for your system, GitHub, local projects, AI usage and quotas.
 
+## Install
+
+### 1. Get the app
+
+1. Download `ClaudeDojo-<version>.dmg` from the [Releases page](https://github.com/gtko/claude-dojo/releases).
+2. Open the disk image and drag **DojoWallpaper.app** into **Applications**.
+
+### 2. Open it for the first time
+
+The app is ad hoc signed but not notarized by Apple, so Gatekeeper blocks its first launch. Use one of these two ways:
+
+- Open **System Settings › Privacy & Security**, click **Open Anyway** (« Ouvrir quand même ») next to the message about DojoWallpaper, and confirm.
+- Or run this in Terminal:
+
+  ```sh
+  xattr -dr com.apple.quarantine /Applications/DojoWallpaper.app
+  ```
+
+Then open DojoWallpaper from Applications. On the first launch, the setup assistant opens.
+
+### 3. Follow the setup assistant
+
+The assistant has nine steps. Steps 3 to 6 are optional, and nothing is changed until you click **Apply** on the last step.
+
+1. **Welcome**: what the assistant sets up.
+2. **Dependencies**: checks for Node.js 18 or later, which is required. `macmon` and `media-control` are optional, and missing ones can be installed with Homebrew from this step. `gh` is optional; it needs `gh auth login` in a terminal.
+3. **Weather**: search for your city. Its coordinates and time zone are used for the forecast on the wallpaper.
+4. **GitHub**: the accounts or organizations whose repositories Dojo follows.
+5. **Projects**: the folders where Dojo looks for Git repositories. Leave it empty to use the usual locations.
+6. **Calendars**: the ICS or webcal addresses of your calendars.
+7. **Claude Code**: the hooks, the status line, and the optional heavy-gate and `VITEST_MAX_WORKERS` settings. The changes to `~/.claude/settings.json` are shown before anything is written.
+8. **Automatic start**: starts Dojo at login. No administrator rights are needed.
+9. **Done**: a summary of your choices. Click **Apply** to make the changes.
+
+<p align="center">
+  <img src="docs/screenshots/setup-01-welcome.webp" alt="Setup assistant, step 1: welcome" width="360">
+  <img src="docs/screenshots/setup-02-dependencies.webp" alt="Setup assistant, step 2: dependencies" width="360">
+  <br>
+  <img src="docs/screenshots/setup-04-github.webp" alt="Setup assistant, step 4: GitHub accounts and organizations" width="360">
+  <img src="docs/screenshots/setup-05-projects.webp" alt="Setup assistant, step 5: project folders" width="360">
+  <br>
+  <img src="docs/screenshots/setup-07-claude.webp" alt="Setup assistant, step 7: Claude Code settings preview" width="360">
+</p>
+
+*Steps 1, 2, 4, 5 and 7 of the setup assistant, with sample data.*
+
+### What the assistant changes
+
+- `~/.config/claude-dojo/`: the Dojo files, the `config.json` file (mode `0600`, because it can contain private URLs), and the cache.
+- `~/Library/LaunchAgents/`: `io.github.claude-dojo.agent` (local agent and collector) and `io.github.claude-dojo.wallpaper` (wallpaper app), which start at login.
+- `~/.claude/settings.json`: the six Dojo hooks, the status line according to your choice (keep yours, replace it, or leave it alone), and, if you choose them, heavy-gate and `VITEST_MAX_WORKERS=2` in the `env` block, unless that variable is already set. `model`, `effort`, `plugins` and `permissions` are never touched. Before any change, the file is copied to `settings.json.bak-<timestamp>`.
+
+**Keep DojoWallpaper.app where it is.** The LaunchAgent records the app's path when you apply the assistant (`/Applications` after a DMG install). If you move or delete the app, the automatic start stops working.
+
+### Menu bar
+
+The Dojo icon in the menu bar gives you the options listed in [Features](#features), plus:
+
+- **Réglages…** (⌘,): reopens the assistant to change your choices.
+- **Désinstaller…**: removes Dojo. See [Uninstall](#uninstall).
+- **Quitter le Dojo**: quits the app.
+
+### From source (developers)
+
+```sh
+git clone https://github.com/gtko/claude-dojo.git && cd claude-dojo
+./install.sh
+```
+
+The installer compiles the app into `~/Applications/DojoWallpaper.app` and asks the questions described in [What the installer does and asks](#what-the-installer-does-and-asks). Once it has finished, the Dojo runs from `~/.config/claude-dojo`, so the clone is not needed to run it. Keep the clone if you want to uninstall later, since `./uninstall.sh` is run from the repository.
+
+To build the app and the DMG yourself:
+
+```sh
+./scripts/build-app.sh --version 1.0.0
+```
+
+This writes `dist/DojoWallpaper.app` (universal binary, minimum macOS 12.0) and `dist/ClaudeDojo-1.0.0.dmg`. `--no-dmg` builds only the app, `--out DIR` changes the output folder, and `--version` sets the version (the default is `git describe --tags --always`). The build needs the Xcode Command Line Tools and npm.
+
 ## Features
 
 - **One ninja per Claude Code session**, with its state (working, waiting for your approval, idle). A click brings the matching terminal window forward.
@@ -19,7 +98,7 @@ An animated macOS desktop wallpaper that shows every active Claude Code session 
 - **AI usage**: estimated cost in euros for today and the last 7 days, a 14-day chart, a breakdown by model and effort level, and your Claude and Codex quotas. Claude Code and Codex sessions are both read.
 - **Dev panel**: open GitHub pull requests and their CI status, your contribution streak, and local Git repositories with uncommitted changes or unpushed commits.
 - **Optional panels**: unresolved Sentry issues from the last 24 hours, a 3-day weather forecast, upcoming calendar events from ICS feeds, and the track currently playing.
-- **Menu bar icon** to toggle interactive mode, reload the page, mirror the layout, change the size, or quit.
+- **Menu bar icon** to toggle interactive mode, reload the page, mirror the layout, change the size, open the assistant (Réglages…), uninstall, or quit.
 - **Private by default**: the local agent listens on `127.0.0.1` only and rejects requests from other origins (protection against CSRF and DNS rebinding), so a web page open in your browser cannot read your data or trigger actions. Every panel that needs the network is optional.
 
 **Language and artwork**: the wallpaper labels are in French for now. Pull requests that add translations (i18n) are welcome. The background image is third-party fan art, included as a demo. To use your own, replace `~/.config/claude-dojo/wallpaper/background.jpg`, then choose Reload in the menu bar icon. Re-running `install.sh` copies the bundled image again, so keep a copy of your own image.
@@ -46,9 +125,9 @@ An animated macOS desktop wallpaper that shows every active Claude Code session 
 
 ## Requirements
 
-- macOS 12+ (Monterey or later). The app is compiled on your Mac. The installer tries the targets 11.0, 12.0, 13.0 and 14.0 in that order and keeps the first one that compiles. In practice this is 12.0, because the app uses `safeAreaInsets`, which macOS 11 does not provide.
-- Node.js 18 or later.
-- Xcode Command Line Tools: `xcode-select --install`. They provide `swiftc`, which builds the wallpaper app.
+- macOS 12.0 (Monterey) or later. The app in the DMG is a universal binary (Apple silicon and Intel), so nothing is compiled on your Mac.
+- Node.js 18 or later. The assistant checks for it.
+- For the [source install](#from-source-developers) only: Xcode Command Line Tools (`xcode-select --install`), which provide `swiftc`.
 
 Optional tools:
 
@@ -62,21 +141,12 @@ Optional tools:
 
 A missing optional tool simply hides its panel. No error is shown.
 
-## Quick start
-
-```sh
-git clone https://github.com/gtko/claude-dojo.git && cd claude-dojo
-./install.sh
-```
-
-The installer asks a few questions (see below). Once it has finished, the Dojo runs from `~/.config/claude-dojo`, so the clone is not needed to run it. Keep the clone if you want to uninstall later, since `./uninstall.sh` is run from the repository.
-
 ## What the installer does and asks
 
-The installer:
+The source installer (`install.sh`):
 
 1. copies the files from `src/` to `~/.config/claude-dojo` and runs `npm install` there (it installs `node-ical` for the calendar);
-2. compiles `~/Applications/DojoWallpaper.app` from `mac/DojoWallpaper.swift` and signs it ad hoc;
+2. builds `DojoWallpaper.app` with `scripts/build-app.sh` (without the DMG), signs it ad hoc, and installs it in `~/Applications`;
 3. writes two LaunchAgents, `io.github.claude-dojo.agent` (local agent and collector) and `io.github.claude-dojo.wallpaper` (wallpaper app), and loads them so they start at login;
 4. merges the hooks, the `statusLine` and, if heavy-gate is enabled, the `VITEST_MAX_WORKERS` variable into `~/.claude/settings.json`, keeping everything else. Before any change, the file is copied to `settings.json.bak-<timestamp>`. Keys such as `model`, `effort`, `plugins` and `permissions` are never touched.
 
@@ -92,6 +162,8 @@ Without `--yes`, the installer asks:
 - what to do if a `statusLine` already exists in `~/.claude/settings.json`;
 - whether to install `macmon` and `media-control` with Homebrew, if they are missing;
 - whether to start the Xcode Command Line Tools installation, if `swiftc` is missing.
+
+The setup assistant asks the same questions, one step at a time, in a window.
 
 If `~/.config/claude-dojo/config.json` already exists, it is kept as is and the configuration questions are skipped.
 
@@ -119,7 +191,7 @@ If `~/.config/claude-dojo/config.json` already exists, it is kept as is and the 
 
 - **Automation**: the first time you click a ninja, macOS asks for permission to control the terminal app through AppleScript (`osascript`), so the Dojo can bring the right window forward. The request may name `node` instead of DojoWallpaper, because the agent is a Node.js process that runs `osascript`. If you declined, enable it in System Settings > Privacy & Security > Automation, where the entry may also appear under `node`.
 - **Keychain**: if `~/.claude/.credentials.json` does not exist, the collector reads your Claude Code login from the macOS Keychain item `Claude Code-credentials`, read-only. The first read can show a macOS prompt. Click **Always Allow** (« Toujours autoriser » in the French interface) to stop it from coming back, or decline it. If you decline, the Claude quota figures fall back to the status line data, and the quota section stays hidden when there is none.
-- **Gatekeeper**: the app is not notarized and has no developer certificate. It is compiled on your machine and ad hoc signed. Because it is not downloaded, Gatekeeper normally does not block it.
+- **Gatekeeper**: the app is ad hoc signed and not notarized. A copy downloaded as a DMG is blocked on its first launch (see [Install](#install), step 2). A copy compiled on your Mac by `install.sh` is not downloaded, so Gatekeeper normally does not block it.
 - **Local network**: the agent listens on `127.0.0.1` only. Other machines on your network cannot reach it.
 - **Disk access**: no Full Disk Access is required. If your project folders are in protected locations such as Documents or Desktop, macOS may ask once for access to that folder.
 
@@ -195,9 +267,11 @@ Settings:
 - fail-open: if the hook errors, the command goes through. The hook never stops Claude Code itself;
 - the gate never kills a process. It only reads the process list with `ps`.
 
-When heavy-gate is enabled, the installer also sets `VITEST_MAX_WORKERS=2` in the `env` block of `~/.claude/settings.json`, unless the variable is already set. This limits the number of vitest workers.
+The installer and the assistant can also set `VITEST_MAX_WORKERS=2` in the `env` block of `~/.claude/settings.json`, unless the variable is already set. This limits the number of vitest workers. In the assistant it is a separate choice; in the source installer it follows heavy-gate.
 
 ## Uninstall
+
+From the menu bar, choose **Désinstaller…**. Dojo removes its LaunchAgents, `~/Applications/DojoWallpaper.app` and its entries in `~/.claude/settings.json`, asks whether to delete `config.json` as well, and then quits. The uninstaller does not remove a copy in `/Applications`: move DojoWallpaper.app from Applications to the Trash yourself.
 
 From the clone:
 
@@ -239,10 +313,24 @@ launchctl kickstart -k gui/$(id -u)/io.github.claude-dojo.wallpaper
 
 **Common symptoms**:
 
+- **The app does not open**: on a DMG install, Gatekeeper blocks the first launch. See [Install](#install), step 2.
 - **A panel is missing**: its dependency or configuration key is missing (`gh` not logged in, `macmon` or `media-control` not installed, or no matching block in `config.json`).
 - **The quota section is missing**: the Keychain item could not be read and no status line data is available yet (see macOS permissions).
 - **Clicking a ninja does not bring the window forward**: the Automation permission was not granted (see macOS permissions). Window-precise focus works with Terminal, iTerm2 and Ghostty (the Ghostty AppleScript path needs Ghostty 1.3 or later). For other apps, the Dojo only brings the app forward. Codex Desktop sessions open directly in Codex.
 - **The page does not update**: use Reload in the menu bar icon, or restart the agent with the command above.
+
+## Development
+
+- `src/setup.js` is the single source of truth for installing and uninstalling: the files, `config.json`, `settings.json` and the LaunchAgents. `install.sh`, `uninstall.sh` and the Swift assistant in `mac/` all call it, so the terminal and the app do the same thing.
+- The unit tests run with `node --test test/`.
+- CI runs the checks below, and also an install, reinstall and uninstall in a temporary `HOME`.
+
+```sh
+bash -n install.sh uninstall.sh
+shellcheck -S warning install.sh uninstall.sh scripts/build-app.sh
+for f in src/*.js scripts/*.cjs; do node --check "$f"; done
+node --test test/
+```
 
 ## Contributing
 
@@ -256,8 +344,10 @@ claude-dojo is released under the MIT License. See [LICENSE](LICENSE).
 
 claude-dojo est un fond d'écran animé pour macOS : chaque session Claude Code active apparaît sous forme de ninja, entouré de panneaux système, GitHub, quotas et coûts d'usage IA.
 
-Installation : `git clone https://github.com/gtko/claude-dojo.git && cd claude-dojo && ./install.sh` (Node 18 ou plus et Xcode Command Line Tools requis).
+Installation : téléchargez `ClaudeDojo-<version>.dmg` depuis la page [Releases](https://github.com/gtko/claude-dojo/releases), glissez DojoWallpaper.app dans Applications, puis ouvrez-le. Au premier lancement, Gatekeeper le bloque (app non notarisée) : Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ». L'assistant guide ensuite l'installation. Prérequis : macOS 12 ou plus et Node.js 18 ou plus.
 
-Les sections en anglais détaillent tout : [Requirements](#requirements), [What the installer does and asks](#what-the-installer-does-and-asks), [Configuration](#configuration), [Uninstall](#uninstall) et [Troubleshooting](#troubleshooting).
+Installation depuis les sources (développeurs) : `git clone https://github.com/gtko/claude-dojo.git && cd claude-dojo && ./install.sh` (Node 18 ou plus et Xcode Command Line Tools requis).
+
+Les sections en anglais détaillent tout : [Install](#install), [Requirements](#requirements), [What the installer does and asks](#what-the-installer-does-and-asks), [Configuration](#configuration), [Uninstall](#uninstall) et [Troubleshooting](#troubleshooting).
 
 Ne publiez jamais `~/.config/claude-dojo/config.json` : il peut contenir des URL de calendrier privées et des tokens.
