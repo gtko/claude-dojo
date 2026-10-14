@@ -248,11 +248,11 @@ Each theme has a curated pack of wallpapers from [Wallhaven](https://wallhaven.c
 
 *The Theme step: the wallpaper strip of the active theme, with the download progress.*
 
-- At launch, and when you switch theme, the pack of the active theme is downloaded in the background. Only the missing images are downloaded, and the theme's default wallpaper comes first.
+- Unless `wallpapers.autoDownload` is `false` (see [Configuration](#configuration)), the pack of the active theme is downloaded in the background at launch and when you switch theme. Only the missing images are downloaded, and the theme's default wallpaper comes first.
 - Requests are spaced one second apart.
 - The progress is shown in the **Fonds** menu (for example `Téléchargement… 5/18`) and in the Theme step of the setup assistant. A failed download is reported there, in a short message.
 - The default wallpaper is applied as soon as it is downloaded, if that theme is active, no background has been chosen for it, and the current background is not a picture you added yourself.
-- This version has no option to turn the automatic download off.
+- To turn the automatic download off, set `wallpapers.autoDownload` to `false` in `config.json`. Switching theme then starts no download, and `wallpapers sync` without a theme does nothing. `wallpapers sync <theme>` still downloads a pack when you ask for it.
 
 ### Rights and sources
 
@@ -274,7 +274,7 @@ Each theme has a curated pack of wallpapers from [Wallhaven](https://wallhaven.c
 | `list <theme>` | Shows the curated pack, with the details from Wallhaven |
 | `search <theme> [page]` | Shows the Wallhaven results for the theme, page by page |
 | `download <id> [theme]` | Downloads one wallpaper |
-| `sync [theme]` | Downloads the missing images of the pack |
+| `sync [theme]` | Downloads the missing images of the pack. Without a theme, does nothing when `wallpapers.autoDownload` is `false` |
 | `progress <theme>` | Shows the progress of the current download |
 | `use <id> [theme]` | Applies a downloaded wallpaper, by its Wallhaven id |
 | `use <file>` | Applies a file from the gallery, or a picture of your own, which is copied as with `set-background` |
@@ -389,6 +389,7 @@ The file is `~/.config/claude-dojo/config.json`. Every block is optional. Withou
 | `theme` | Id of the [theme](#themes): `naruto` (default), `stargate-sg1`, `demon-slayer`, `frieren`, `one-piece`, `my-hero-academia`, `jujutsu-kaisen` or `mushoku-tensei` |
 | `background` | Path of a [custom background](#use-your-own-background), copied to `~/.config/claude-dojo/backgrounds/`. `null` (default) uses the background of the theme |
 | `backgroundByTheme` | Background remembered for each theme: a theme id mapped to the path of a wallpaper, or to `theme` for the theme's own background. Written by the [gallery](#wallpapers) and by `wallpapers use` |
+| `wallpapers.autoDownload` | `true` (default): the pack of the active theme is downloaded in the background when you switch theme, as described in [Automatic download](#automatic-download). `false` turns that off. `wallpapers sync <theme>` still works on request. This is not the `wallpapers` field of `theme.json` |
 | `weather.name` | City label shown in the weather panel |
 | `weather.lat`, `weather.lon` | City coordinates |
 | `weather.timezone` | IANA time zone, for example `Europe/Paris` |
@@ -439,7 +440,7 @@ These are the only network destinations used by the collector and the wallpaper 
 | `api.anthropic.com` | Quota every 5 min | Your Claude Code OAuth token, to read subscription quotas. This endpoint is undocumented: if it fails, the panel falls back to the quota data from the status line |
 | `api.frankfurter.app` | Every 6 hours | A USD to EUR exchange rate request. No personal data |
 | `sentry.io` (only if configured) | Every 5 min | Your Sentry token |
-| `wallhaven.cc`, `w.wallhaven.cc`, `th.wallhaven.cc` (see [Wallpapers](#wallpapers)) | Pack at launch and on theme change, one request per second. Gallery when you open or search it | Public requests: search terms, wallpaper ids and page numbers, with the `User-Agent: claude-dojo/<version>` header. No account, no API key |
+| `wallhaven.cc`, `w.wallhaven.cc`, `th.wallhaven.cc` (see [Wallpapers](#wallpapers)) | Pack at launch and on theme change (unless `wallpapers.autoDownload` is `false`), one request per second. Gallery when you open or search it | Public requests: search terms, wallpaper ids and page numbers, with the `User-Agent: claude-dojo/<version>` header. No account, no API key |
 
 Links clicked in the wallpaper open in your default browser.
 
@@ -541,7 +542,7 @@ Installation : téléchargez `ClaudeDojo-<version>.dmg` depuis la page [Releases
 
 Installation depuis les sources (développeurs) : `git clone https://github.com/gtko/claude-dojo.git && cd claude-dojo && ./install.sh` (Node 18 ou plus et Xcode Command Line Tools requis).
 
-Fonds d'écran : chaque thème propose une galerie de vrais fonds [Wallhaven](https://wallhaven.cc), en contenu SFW uniquement. Ils sont téléchargés en arrière-plan et restent sur votre Mac, avec la source de chaque image. Hors ligne et sans fond téléchargé, c'est le fond du thème qui s'affiche. Le menu **Fonds** permet de les changer.
+Fonds d'écran : chaque thème propose une galerie de vrais fonds [Wallhaven](https://wallhaven.cc), en contenu SFW uniquement. Ils sont téléchargés en arrière-plan (sauf si `wallpapers.autoDownload` vaut `false` dans `config.json`) et restent sur votre Mac, avec la source de chaque image. Hors ligne et sans fond téléchargé, c'est le fond du thème qui s'affiche. Le menu **Fonds** permet de les changer.
 
 Les sections en anglais détaillent tout : [Install](#install), [Requirements](#requirements), [What the installer does and asks](#what-the-installer-does-and-asks), [Configuration](#configuration), [Themes](#themes), [Wallpapers](#wallpapers), [Uninstall](#uninstall) et [Troubleshooting](#troubleshooting).
 
