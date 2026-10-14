@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup commands: `themes`, `set-theme <id>` and `set-background <path|default>` in `src/setup.js`.
 - Menu bar: a Theme menu to choose a theme or a custom background.
 - Setup assistant: a Theme step.
+- Window zone: an optional setting, off by default, that keeps the windows of other apps out of the wallpaper panels (left and right columns, and optionally the top band), with a margin. It uses the Accessibility API, so it needs the Accessibility permission and does nothing without it. Full screen apps, non-resizable windows, panels, dialogs, sheets, minimized windows, the Finder desktop, Dojo itself and an exclusion list are left alone. Stage Manager's left strip is reserved when it is on.
+- Window zone: a `windowZone` block in `config.json` (`enabled`, `margin`, `reserveTop`, `exclude`), validated by `write-config`, and a `window-zone` command in `src/setup.js`.
+- Window zone: a **Zone de travail** menu (checkbox, permission status, **Agrandir dans la zone**, **Moitié gauche**, **Moitié droite**), the global shortcuts ⌃⌥↩, ⌃⌥← and ⌃⌥→, and a step in the setup assistant.
+- Wallpaper page: `window.dojoReservedRects()` returns the rectangles of the panels, for the window zone.
+- Tests: the window zone geometry (zone computation, coordinate conversion, multiple and Retina screens, fitting a window) is plain Swift, tested by `scripts/test-swift.sh`, which CI runs.
 
 ## [0.1.0] - 2026-10-14
 

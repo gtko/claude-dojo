@@ -34,7 +34,7 @@ Then open DojoWallpaper from Applications. On the first launch, the setup assist
 
 ### 3. Follow the setup assistant
 
-The assistant has ten steps. Steps 3 to 6 are optional, and nothing is changed until you click **Apply** on the last step.
+The assistant has eleven steps. Steps 3 to 6 are optional, and nothing is changed until you click **Apply** on the last step.
 
 1. **Welcome**: what the assistant sets up.
 2. **Dependencies**: checks for Node.js 18 or later, which is required. `macmon` and `media-control` are optional, and missing ones can be installed with Homebrew from this step. `gh` is optional; it needs `gh auth login` in a terminal.
@@ -45,7 +45,8 @@ The assistant has ten steps. Steps 3 to 6 are optional, and nothing is changed u
 7. **Claude Code**: the hooks, the status line, and the optional heavy-gate and `VITEST_MAX_WORKERS` settings. The changes to `~/.claude/settings.json` are shown before anything is written.
 8. **Automatic start**: starts Dojo at login. No administrator rights are needed.
 9. **Thème**: the [theme](#themes) and the background of the wallpaper. They are applied when you click **Apply**.
-10. **Done**: a summary of your choices. Click **Apply** to make the changes.
+10. **Zone de travail**: the optional [window zone](#window-zone), off by default. It is applied when you click **Apply**.
+11. **Done**: a summary of your choices. Click **Apply** to make the changes.
 
 <p align="center">
   <img src="docs/screenshots/setup-01-welcome.webp" alt="Setup assistant, step 1: welcome" width="360">
@@ -72,6 +73,7 @@ The assistant has ten steps. Steps 3 to 6 are optional, and nothing is changed u
 The Dojo icon in the menu bar gives you the options listed in [Features](#features), plus:
 
 - **Thème**: chooses one of the [themes](#themes), or a custom background (**Choisir un fond…**).
+- **Zone de travail**: the [window zone](#window-zone) checkbox, the Accessibility permission status, and the shortcuts' actions (**Agrandir dans la zone**, **Moitié gauche**, **Moitié droite**).
 - **Réglages…** (⌘,): reopens the assistant to change your choices.
 - **Désinstaller…**: removes Dojo. See [Uninstall](#uninstall).
 - **Quitter le Dojo**: quits the app.
@@ -100,7 +102,8 @@ This writes `dist/DojoWallpaper.app` (universal binary, minimum macOS 12.0) and 
 - **AI usage**: estimated cost in euros for today and the last 7 days, a 14-day chart, a breakdown by model and effort level, and your Claude and Codex quotas. Claude Code and Codex sessions are both read.
 - **Dev panel**: open GitHub pull requests and their CI status, your contribution streak, and local Git repositories with uncommitted changes or unpushed commits.
 - **Optional panels**: unresolved Sentry issues from the last 24 hours, a 3-day weather forecast, upcoming calendar events from ICS feeds, and the track currently playing.
-- **Menu bar icon** to toggle interactive mode, reload the page, mirror the layout, change the size, choose a theme or a custom background (**Thème**), open the assistant (Réglages…), uninstall, or quit.
+- **Window zone** (optional, off by default): keeps the windows of your other apps out of the wallpaper panels, so the panels stay visible. See [Window zone](#window-zone).
+- **Menu bar icon** to toggle interactive mode, reload the page, mirror the layout, change the size, choose a theme or a custom background (**Thème**), turn the window zone on or off (**Zone de travail**), open the assistant (Réglages…), uninstall, or quit.
 - **Private by default**: the local agent listens on `127.0.0.1` only and rejects requests from other origins (protection against CSRF and DNS rebinding), so a web page open in your browser cannot read your data or trigger actions. Every panel that needs the network is optional.
 
 **Language and artwork**: the wallpaper labels are in French for now, and each theme has its own. Pull requests that add translations (i18n) are welcome. The artwork is original and drawn by code, except the Naruto background, which is third-party fan art included as a demo. To use your own picture, see [Use your own background](#use-your-own-background).
@@ -225,6 +228,41 @@ To add a theme, follow these steps:
 
 The installer and the assistant copy `src/themes/` to `~/.config/claude-dojo/themes/`, so run `./install.sh` again, or apply the assistant, to get a new theme. After you edit a theme's files, choose **Reload** in the menu bar icon.
 
+## Window zone
+
+The wallpaper panels sit behind your windows, so a maximized window hides them. The window zone is an option that keeps the windows of your other apps out of the panels, so they stay visible. It is **off by default**.
+
+When it is on, Dojo measures the panels on each screen: the left column, the right column and, if you ask for it, the clock and weather band at the top. What remains is the free zone: one rectangle in the middle of each screen, plus a margin (8 pt by default). A standard window that overlaps a panel is moved into the free zone. It is made smaller only if it is larger than the zone, and never below the minimum size the app allows. Dojo waits until you stop moving a window (150 ms, and never while the mouse button is down) before it acts, so dragging a window is not fought.
+
+What is never touched: windows of apps in native full screen, windows that cannot be resized, panels, dialogs and sheets, minimized windows, the Finder desktop, the windows of Dojo itself, and the apps in your exclusion list.
+
+**Turn it on**: menu bar icon > **Zone de travail** > **Garder les fenêtres hors des panneaux**, or the **Zone de travail** step of **Réglages…**. The settings are:
+
+| Setting (`windowZone` in `config.json`) | Purpose |
+|---|---|
+| `enabled` | `false` by default. Turns the window zone on |
+| `margin` | Space in points between the panels and the windows, from 0 to 100 (8 by default) |
+| `reserveTop` | `true` (default) also reserves the clock and weather band: **Côtés + haut**. `false` reserves only the side columns: **Côtés seulement** |
+| `exclude` | Bundle ids of the apps that are never moved, for example `["com.apple.Safari"]`. Empty by default |
+
+**Shortcuts**, while the option is on, apply to the window in front: ⌃⌥↩ (**Agrandir dans la zone**) fills the free zone, ⌃⌥← and ⌃⌥→ put the window on the left or right half of it. If another tool already uses a shortcut, Dojo skips it, and the same actions stay in the menu.
+
+### Accessibility permission
+
+Moving the windows of other apps needs the **Accessibility** permission. Without it Dojo does nothing to any window: the option shows **Autorisation requise**, in the menu and in the settings, with a button that opens System Settings > Privacy & Security > Accessibility. Turn on DojoWallpaper in that list. The option starts working within a couple of seconds, with no restart. Dojo never asks for more than this, and sends nothing outside your Mac.
+
+If you move DojoWallpaper.app or replace it with a new build, macOS may list it as a new entry: remove the old one and turn the new one on.
+
+### Stage Manager
+
+Stage Manager has its own idea of where windows go. When it is on, Dojo also reserves its left strip (the thumbnails of the other stages) and says so in the settings. Stage Manager groups windows itself, so the two can fight over a window's position. If a window jumps around, turn off the window zone or Stage Manager. Dojo stops touching a window that resists (more than four moves in three seconds) until you move it again.
+
+### Limits
+
+- The free zone is one rectangle, so the side columns are reserved over the full height of the screen, even below their last card. The music player at the bottom is not reserved.
+- Only the windows of the current Space are seen. Windows in other Spaces are checked when you switch to them and they send a move or resize event.
+- Apps that do not support the Accessibility API, or whose windows are not standard windows, are left alone.
+
 ## Gallery
 
 <p align="center">
@@ -314,6 +352,7 @@ If `~/.config/claude-dojo/config.json` already exists, it is kept as is and the 
 - **Automation**: the first time you click a ninja, macOS asks for permission to control the terminal app through AppleScript (`osascript`), so the Dojo can bring the right window forward. The request may name `node` instead of DojoWallpaper, because the agent is a Node.js process that runs `osascript`. If you declined, enable it in System Settings > Privacy & Security > Automation, where the entry may also appear under `node`.
 - **Keychain**: if `~/.claude/.credentials.json` does not exist, the collector reads your Claude Code login from the macOS Keychain item `Claude Code-credentials`, read-only. The first read can show a macOS prompt. Click **Always Allow** (« Toujours autoriser » in the French interface) to stop it from coming back, or decline it. If you decline, the Claude quota figures fall back to the status line data, and the quota section stays hidden when there is none.
 - **Gatekeeper**: the app is ad hoc signed and not notarized. A copy downloaded as a DMG is blocked on its first launch (see [Install](#install), step 2). A copy compiled on your Mac by `install.sh` is not downloaded, so Gatekeeper normally does not block it.
+- **Accessibility** (optional): only for the [window zone](#window-zone), which moves the windows of other apps. Dojo does nothing to a window without it. Enable DojoWallpaper in System Settings > Privacy & Security > Accessibility.
 - **Local network**: the agent listens on `127.0.0.1` only. Other machines on your network cannot reach it.
 - **Disk access**: no Full Disk Access is required. If your project folders are in protected locations such as Documents or Desktop, macOS may ask once for access to that folder.
 
@@ -333,6 +372,7 @@ The file is `~/.config/claude-dojo/config.json`. Every block is optional. Withou
 | `projects.roots` | Folders to scan for Git repositories (`~` is accepted). Default: the common folders `Projects`, `Projets`, `Developer`, `Code`, `dev`, `src` and `repos` in your home folder, when they exist |
 | `projects.onlyOwners` | `true` shows only repositories owned by `github.owners` |
 | `sentry.token`, `sentry.org` | Sentry token and organization slug. Shows unresolved issues from the last 24 hours |
+| `windowZone.enabled`, `windowZone.margin`, `windowZone.reserveTop`, `windowZone.exclude` | The optional [window zone](#window-zone). Off by default |
 
 Example (placeholder values, replace them and delete the blocks you do not use):
 
@@ -437,6 +477,8 @@ launchctl kickstart -k gui/$(id -u)/io.github.claude-dojo.wallpaper
 
 **Check the local server**: `http://localhost:7777/` shows the page, and `http://localhost:7777/stats` returns the data as JSON. If neither responds, read `agent.log`.
 
+**Window zone does nothing**: check **Zone de travail** in the menu bar. If it says **Autorisation requise**, enable DojoWallpaper in System Settings > Privacy & Security > Accessibility (after an app update, remove the old entry first). See [Window zone](#window-zone).
+
 **Common symptoms**:
 
 - **The app does not open**: on a DMG install, Gatekeeper blocks the first launch. See [Install](#install), step 2.
@@ -449,7 +491,7 @@ launchctl kickstart -k gui/$(id -u)/io.github.claude-dojo.wallpaper
 
 - `src/setup.js` is the single source of truth for installing and uninstalling: the files, `config.json`, `settings.json` and the LaunchAgents. `install.sh`, `uninstall.sh` and the Swift assistant in `mac/` all call it, so the terminal and the app do the same thing.
 - The themes are data in `src/themes/`, so adding one needs no change to the engine, as long as its fields are the ones listed in [Create a theme](#create-a-theme).
-- The unit tests run with `node --test test/`.
+- The unit tests run with `node --test test/`. The geometry of the window zone (zone computation, coordinate conversion, fitting a window) is plain Swift in `mac/WindowZoneGeometry.swift`, tested by `scripts/test-swift.sh`. The Accessibility behavior itself cannot run in CI: see the manual checks in [CONTRIBUTING.md](CONTRIBUTING.md).
 - CI runs the checks below, and also an install, reinstall and uninstall in a temporary `HOME`.
 
 ```sh
@@ -457,6 +499,7 @@ bash -n install.sh uninstall.sh
 shellcheck -S warning install.sh uninstall.sh scripts/build-app.sh
 for f in src/*.js scripts/*.cjs; do node --check "$f"; done
 node --test test/
+scripts/test-swift.sh
 ```
 
 ## Contributing
@@ -476,5 +519,7 @@ Installation : téléchargez `ClaudeDojo-<version>.dmg` depuis la page [Releases
 Installation depuis les sources (développeurs) : `git clone https://github.com/gtko/claude-dojo.git && cd claude-dojo && ./install.sh` (Node 18 ou plus et Xcode Command Line Tools requis).
 
 Les sections en anglais détaillent tout : [Install](#install), [Requirements](#requirements), [What the installer does and asks](#what-the-installer-does-and-asks), [Configuration](#configuration), [Themes](#themes), [Uninstall](#uninstall) et [Troubleshooting](#troubleshooting).
+
+Zone de travail (facultative, désactivée par défaut) : garde les fenêtres de vos autres apps hors des panneaux du fond d'écran. Elle demande l'autorisation Accessibilité (Réglages Système › Confidentialité et sécurité › Accessibilité) ; sans elle, Dojo ne touche à aucune fenêtre. Activation : icône du menu › Zone de travail. Détails dans la section [Window zone](#window-zone).
 
 Ne publiez jamais `~/.config/claude-dojo/config.json` : il peut contenir des URL de calendrier privées et des tokens.
