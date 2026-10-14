@@ -7,6 +7,16 @@ struct ThemeInfo: Decodable, Identifiable, Equatable {
     let id: String
     let name: String
     let thumbnail: String?
+
+    /// Logo du terminal (terminal/logo.png, dans le dossier du thème, à côté de la vignette). nil si absent.
+    var terminalLogo: String? {
+        guard let thumbnail else { return nil }
+        let logo = URL(fileURLWithPath: thumbnail)
+            .deletingLastPathComponent()
+            .appendingPathComponent("terminal/logo.png")
+            .path
+        return FileManager.default.fileExists(atPath: logo) ? logo : nil
+    }
 }
 
 /// Réponse de `setup.js themes` : liste, thème courant et fond personnalisé (nil = fond du thème).

@@ -5,8 +5,11 @@ import SwiftUI
 @MainActor
 final class SetupWindowController: NSWindowController, NSWindowDelegate {
     var onWillClose: (() -> Void)?
+    /// Modèle de l'assistant : le menu s'en sert pour mettre l'étape Thème à jour après un changement de thème.
+    let model: SetupModel
 
     init(model: SetupModel) {
+        self.model = model
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: SetupLayout.width, height: SetupLayout.height),
             styleMask: [.titled, .closable, .miniaturizable],
