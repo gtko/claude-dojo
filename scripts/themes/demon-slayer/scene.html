@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Demon Slayer, fond de scène</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #070a1d; overflow: hidden; }
+  canvas { display: block; width: 1440px; height: 900px; }
+</style>
+</head>
+<body>
+<canvas id="scene" width="2880" height="1800"></canvas>
+<script>
+(() => {
+  // Scène originale, dessinée en code : nuit indigo, lune, glycines, pétales, torii au loin.
+  // Graine fixe (PRNG mulberry32) : le rendu est déterministe.
+  const W = 1440, H = 900;
+  const MX = 700, MY = 320, MR = 104; // lune
+  const canvas = document.getElementById('scene');
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(2, 0, 0, 2, 0, 0); // dessin en px CSS, buffer 2x (2880 x 1800)
+
+  let seed = 20261014;
+  function rnd() {
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  const R = (a, b) => a + (b - a) * rnd();
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const rgba = (c, a) => `rgba(${c},${a})`;
+
+  function drawSky() {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#0e1543');
+    g.addColorStop(0.42, '#162258');
+    g.addColorStop(0.7, '#1d2a68');
+    g.addColorStop(1, '#070a1d');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function drawStars() {
+    for (let i = 0; i < 180; i++) {
+      const x = R(0, W), y = 520 * Math.pow(rnd(), 1.5);
+      if (Math.hypot(x - MX, y - MY) < MR * 1.4) continue;
+      const a = R(0.12, 0.55) * (1 - y / 620);
+      ctx.fillStyle = rgba('236,240,255', a);
+      ctx.beginPath();
+      ctx.arc(x, y, R(0.3, 0.9), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Nappe de brume : ellipse en dégradé radial, aplatie
+  function mist(cx, cy, rx, ry, c, a) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(1, ry / rx);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
+    g.addColorStop(0, rgba(c, a));
+    g.addColorStop(0.55, rgba(c, a * 0.45));
+    g.addColorStop(1, rgba(c, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, rx, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawMoon() {
+    mist(MX, MY, 560, 470, '120,130,220', 0.16);
+    mist(MX, MY, 300, 260, '190,200,255', 0.14);
+    const g = ctx.createRadialGradient(MX - 28, MY - 30, 6, MX, MY, MR);
+    g.addColorStop(0, '#fbf7ea');
+    g.addColorStop(0.6, '#eee6cf');
+    g.addColorStop(0.92, '#d3c9b0');
+    g.addColorStop(1, '#b9ae95');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(MX, MY, MR, 0, Math.PI * 2);
+    ctx.fill();
+    // mers lunaires : taches douces, rognées sur le disque
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(MX, MY, MR - 1, 0, Math.PI * 2);
+    ctx.clip();
+    for (let i = 0; i < 7; i++) {
+      const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * MR * 0.72;
+      const x = MX + Math.cos(a) * d, y = MY + Math.sin(a) * d, r = R(12, 30);
+      const m = ctx.createRadialGradient(x, y, 0, x, y, r);
+      m.addColorStop(0, 'rgba(150,132,130,0.12)');
+      m.addColorStop(1, 'rgba(150,132,130,0)');
+      ctx.fillStyle = m;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // Colline en ligne ondulée, du bas de l'écran jusqu'à baseY
+  function hill(baseY, amp, phase, fill) {
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.moveTo(0, H);
+    for (let x = 0; x <= W; x += 12) {
+      const y = baseY + Math.sin(x * 0.0061 + phase) * amp + Math.sin(x * 0.017 + phase * 2.3) * amp * 0.35;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(W, H);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Toit japonais en silhouette : faîte plat, pente concave, débords relevés aux bouts
+  function roof(x, base, w, h, fill) {
+    const cx = x + w / 2, hw = w / 2, yR = base - h;
+    const e = (k) => yR + h * k; // hauteur relative au faîte
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.moveTo(cx - hw * 0.42, yR);
+    ctx.lineTo(cx + hw * 0.42, yR);
+    ctx.quadraticCurveTo(cx + hw * 0.8, e(0.04), cx + hw * 1.1, e(0.44));
+    ctx.quadraticCurveTo(cx + hw * 1.22, e(0.52), cx + hw * 1.38, e(0.2));
+    ctx.lineTo(cx + hw * 1.08, e(0.56));
+    ctx.lineTo(cx + hw * 0.9, e(0.62));
+    ctx.lineTo(cx + hw * 0.9, base);
+    ctx.lineTo(cx - hw * 0.9, base);
+    ctx.lineTo(cx - hw * 0.9, e(0.62));
+    ctx.lineTo(cx - hw * 1.08, e(0.56));
+    ctx.lineTo(cx - hw * 1.38, e(0.2));
+    ctx.quadraticCurveTo(cx - hw * 1.22, e(0.52), cx - hw * 1.1, e(0.44));
+    ctx.quadraticCurveTo(cx - hw * 0.8, e(0.04), cx - hw * 0.42, yR);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Torii en silhouette (piliers, poutre basse, kasagi courbé)
+  function torii(cx, base, s, fill) {
+    ctx.fillStyle = fill;
+    const top = base - 118 * s, hw = 62 * s;
+    for (const sx of [-1, 1]) {
+      const px = cx + sx * (hw - 14 * s);
+      ctx.beginPath();
+      ctx.moveTo(px - 5 * s, base);
+      ctx.lineTo(px - 4 * s, top + 16 * s);
+      ctx.lineTo(px + 4 * s, top + 16 * s);
+      ctx.lineTo(px + 5 * s, base);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.fillRect(cx - hw + 4 * s, top + 26 * s, 2 * (hw - 4 * s), 7 * s);
+    ctx.beginPath();
+    ctx.moveTo(cx - hw - 13 * s, top - 6 * s);
+    ctx.quadraticCurveTo(cx, top + 2 * s, cx + hw + 13 * s, top - 6 * s);
+    ctx.lineTo(cx + hw + 13 * s, top + 3 * s);
+    ctx.quadraticCurveTo(cx, top + 13 * s, cx - hw - 13 * s, top + 3 * s);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function cubic(p, t) {
+    const u = 1 - t;
+    return [
+      u * u * u * p[0][0] + 3 * u * u * t * p[1][0] + 3 * u * t * t * p[2][0] + t * t * t * p[3][0],
+      u * u * u * p[0][1] + 3 * u * u * t * p[1][1] + 3 * u * t * t * p[2][1] + t * t * t * p[3][1],
+    ];
+  }
+
+  // Trait effilé d'un point à un autre (bois, rameaux)
+  function taper(a, b, w0, w1, col, N = 40) {
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = col;
+    for (let i = 0; i < N; i++) {
+      const t0 = i / N, t1 = (i + 1) / N;
+      ctx.beginPath();
+      ctx.moveTo(lerp(a[0], b[0], t0), lerp(a[1], b[1], t0));
+      ctx.lineTo(lerp(a[0], b[0], t1), lerp(a[1], b[1], t1));
+      ctx.lineWidth = lerp(w0, w1, t0);
+      ctx.stroke();
+    }
+  }
+
+  // Branche courbe (contour sombre puis bois), avec quelques rameaux
+  function woodBranch(p, w0, w1, twigs) {
+    const N = 70;
+    for (const [col, extra] of [['#0d0b20', 1.6], ['#2a2347', 0]]) {
+      let prev = cubic(p, 0);
+      ctx.lineCap = 'round';
+      for (let i = 1; i <= N; i++) {
+        const t = i / N, cur = cubic(p, t);
+        ctx.beginPath();
+        ctx.moveTo(prev[0], prev[1]);
+        ctx.lineTo(cur[0], cur[1]);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = lerp(w0, w1, t) + extra;
+        ctx.stroke();
+        prev = cur;
+      }
+    }
+    for (let k = 0; k < twigs; k++) {
+      const t = R(0.15, 0.85), [x, y] = cubic(p, t);
+      const len = R(14, 30), ang = R(0.6, 1.5) * (rnd() < 0.5 ? 1 : -1) + Math.PI / 2 * 0.4;
+      taper([x, y], [x + Math.cos(ang) * len, y + Math.sin(ang) * len + 6], 2.2, 0.6, '#241e3d');
+    }
+  }
+
+  // Une fleur de glycine : pastille ombrée, reflet pâle
+  function flower(x, y, r, hue, depth, t) {
+    const light = lerp(40, 62, depth) * lerp(0.9, 1, t), a = lerp(0.5, 0.9, depth);
+    ctx.fillStyle = `hsla(${hue}, 36%, ${light * 0.55}%, ${a})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r * 1.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `hsla(${hue + 3}, 40%, ${light}%, ${a})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `hsla(${hue - 4}, 40%, 80%, ${a * 0.5})`;
+    ctx.beginPath();
+    ctx.arc(x - r * 0.3, y - r * 0.32, r * 0.42, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Grappe qui pend : tige courbe, fleurs serrées et décroissantes vers la pointe
+  function raceme(x, y, len, sway, depth) {
+    const sc = lerp(0.6, 1.0, depth);
+    const hue = R(262, 280);
+    const ex = x + sway, ey = y + len;
+    const qx = x + sway * 0.15, qy = y + len * 0.55;
+    const pt = (t) => {
+      const u = 1 - t;
+      return [u * u * x + 2 * u * t * qx + t * t * ex, u * u * y + 2 * u * t * qy + t * t * ey];
+    };
+    ctx.strokeStyle = `hsla(${hue}, 22%, 20%, ${lerp(0.5, 0.9, depth)})`;
+    ctx.lineWidth = 0.8 * sc;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(qx, qy, ex, ey);
+    ctx.stroke();
+    const n = Math.max(8, Math.round(len / (4.4 * sc)));
+    for (let i = 0; i < n; i++) {
+      const t = 0.06 + 0.94 * (i / (n - 1));
+      const [px, py] = pt(t);
+      const r = lerp(3.6, 1.2, t) * sc * R(0.8, 1.2);
+      const side = rnd() < 0.5 ? -1 : 1;
+      flower(px + side * r * R(0.2, 1.9), py + R(-0.8, 1.2) * r, r, hue, depth, t);
+    }
+  }
+
+  // Pétale tombant : forme en amande, tournée
+  function petal(x, y, s, rot, c, a) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.beginPath();
+    ctx.moveTo(0, -s);
+    ctx.bezierCurveTo(s * 0.75, -s * 0.55, s * 0.62, s * 0.7, 0, s);
+    ctx.bezierCurveTo(-s * 0.62, s * 0.7, -s * 0.75, -s * 0.55, 0, -s);
+    ctx.fillStyle = rgba(c, a);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Bandeau ichimatsu (damier vert et noir) en bas, qui s'éteint vers la droite
+  function ichimatsu() {
+    const sq = 15, rows = 2, y0 = H - sq * rows;
+    for (let r = 0; r < rows; r++) {
+      for (let x = 0; x < W; x += sq) {
+        ctx.globalAlpha = 0.66 * (1 - 0.82 * x / W);
+        ctx.fillStyle = ((x / sq) + r) % 2 === 0 ? '#0f2f28' : '#07080f';
+        ctx.fillRect(x, y0 + r * sq, sq, sq);
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = 'rgba(185,162,232,0.10)';
+    ctx.fillRect(0, y0 - 1, W, 1);
+  }
+
+  // Grain monochrome de faible amplitude (buffer device, 2880 x 1800)
+  function grain(amp) {
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (rnd() - 0.5) * amp;
+      d[i] += n; d[i + 1] += n; d[i + 2] += n;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  // ---- Composition ----
+  drawSky();
+  drawStars();
+  mist(300, 560, 620, 80, '70,96,190', 0.18);
+  mist(1100, 470, 520, 60, '90,120,210', 0.12);
+  mist(700, 640, 800, 60, '70,90,180', 0.16);
+  drawMoon();
+
+  hill(618, 20, 0.7, '#222862');
+  for (const [x, w, h, b] of [[300, 112, 46, 650], [428, 150, 62, 660], [604, 104, 40, 646]]) {
+    roof(x, b, w, h, '#171a48');
+  }
+  torii(905, 676, 0.9, '#161944');
+  hill(700, 12, 2.1, '#131737');
+  hill(764, 8, 4.0, '#0b0c20');
+
+  // Glycines : branches puis grappes triées du lointain au proche
+  const branches = [
+    { p: [[-30, 120], [160, 170], [340, 206], [560, 250]], w0: 9, w1: 3.2, n: 44, lenMin: 80, lenMax: 240, twigs: 6 },
+    { p: [[540, -24], [590, 30], [640, 62], [740, 128]], w0: 7, w1: 2.6, n: 20, lenMin: 50, lenMax: 170, twigs: 3 },
+  ];
+  const racemes = [];
+  for (const b of branches) {
+    woodBranch(b.p, b.w0, b.w1, b.twigs);
+    for (let k = 0; k < b.n; k++) {
+      const t = R(0.04, 0.98);
+      const [x, y] = cubic(b.p, t);
+      const len = R(b.lenMin, b.lenMax) * (0.55 + 0.45 * Math.sin(Math.PI * t));
+      racemes.push({ x, y, len, sway: R(-22, 26), depth: rnd() });
+    }
+  }
+  racemes.sort((a, b) => a.depth - b.depth);
+  for (const g of racemes) raceme(g.x, g.y, g.len, g.sway, g.depth);
+
+  // Pétales tombant, plus nombreux en haut à gauche
+  const petalCols = ['241,194,228', '216,182,242', '201,166,238', '245,208,230', '185,162,236'];
+  let placed = 0;
+  while (placed < 120) {
+    const x = R(-10, W + 10), y = R(-10, H);
+    if (rnd() > (1 - 0.55 * (x / W)) * (1 - 0.6 * (y / H))) continue;
+    placed++;
+    const depth = rnd();
+    const s = R(3.2, 6.2) * (0.7 + 0.5 * depth);
+    if (depth < 0.3) ctx.filter = 'blur(1px)';
+    petal(x, y, s, R(0, Math.PI * 2), petalCols[Math.floor(rnd() * petalCols.length)], 0.35 + 0.5 * depth);
+    ctx.filter = 'none';
+  }
+
+  ichimatsu();
+
+  // Zones droite et basse assombries, vignettage
+  let g = ctx.createLinearGradient(W * 0.7, 0, W, 0);
+  g.addColorStop(0, 'rgba(6,6,18,0)');
+  g.addColorStop(1, 'rgba(6,6,18,0.6)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  g = ctx.createLinearGradient(0, H * 0.68, 0, H);
+  g.addColorStop(0, 'rgba(6,6,18,0)');
+  g.addColorStop(1, 'rgba(6,6,18,0.55)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  g = ctx.createRadialGradient(W * 0.46, H * 0.38, W * 0.3, W * 0.46, H * 0.38, W * 0.85);
+  g.addColorStop(0, 'rgba(4,4,14,0)');
+  g.addColorStop(1, 'rgba(4,4,14,0.6)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  grain(5);
+  window.__ready = true;
+})();
+</script>
+</body>
+</html>

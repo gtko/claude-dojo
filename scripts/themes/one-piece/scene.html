@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scène One Piece</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #061e34; overflow: hidden; }
+  canvas { display: block; width: 1440px; height: 900px; }
+</style>
+</head>
+<body>
+<canvas id="scene" width="2880" height="1800"></canvas>
+<script>
+(function () {
+  'use strict';
+
+  // Scène originale, dessinée en code : aucune image externe.
+  // PRNG déterministe (mulberry32) : même seed, même image à chaque rendu.
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  const rnd = mulberry32(20261014);
+
+  const W = 1440, H = 900, S = 2;          // coordonnées CSS, rendu à 2x (2880x1800)
+  const HORIZON = 548;
+  const SUN = { x: 700, y: 530, r: 46 };
+
+  const canvas = document.getElementById('scene');
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(S, 0, 0, S, 0, 0);
+
+  function hex(c) { return [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16)); }
+  function mix(c1, c2, t) {
+    const a = hex(c1), b = hex(c2);
+    return 'rgb(' + a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(',') + ')';
+  }
+
+  // Ciel : nuit bleue en haut, aube chaude vers l'horizon.
+  function drawSky() {
+    const g = ctx.createLinearGradient(0, 0, 0, HORIZON);
+    g.addColorStop(0.00, '#071b2e');
+    g.addColorStop(0.30, '#12364f');
+    g.addColorStop(0.55, '#245f76');
+    g.addColorStop(0.75, '#7aa6a2');
+    g.addColorStop(0.90, '#e6b38a');
+    g.addColorStop(1.00, '#f3c48c');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, HORIZON + 2);
+  }
+
+  // Soleil bas, halo doux, disque partiellement caché par la mer.
+  function drawSun() {
+    let g = ctx.createRadialGradient(SUN.x, SUN.y, 0, SUN.x, SUN.y, 360);
+    g.addColorStop(0.00, 'rgba(255,226,150,0.80)');
+    g.addColorStop(0.16, 'rgba(255,200,120,0.38)');
+    g.addColorStop(0.50, 'rgba(245,162,93,0.10)');
+    g.addColorStop(1.00, 'rgba(245,162,93,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, HORIZON + 2);
+    g = ctx.createRadialGradient(SUN.x, SUN.y, 0, SUN.x, SUN.y, SUN.r);
+    g.addColorStop(0, '#fff4c8');
+    g.addColorStop(0.6, '#f7d670');
+    g.addColorStop(1, '#f5b25d');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(SUN.x, SUN.y, SUN.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Nuage cumulus : nombreuses bouffées à bords doux, ombre froide au-dessus,
+  // parties éclairées chaudes en dessous (soleil bas à droite).
+  function cloud(cx, baseY, width, height, opacity) {
+    const puffs = [];
+    const n = 20 + Math.floor(rnd() * 8);
+    for (let i = 0; i < n; i++) {
+      const u = rnd() * 2 - 1;
+      const x = cx + u * width / 2;
+      const dome = height * (1 - 0.6 * u * u);
+      const r = dome * (0.22 + 0.2 * rnd());
+      const y = baseY - dome * (0.25 + 0.6 * rnd());
+      puffs.push({ x, y, r });
+    }
+    puffs.sort((a, b) => a.y - b.y);
+    // Dégradé vertical : ombre froide en haut, base chaude éclairée.
+    const shade = ctx.createLinearGradient(0, baseY - height * 1.2, 0, baseY);
+    shade.addColorStop(0, '#7d9cb4');
+    shade.addColorStop(0.55, '#c4aeb4');
+    shade.addColorStop(1, '#f2d2b6');
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.filter = 'blur(5px)'; // bords doux : pas de contours de bulles
+    ctx.fillStyle = shade;
+    for (const p of puffs) {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(255,240,220,0.4)';
+    for (const p of puffs) {
+      ctx.beginPath();
+      ctx.arc(p.x + p.r * 0.2, p.y + p.r * 0.25, p.r * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // Touches de pinceau discrètes (effet peint, faible contraste).
+  function brushStrokes(yMin, yMax, count, colors, maxAlpha) {
+    ctx.lineCap = 'round';
+    for (let k = 0; k < count; k++) {
+      const x = rnd() * W, y = yMin + rnd() * (yMax - yMin);
+      const len = 60 + rnd() * 160, w = 4 + rnd() * 6;
+      const c = colors[Math.floor(rnd() * colors.length)];
+      ctx.strokeStyle = 'rgba(' + c + ',' + (rnd() * maxAlpha).toFixed(3) + ')';
+      ctx.lineWidth = w;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + len, y + (rnd() - 0.5) * 3);
+      ctx.stroke();
+    }
+  }
+
+  // Mouette : deux traits en « m », sobres.
+  function gull(x, y, s) {
+    ctx.strokeStyle = 'rgba(244,241,230,0.92)';
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x - 13 * s, y - 2 * s);
+    ctx.quadraticCurveTo(x - 6 * s, y - 9 * s, x, y);
+    ctx.quadraticCurveTo(x + 6 * s, y - 9 * s, x + 13 * s, y - 2 * s);
+    ctx.stroke();
+  }
+
+  // Coque de caravelle (chemin réutilisé pour le clip de la lisse).
+  function hullPath() {
+    ctx.beginPath();
+    ctx.moveTo(296, 492);
+    ctx.lineTo(606, 492);
+    ctx.quadraticCurveTo(624, 500, 614, 520);
+    ctx.lineTo(598, 546);
+    ctx.quadraticCurveTo(468, 558, 350, 546);
+    ctx.quadraticCurveTo(318, 536, 296, 492);
+    ctx.closePath();
+  }
+
+  // Navire original : caravelle à voiles carrées, tête de mouton en proue,
+  // drapeau maison (crâne + chapeau de paille générique).
+  function drawShip() {
+    const WOOD = '#2a1a13', WOOD2 = '#4a2f1f', TRIM = '#c9a77a';
+    const CREAM = '#f1e7cc';
+
+    // Gréement arrière (sous les voiles).
+    ctx.strokeStyle = 'rgba(30,18,12,0.7)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(500, 172); ctx.lineTo(612, 492);
+    ctx.moveTo(500, 172); ctx.lineTo(396, 252);
+    ctx.moveTo(390, 252); ctx.lineTo(300, 492);
+    ctx.stroke();
+
+    // Beaupré et foc triangulaire.
+    ctx.strokeStyle = WOOD;
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(300, 494); ctx.lineTo(232, 470);
+    ctx.stroke();
+    const jg = ctx.createLinearGradient(236, 0, 390, 0);
+    jg.addColorStop(0, '#f6eedb');
+    jg.addColorStop(1, '#e2cc9c');
+    ctx.fillStyle = jg;
+    ctx.beginPath();
+    ctx.moveTo(236, 468); ctx.lineTo(388, 252); ctx.lineTo(390, 470); ctx.closePath();
+    ctx.fill();
+
+    // Coque.
+    hullPath();
+    ctx.fillStyle = WOOD;
+    ctx.fill();
+    ctx.save();
+    hullPath();
+    ctx.clip();
+    ctx.fillStyle = WOOD2;
+    ctx.fillRect(280, 492, 350, 12);
+    ctx.fillStyle = TRIM;
+    ctx.fillRect(280, 504, 350, 2);
+    ctx.fillStyle = '#120a06';
+    for (const gx of [380, 420, 460, 500, 540, 580]) ctx.fillRect(gx, 514, 10, 7);
+    ctx.restore();
+
+    // Château arrière avec fenêtres éclairées.
+    ctx.fillStyle = WOOD;
+    ctx.fillRect(560, 462, 56, 6);
+    ctx.fillStyle = WOOD2;
+    ctx.fillRect(564, 468, 50, 24);
+    ctx.fillStyle = '#f7d670';
+    for (const wx of [570, 584, 598]) ctx.fillRect(wx, 476, 5, 5);
+
+    // Tête de mouton en proue (agrandie).
+    ctx.save();
+    ctx.translate(296, 476);
+    ctx.scale(1.3, 1.3);
+    ctx.translate(-296, -476);
+    ctx.strokeStyle = '#8a6a4a';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.arc(296, 472, 7, -Math.PI * 0.2, Math.PI * 1.1);
+    ctx.stroke();
+    ctx.fillStyle = CREAM;
+    ctx.beginPath();
+    ctx.ellipse(292, 476, 10, 8.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    for (const [bx, by] of [[298, 470], [304, 476], [296, 482]]) {
+      ctx.beginPath(); ctx.arc(bx, by, 4.5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = '#3b2a22';
+    ctx.beginPath();
+    ctx.ellipse(283, 479, 4.5, 5.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#f4f1e6';
+    ctx.beginPath(); ctx.arc(284, 476.5, 1.1, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+
+    // Mâts et vergues.
+    ctx.fillStyle = WOOD;
+    ctx.fillRect(387, 252, 6, 240);
+    ctx.fillRect(497, 172, 6, 320);
+    ctx.fillRect(352, 288, 88, 4);
+    ctx.fillRect(436, 230, 128, 4);
+    ctx.fillRect(464, 196, 72, 3);
+
+    // Voiles carrées : lumière venant du soleil, à droite.
+    const sailGrad = (x0, x1) => {
+      const g = ctx.createLinearGradient(x0, 0, x1, 0);
+      g.addColorStop(0, '#f6eedb');
+      g.addColorStop(0.7, '#f0dcb0');
+      g.addColorStop(1, '#e2b97f');
+      return g;
+    };
+    // Hunier.
+    ctx.fillStyle = sailGrad(466, 536);
+    ctx.beginPath();
+    ctx.moveTo(466, 198); ctx.lineTo(534, 198);
+    ctx.quadraticCurveTo(540, 214, 534, 227);
+    ctx.quadraticCurveTo(500, 233, 466, 227);
+    ctx.quadraticCurveTo(460, 212, 466, 198);
+    ctx.fill();
+    // Grand voile.
+    ctx.fillStyle = sailGrad(436, 568);
+    ctx.beginPath();
+    ctx.moveTo(436, 232); ctx.lineTo(566, 232);
+    ctx.quadraticCurveTo(586, 300, 570, 386);
+    ctx.quadraticCurveTo(504, 414, 436, 386);
+    ctx.quadraticCurveTo(424, 306, 436, 232);
+    ctx.fill();
+    // Voile de misaine.
+    ctx.fillStyle = sailGrad(352, 440);
+    ctx.beginPath();
+    ctx.moveTo(352, 290); ctx.lineTo(440, 290);
+    ctx.quadraticCurveTo(458, 342, 444, 404);
+    ctx.quadraticCurveTo(398, 422, 352, 400);
+    ctx.quadraticCurveTo(344, 344, 352, 290);
+    ctx.fill();
+    // Plis.
+    ctx.strokeStyle = 'rgba(120,90,50,0.22)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(480, 240); ctx.quadraticCurveTo(488, 312, 478, 388);
+    ctx.moveTo(520, 240); ctx.quadraticCurveTo(528, 312, 520, 390);
+    ctx.moveTo(394, 296); ctx.quadraticCurveTo(402, 350, 394, 404);
+    ctx.stroke();
+
+    // Drapeau pirate maison : fond sombre, crâne, chapeau de paille.
+    ctx.fillStyle = '#15131c';
+    ctx.beginPath();
+    ctx.moveTo(503, 170);
+    ctx.quadraticCurveTo(530, 174, 560, 178);
+    ctx.lineTo(550, 191);
+    ctx.lineTo(560, 204);
+    ctx.quadraticCurveTo(530, 202, 503, 206);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#f4f1e6';
+    ctx.beginPath(); ctx.arc(528, 190, 7.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(524, 195, 8, 3);
+    ctx.fillStyle = '#15131c';
+    ctx.beginPath(); ctx.arc(525.5, 189.5, 1.9, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(530.5, 189.5, 1.9, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#e7c46e';
+    ctx.beginPath();
+    ctx.ellipse(528, 183, 12, 2.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(520, 183);
+    ctx.quadraticCurveTo(521, 174, 528, 174);
+    ctx.quadraticCurveTo(535, 174, 536, 183);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#ff6b5e';
+    ctx.fillRect(520, 180, 16, 2);
+  }
+
+  // Mer : bandes ondulées, plus serrées au loin, plus hautes au premier plan.
+  const BAND_Y = [548, 556, 563, 571, 581, 595, 611, 630, 651, 675, 703, 735, 775, 830];
+  const bands = BAND_Y.map((y, i) => {
+    const t = i / (BAND_Y.length - 1);
+    return {
+      i, t, y,
+      amp: 1.2 + 1.2 * i,
+      wl: 120 + 24 * i,
+      ph: rnd() * Math.PI * 2,
+      ph2: rnd() * Math.PI * 2,
+      col: mix('#3b8e9b', '#061a2b', Math.pow(t, 0.75)),
+    };
+  });
+  function waveY(b, x) {
+    return b.y
+      + b.amp * Math.sin(x * 2 * Math.PI / b.wl + b.ph)
+      + b.amp * 0.35 * Math.sin(x * 2 * Math.PI / (b.wl * 0.47) + b.ph2);
+  }
+  function drawBand(b) {
+    ctx.beginPath();
+    ctx.moveTo(-10, H + 20);
+    for (let x = -10; x <= W + 10; x += 6) ctx.lineTo(x, waveY(b, x));
+    ctx.lineTo(W + 10, H + 20);
+    ctx.closePath();
+    ctx.fillStyle = b.col;
+    ctx.fill();
+  }
+  function drawCrestLines(b) {
+    ctx.strokeStyle = 'rgba(79,209,197,0.20)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = -10; x <= W + 10; x += 6) {
+      const y = waveY(b, x);
+      if (x === -10) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  function drawFoam(b) {
+    const n = Math.round(26 * (1 - b.t * 0.75));
+    for (let k = 0; k < n; k++) {
+      const x = 40 + rnd() * 1360;
+      if (x > 900 && rnd() < 0.85) continue;
+      const y = waveY(b, x);
+      const len = (10 + rnd() * 16) * (0.6 + b.t);
+      ctx.strokeStyle = 'rgba(244,241,230,' + (0.35 + 0.4 * (1 - b.t)).toFixed(2) + ')';
+      ctx.lineWidth = 1 + b.t * 1.4;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x, y + 1);
+      ctx.quadraticCurveTo(x + len * 0.5, y - 2 - b.amp * 0.3, x + len, y + 1);
+      ctx.stroke();
+    }
+  }
+  function drawSeaReflection() {
+    for (let k = 0; k < 40; k++) {
+      const y = HORIZON + 4 + k * k * 0.18;
+      const x = SUN.x + (rnd() - 0.5) * (60 + k * 4);
+      const w = Math.max(4, 40 + rnd() * 30 - k * 0.6);
+      ctx.fillStyle = 'rgba(255,227,160,' + (0.55 * (1 - k / 40)).toFixed(2) + ')';
+      ctx.fillRect(x - w / 2, y, w, 2);
+    }
+  }
+
+  // Assombrissement doux à droite et en bas (zones couvertes par les panneaux).
+  function drawDarkening() {
+    let g = ctx.createLinearGradient(980, 0, W, 0);
+    g.addColorStop(0, 'rgba(3,14,26,0)');
+    g.addColorStop(1, 'rgba(3,14,26,0.6)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+    g = ctx.createLinearGradient(0, 640, 0, H);
+    g.addColorStop(0, 'rgba(3,14,26,0)');
+    g.addColorStop(1, 'rgba(3,14,26,0.55)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 640, W, H - 640);
+  }
+
+  function drawVignette() {
+    const g = ctx.createRadialGradient(560, 430, 300, 560, 430, 1000);
+    g.addColorStop(0, 'rgba(2,8,16,0)');
+    g.addColorStop(1, 'rgba(2,8,16,0.6)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // Grain très léger (amplitude ±3 niveaux), déterministe.
+  function drawGrain() {
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (rnd() - 0.5) * 6;
+      d[i] += n; d[i + 1] += n; d[i + 2] += n;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  // Ordre de dessin : ciel, soleil, nuages, mer lointaine, navire, mer proche, finitions.
+  drawSky();
+  drawSun();
+  cloud(830, 236, 420, 110, 0.92);
+  cloud(420, 330, 300, 80, 0.80);
+  cloud(1120, 300, 360, 90, 0.80);
+  cloud(640, 390, 260, 60, 0.60);
+  gull(690, 292, 1.0);
+  gull(742, 262, 0.8);
+  gull(784, 300, 0.7);
+  brushStrokes(0, HORIZON - 4, 200, ['200,230,240', '4,16,30'], 0.022);
+
+  for (const b of bands.slice(0, 2)) drawBand(b);
+  drawShip();
+  for (const b of bands.slice(2)) drawBand(b);
+  brushStrokes(HORIZON + 12, H, 260, ['79,209,197', '3,14,26'], 0.06);
+  for (const b of bands) if (b.i >= 2) drawCrestLines(b);
+  drawSeaReflection();
+  for (const b of bands) if (b.i >= 3) drawFoam(b);
+  drawDarkening();
+  drawVignette();
+  drawGrain();
+
+  window.__ready = true;
+})();
+</script>
+</body>
+</html>

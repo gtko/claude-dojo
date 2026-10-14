@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Mushoku Tensei - scène de fond</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #06151a; overflow: hidden; }
+  canvas { display: block; width: 1440px; height: 900px; }
+</style>
+</head>
+<body>
+<canvas id="c" width="2880" height="1800"></canvas>
+<script>
+// Scène procédurale : forêt enchantée, village au loin et cristaux de mana (fan art original).
+// Dessin en px CSS 1440x900 sur un canvas 2x (2880x1800). Graine fixe : rendu déterministe.
+// Rendu : node scripts/themes/render.cjs mushoku-tensei  (-> src/themes/mushoku-tensei/background.jpg)
+(function () {
+'use strict';
+
+const W = 1440, H = 900, S = 2;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+ctx.setTransform(S, 0, 0, S, 0, 0);
+
+// PRNG maison (xorshift32), graine fixe.
+let seed = 0x2c1441 | 0;
+function rnd() {
+  seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+  return (seed >>> 0) / 4294967296;
+}
+const R = (a, b) => a + (b - a) * rnd();
+
+function lg(x0, y0, x1, y1, stops) {
+  const g = ctx.createLinearGradient(x0, y0, x1, y1);
+  for (const [o, c] of stops) g.addColorStop(o, c);
+  return g;
+}
+function rg(x, y, r0, r1, stops) {
+  const g = ctx.createRadialGradient(x, y, r0, x, y, r1);
+  for (const [o, c] of stops) g.addColorStop(o, c);
+  return g;
+}
+// Halo lumineux additif ; rgb = 'r,g,b'.
+function glow(x, y, r, rgb, a) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.fillStyle = rg(x, y, 0, r, [[0, `rgba(${rgb},${a})`], [1, `rgba(${rgb},0)`]]);
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+// Relief doux : somme de sinusoïdes à phases aléatoires.
+function ridge(base, amp, n, fmin, fmax) {
+  const P = [];
+  for (let i = 0; i < n; i++) P.push({ f: R(fmin, fmax) * (1 + i * 1.9), p: R(0, 6.283), a: amp / (1 + i * 1.5) });
+  return x => P.reduce((y, q) => y + q.a * Math.sin(x * q.f + q.p), base);
+}
+// Aplat sous une courbe y = fn(x), jusqu'en bas de l'image.
+function poly(fn, fill, step) {
+  ctx.beginPath();
+  ctx.moveTo(-5, H + 5);
+  for (let x = -5; x <= W + 5; x += step) ctx.lineTo(x, fn(x));
+  ctx.lineTo(W + 5, H + 5);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+
+// Sol : dôme herbeux où le village est posé, qui s'aplanit vers la droite.
+const G = x => 610 - 140 * Math.exp(-((x - 290) ** 2) / (2 * 230 * 230)) + 3 * Math.sin(x * 0.02 + 0.5);
+
+// 1. Ciel matinal : teal profond en haut, lueur pâle à l'horizon.
+ctx.fillStyle = lg(0, 0, 0, 620, [[0, '#123e4b'], [0.45, '#3d8c8e'], [0.8, '#b5dcc9'], [1, '#eef0cc']]);
+ctx.fillRect(0, 0, W, H);
+// Lever de soleil derrière le village.
+ctx.fillStyle = rg(360, 470, 0, 720, [[0, 'rgba(255,248,216,0.95)'], [0.22, 'rgba(255,242,196,0.55)'], [0.6, 'rgba(230,240,200,0.14)'], [1, 'rgba(230,240,200,0)']]);
+ctx.fillRect(0, 0, W, H);
+
+// 2. Nuages bas, très diffus.
+for (let i = 0; i < 9; i++) {
+  const cx = R(-100, 1100), cy = R(90, 330), rx = R(120, 320), k = R(0.12, 0.2);
+  ctx.save();
+  ctx.translate(cx, cy); ctx.scale(1, k);
+  ctx.fillStyle = rg(0, 0, 0, rx, [[0, 'rgba(255,255,245,0.16)'], [1, 'rgba(255,255,245,0)']]);
+  ctx.beginPath(); ctx.arc(0, 0, rx, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+// 3. Texture de peinture : taches diffuses qui cassent les aplats.
+for (let i = 0; i < 170; i++) {
+  const x = R(-40, W + 40), y = R(0, 620), r = R(40, 150);
+  ctx.fillStyle = rg(x, y, 0, r, [[0, rnd() < 0.5 ? 'rgba(190,235,225,0.035)' : 'rgba(8,46,58,0.045)'], [1, 'rgba(0,0,0,0)']]);
+  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+}
+
+// 4. Montagnes lointaines, estompées par l'air.
+const farRidge = ridge(455, 34, 4, 0.002, 0.006);
+const midRidge = ridge(515, 26, 4, 0.003, 0.009);
+ctx.save(); ctx.filter = 'blur(2px)';
+poly(farRidge, 'rgba(143,195,189,0.55)', 4);
+poly(midRidge, 'rgba(90,156,152,0.7)', 4);
+ctx.restore();
+// Brume sur l'horizon.
+ctx.fillStyle = lg(0, 430, 0, 540, [[0, 'rgba(230,245,225,0)'], [0.5, 'rgba(230,245,225,0.2)'], [1, 'rgba(230,245,225,0)']]);
+ctx.fillRect(0, 430, W, 110);
+
+// 5. Lisière lointaine : petits conifères bleutés.
+function pine(x, by, h, col) {
+  ctx.fillStyle = col;
+  for (let t = 0; t < 3; t++) {
+    const apex = by - h * (1 - t * 0.3), base = apex + h * 0.44, wd = h * (0.36 - t * 0.07);
+    ctx.beginPath(); ctx.moveTo(x, apex); ctx.lineTo(x + wd / 2, base); ctx.lineTo(x - wd / 2, base);
+    ctx.closePath(); ctx.fill();
+  }
+}
+const FB = x => 566 + 12 * Math.sin(x * 0.009 + 1.1) + 5 * Math.sin(x * 0.031);
+for (let x = -10; x < W + 10; x += R(5, 11)) {
+  const h = R(16, 36);
+  pine(x, FB(x) + R(-2, 4), h, rnd() < 0.5 ? 'rgba(44,110,107,0.9)' : 'rgba(58,127,119,0.85)');
+}
+
+// Crête arrière à droite : relief sombre qui adoucit la ligne d'horizon.
+poly(ridge(588, 14, 3, 0.004, 0.01), 'rgba(36,88,80,0.9)', 6);
+
+// 6. Sol : dôme herbeux, lumière sur la crête.
+poly(G, lg(0, 470, 0, H, [[0, '#4e8a6a'], [0.35, '#2c5e4d'], [1, '#06160f']]), 6);
+ctx.beginPath();
+for (let x = -5; x <= W + 5; x += 6) (x === -5 ? ctx.moveTo(x, G(x)) : ctx.lineTo(x, G(x)));
+ctx.strokeStyle = lg(0, 0, W, 0, [[0, 'rgba(200,245,220,0.5)'], [0.45, 'rgba(200,245,220,0.18)'], [1, 'rgba(200,245,220,0)']]);
+ctx.lineWidth = 1.4; ctx.stroke();
+
+// Herbe : touffes sombres, surtout à gauche (rien de fin à droite).
+ctx.lineCap = 'round';
+for (let i = 0; i < 420; i++) {
+  const x = R(-10, 900), g = G(x);
+  const y = g + Math.pow(rnd(), 1.6) * (H - g - 4);
+  ctx.strokeStyle = `rgba(20,70,58,${R(0.45, 0.75).toFixed(2)})`;
+  ctx.lineWidth = 1.1;
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + R(-3, 3), y - R(5, 13)); ctx.stroke();
+}
+
+// Forêt en couches à droite : deux rangs de conifères sombres, peu détaillés.
+for (let i = 0; i < 9; i++) { const x = R(930, 1330); pine(x, G(x) + 4 + R(0, 4), R(70, 120), 'rgba(30,90,84,0.6)'); }
+for (let i = 0; i < 5; i++) { const x = R(980, 1420); pine(x, G(x) + 14, R(120, 200), 'rgba(11,53,48,0.85)'); }
+
+// Chemin de terre du village vers les cristaux.
+ctx.beginPath(); ctx.moveTo(300, G(300) + 6);
+ctx.bezierCurveTo(360, 540, 470, 592, 600, 612);
+ctx.strokeStyle = 'rgba(216,196,154,0.28)'; ctx.lineWidth = 4; ctx.stroke();
+
+// 7. Village : maisons à colombages, toits de chaume, de tuiles ou d'ardoise, fumée.
+function smoke(sx, sy) {
+  for (let i = 0; i < 7; i++) {
+    const t = i / 6;
+    const px = sx + t * 9 + Math.sin(i * 1.7) * 2, py = sy - t * 40, r = 2.5 + t * 7;
+    const a = 0.26 * (1 - t) + 0.02;
+    ctx.fillStyle = rg(px, py, 0, r, [[0, `rgba(244,242,236,${a})`], [1, 'rgba(244,242,236,0)']]);
+    ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
+  }
+}
+function house(o) {
+  const x = o.x, w = o.w, h = o.h;
+  const by = G(x) + 3;                      // pied de la maison, posé sur la pente
+  const top = by - h;                       // haut des murs
+  const ry = top + 3;                       // bord du toit
+  const roofH = o.roof === 'slate' ? w * 1.6 : h * 0.75;
+  const peakY = top - roofH;
+  const x0 = x - w / 2 - 4, x1 = x + w / 2 + 4;
+
+  // Ombre portée
+  ctx.fillStyle = 'rgba(4,20,16,0.35)';
+  ctx.beginPath(); ctx.ellipse(x + 2, by + 1, w * 0.62, 2.6, 0, 0, Math.PI * 2); ctx.fill();
+
+  // Murs en crépi clair
+  ctx.fillStyle = o.roof === 'slate' ? '#d9cdb0' : '#eadcb8';
+  ctx.fillRect(x - w / 2, top, w, h);
+  // Côté droit dans l'ombre (lumière venant de gauche)
+  ctx.fillStyle = 'rgba(70,45,25,0.25)';
+  ctx.fillRect(x + w * 0.2, top, w * 0.3, h);
+
+  // Colombages
+  const mid = top + h * 0.5;
+  ctx.strokeStyle = '#4b2f1d'; ctx.lineWidth = 0.9;
+  ctx.beginPath();
+  ctx.moveTo(x - w / 2, mid); ctx.lineTo(x + w / 2, mid);
+  ctx.moveTo(x - w / 4, top); ctx.lineTo(x - w / 4, by);
+  ctx.moveTo(x + w / 4, top); ctx.lineTo(x + w / 4, by);
+  ctx.moveTo(x - w / 2, mid); ctx.lineTo(x - w / 4, top);
+  ctx.moveTo(x + w / 4, mid); ctx.lineTo(x + w / 2, top);
+  ctx.stroke();
+
+  // Fenêtre chaude et porte
+  ctx.fillStyle = '#ffd98a';
+  ctx.fillRect(x - w * 0.12, top + h * 0.12, w * 0.24, h * 0.2);
+  glow(x, top + h * 0.22, Math.max(8, w * 0.6), '255,214,130', 0.45);
+  ctx.fillStyle = '#3b2416';
+  ctx.fillRect(x - w * 0.1, by - h * 0.46, w * 0.2, h * 0.46);
+
+  // Toit
+  ctx.beginPath();
+  ctx.moveTo(x0, ry + 3); ctx.lineTo(x, peakY); ctx.lineTo(x1, ry + 3);
+  ctx.lineTo(x1 - 1, ry + 6); ctx.lineTo(x0 + 1, ry + 6); ctx.closePath();
+  const tiled = o.roof === 'tile' || o.roof === 'slate';
+  ctx.fillStyle = o.roof === 'slate' ? '#6f8a8c' : tiled ? '#b4603a' : lg(0, peakY, 0, ry + 6, [[0, '#ecd07a'], [1, '#a47a34']]);
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  ctx.strokeStyle = tiled ? 'rgba(90,40,20,0.45)' : 'rgba(120,80,30,0.45)';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  if (tiled) {
+    for (let yy = peakY + 3; yy < ry + 7; yy += 3) { ctx.moveTo(x0, yy); ctx.lineTo(x1, yy); }
+  } else {
+    for (let t = 0; t <= 12; t++) {
+      const sx = x0 + (x1 - x0) * t / 12;
+      ctx.moveTo(sx, ry + 6); ctx.lineTo(x + (sx - x) * 0.1, peakY + 2);
+    }
+  }
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(40,20,10,0.25)';          // pan de toit à l'ombre
+  ctx.beginPath(); ctx.moveTo(x, peakY); ctx.lineTo(x1, ry + 3); ctx.lineTo(x, ry + 3); ctx.closePath(); ctx.fill();
+  ctx.restore();
+
+  // Cheminée et fumée
+  if (o.chim) {
+    const cx = x + w * 0.2;
+    const t = (cx - x) / (x1 - x);
+    const yRoof = peakY + (ry + 3 - peakY) * t;
+    ctx.fillStyle = '#6d4a3a';
+    ctx.fillRect(cx - 2, yRoof - 9, 4, 12);
+    smoke(cx, yRoof - 10);
+  }
+}
+// Maisons du village, de gauche à droite, à l'échelle 1.15.
+const HOUSES = [
+  { x: 112, w: 30, h: 20, roof: 'thatch', chim: false },
+  { x: 160, w: 38, h: 24, roof: 'tile', chim: true },
+  { x: 214, w: 30, h: 19, roof: 'thatch', chim: true },
+  { x: 258, w: 22, h: 46, roof: 'slate', chim: false },   // clocher
+  { x: 300, w: 42, h: 28, roof: 'thatch', chim: true },   // auberge
+  { x: 352, w: 30, h: 21, roof: 'tile', chim: false },
+  { x: 402, w: 36, h: 24, roof: 'thatch', chim: true },
+  { x: 452, w: 28, h: 19, roof: 'tile', chim: false },
+  { x: 500, w: 34, h: 22, roof: 'thatch', chim: true },
+  { x: 552, w: 26, h: 18, roof: 'tile', chim: false }
+];
+HOUSES.forEach(o => house({ ...o, w: o.w * 1.15, h: o.h * 1.15 }));
+
+// 8. Cristaux de mana : prismes facettés qui poussent du sol, lueur interne et halo.
+function crystal(bx, by, w, h, tilt, k) {
+  const T = [bx + tilt, by - h];                  // pointe
+  const sh = by - h * 0.7;                        // épaules
+  const L = [bx - w / 2, sh], Rr = [bx + w / 2, sh];
+  const BL = [bx - w / 2, by], BR = [bx + w / 2, by];
+  const C = [bx + tilt * 0.2 + w * 0.06, by + 1]; // arête frontale
+  ctx.save();
+  ctx.globalAlpha = k;
+  ctx.fillStyle = '#10373b';                      // motte de terre
+  ctx.beginPath(); ctx.ellipse(bx, by + 1, w * 0.85, 3.4, 0, 0, Math.PI * 2); ctx.fill();
+  // face gauche, éclairée ; le pied est plus lumineux (lueur interne)
+  ctx.beginPath(); ctx.moveTo(...L); ctx.lineTo(...T); ctx.lineTo(...C); ctx.lineTo(...BL); ctx.closePath();
+  ctx.fillStyle = lg(0, by - h, 0, by, [[0, '#d6fdff'], [0.45, '#6fdcee'], [1, '#2c9fcf']]);
+  ctx.fill();
+  // face droite, dans l'ombre
+  ctx.beginPath(); ctx.moveTo(...T); ctx.lineTo(...Rr); ctx.lineTo(...BR); ctx.lineTo(...C); ctx.closePath();
+  ctx.fillStyle = lg(0, by - h, 0, by, [[0, '#3aa9d6'], [1, '#0c4a78']]);
+  ctx.fill();
+  // reflet interne et arête vive
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = Math.max(1, w * 0.08);
+  ctx.beginPath(); ctx.moveTo(bx - w * 0.2, sh + h * 0.1); ctx.lineTo(bx - w * 0.18 + tilt * 0.3, by - 2); ctx.stroke();
+  ctx.strokeStyle = 'rgba(240,255,255,0.8)'; ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.moveTo(...T); ctx.lineTo(...C); ctx.stroke();
+  ctx.restore();
+  glow(bx, by - h * 0.25, Math.max(14, w * 1.4), '120,240,255', 0.35 * k);
+  glow(bx + tilt * 0.4, by - h * 0.55, Math.max(34, h * 0.9), '95,220,236', 0.16 * k);
+  glow(T[0], T[1], 8, '220,255,255', 0.7 * k);
+}
+// [bx, by, largeur, hauteur, inclinaison, luminosité], triés par base (fond d'abord).
+const CRYSTALS = [
+  [660, 590, 20, 80, -6, 0.7],
+  [620, 596, 22, 100, -4, 0.85],
+  [598, 602, 16, 64, -8, 0.9],
+  [862, 598, 24, 104, 7, 0.88],
+  [892, 604, 16, 62, -5, 0.92],
+  [718, 606, 36, 186, -6, 1],
+  [688, 612, 26, 132, -12, 0.96],
+  [750, 610, 28, 152, 8, 0.97],
+  [674, 616, 16, 66, -6, 1],
+  [772, 616, 18, 86, 12, 1],
+  [734, 617, 14, 48, 3, 1],
+  [838, 614, 30, 124, 10, 0.96],
+  [874, 620, 15, 54, 3, 1]
+].sort((a, b) => a[1] - b[1]);
+
+// Lueur au sol et veines de mana.
+ctx.save(); ctx.translate(735, 604); ctx.scale(1, 0.3);
+glow(0, 0, 240, '95,220,236', 0.3);
+ctx.restore();
+ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.lineCap = 'round';
+for (let i = 0; i < 14; i++) {
+  const sx = R(620, 860), sy = R(606, 612);
+  const ex = sx + R(-120, 120), ey = sy + R(6, 30);
+  ctx.beginPath(); ctx.moveTo(sx, sy);
+  ctx.quadraticCurveTo((sx + ex) / 2 + R(-20, 20), (sy + ey) / 2, ex, ey);
+  ctx.strokeStyle = 'rgba(120,240,255,0.22)'; ctx.lineWidth = 2.4; ctx.stroke();
+  ctx.strokeStyle = 'rgba(200,255,255,0.4)'; ctx.lineWidth = 0.7; ctx.stroke();
+}
+ctx.restore();
+for (const c of CRYSTALS) crystal(c[0], c[1], c[2], c[3], c[4], c[5]);
+
+// Particules de mana flottantes, plus denses près des cristaux.
+for (let i = 0; i < 180; i++) {
+  const x = 740 + (rnd() + rnd() + rnd() - 1.5) * 280;
+  const y = R(250, 640);
+  const big = rnd() < 0.12;
+  const r = big ? R(2.2, 3.2) : R(0.6, 1.6);
+  const col = ['200,255,255', '120,235,255', '143,242,196'][Math.floor(rnd() * 3)];
+  if (big) glow(x, y, r * 5, col, 0.35);
+  ctx.fillStyle = `rgba(${col},${R(0.4, 0.95).toFixed(2)})`;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+}
+
+// 9. Rayons de lumière qui descendent à travers la canopée.
+function ray(x0, dx, y1, w0, w1, a) {
+  const x1 = x0 + dx;
+  ctx.fillStyle = lg(x0, -20, x1, y1, [[0, `rgba(255,246,210,${a})`], [0.6, `rgba(255,246,210,${a * 0.4})`], [1, 'rgba(255,246,210,0)']]);
+  ctx.beginPath();
+  ctx.moveTo(x0 - w0 / 2, -20); ctx.lineTo(x0 + w0 / 2, -20);
+  ctx.lineTo(x1 + w1 / 2, y1); ctx.lineTo(x1 - w1 / 2, y1);
+  ctx.closePath(); ctx.fill();
+}
+ctx.save(); ctx.globalCompositeOperation = 'screen';
+ray(150, 300, 900, 40, 220, 0.07);
+ray(330, 170, 900, 22, 140, 0.06);
+ray(470, 260, 880, 16, 110, 0.05);
+ray(60, 220, 880, 26, 160, 0.05);
+ctx.restore();
+
+// 10. Premier plan : troncs et feuillage. Gauche éclairée par le haut, droite sombre.
+function trunk(xt0, xt1, xb0, xb1) {
+  ctx.beginPath();
+  ctx.moveTo(xt0, -10); ctx.lineTo(xt1, -10); ctx.lineTo(xb1, H + 10); ctx.lineTo(xb0, H + 10);
+  ctx.closePath();
+  ctx.fillStyle = lg(Math.min(xt0, xb0), 0, Math.max(xt1, xb1), 0,
+    [[0, '#2b6155'], [0.22, '#133d35'], [0.6, '#0a2723'], [1, '#051413']]);
+  ctx.fill();
+  // Écorce : stries verticales, dans le tronc seulement.
+  ctx.save();
+  ctx.clip();
+  ctx.lineWidth = 1.2;
+  for (let i = 0; i < 16; i++) {
+    const t = R(0.05, 0.95);
+    const xa = xt0 + (xt1 - xt0) * t, xb = xb0 + (xb1 - xb0) * t;
+    ctx.strokeStyle = rnd() < 0.6 ? 'rgba(0,0,0,0.28)' : 'rgba(120,210,180,0.08)';
+    ctx.beginPath(); ctx.moveTo(xa, -10);
+    ctx.bezierCurveTo(xa + R(-6, 6), H * 0.3, xb + R(-8, 8), H * 0.6, xb, H + 10);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+// Feuillage : silhouette bosselée, touches de feuilles éclairées du côté haut-gauche.
+function clump(cx, cy, r, base, lit, shade, n) {
+  ctx.beginPath();
+  const K = 30;
+  for (let i = 0; i <= K; i++) {
+    const a = (i / K) * Math.PI * 2;
+    const rr = r * (0.84 + 0.16 * rnd());
+    const px = cx + Math.cos(a) * rr, py = cy + Math.sin(a) * rr * 0.92;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = base;
+  ctx.fill();
+  for (let i = 0; i < n; i++) {
+    const a = R(0, Math.PI * 2), d = Math.sqrt(rnd()) * r * 0.85;
+    const px = cx + Math.cos(a) * d, py = cy + Math.sin(a) * d * 0.92;
+    const t = ((cx - px) + (cy - py)) / (2 * r) + R(-0.3, 0.3);
+    const rx = r * R(0.05, 0.11);
+    ctx.fillStyle = t > 0.1 ? lit : shade;
+    ctx.beginPath();
+    ctx.ellipse(px, py, rx, rx * 0.5, R(0, Math.PI), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+trunk(4, 84, -30, 96);
+for (const [cx, cy, r] of [[290, 25, 85], [40, 140, 70], [130, 120, 60], [225, 90, 50], [170, -10, 115], [50, 30, 95]])
+  clump(cx, cy, r, '#0f3b33', 'rgba(92,176,140,0.55)', 'rgba(4,22,20,0.5)', Math.round(r * 1.4));
+trunk(1340, 1440, 1300, 1480);
+for (const [cx, cy, r] of [[1260, -10, 110], [1370, 60, 100], [1420, 200, 80], [1300, 190, 70]])
+  clump(cx, cy, r, '#0a2b26', 'rgba(40,110,90,0.3)', 'rgba(2,12,11,0.5)', Math.round(r * 1.4));
+
+// Texture du sol : taches diffuses, sans détail fin.
+for (let i = 0; i < 90; i++) {
+  const x = R(0, 1100), y = R(650, 900), r = R(40, 120);
+  ctx.fillStyle = rg(x, y, 0, r, [[0, rnd() < 0.5 ? 'rgba(120,200,160,0.05)' : 'rgba(0,0,0,0.12)'], [1, 'rgba(0,0,0,0)']]);
+  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+}
+
+// 11. Assombrissement : bas de l'image et côté droit (zones des panneaux).
+ctx.fillStyle = lg(0, 620, 0, H, [[0, 'rgba(2,12,12,0)'], [0.5, 'rgba(2,12,12,0.5)'], [1, 'rgba(2,10,10,0.88)']]);
+ctx.fillRect(0, 620, W, H - 620);
+ctx.fillStyle = lg(480, 0, W, 0, [[0, 'rgba(3,18,18,0)'], [0.4, 'rgba(3,18,18,0)'], [0.75, 'rgba(3,18,18,0.5)'], [1, 'rgba(3,16,16,0.88)']]);
+ctx.fillRect(0, 0, W, H);
+// Vignettage.
+ctx.fillStyle = rg(620, 420, 320, 1150, [[0, 'rgba(0,8,8,0)'], [0.6, 'rgba(0,8,8,0.22)'], [1, 'rgba(0,6,6,0.72)']]);
+ctx.fillRect(0, 0, W, H);
+
+// 12. Grain très léger (±3 niveaux).
+ctx.save();
+ctx.setTransform(1, 0, 0, 1, 0, 0);
+const img = ctx.getImageData(0, 0, cv.width, cv.height);
+const d = img.data;
+for (let i = 0; i < d.length; i += 4) {
+  const n = (rnd() - 0.5) * 6;
+  d[i] += n; d[i + 1] += n; d[i + 2] += n;
+}
+ctx.putImageData(img, 0, 0);
+ctx.restore();
+
+window.__ready = true;
+})();
+</script>
+</body>
+</html>

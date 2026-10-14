@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frieren, scène de fond</title>
+<style>
+  html, body { margin: 0; background: #070818; }
+  canvas { display: block; width: 1440px; height: 900px; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<script>
+(function () {
+  'use strict';
+  // Scène procédurale originale : aucun asset tiers. Coordonnées en px CSS 1440x900, dessin à 2x (2880x1800).
+  const W = 1440, H = 900, S = 2;
+  const HZ = 452; // ligne d'horizon
+  const cv = document.getElementById('scene');
+  cv.width = W * S;
+  cv.height = H * S;
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(S, 0, 0, S, 0, 0);
+
+  // PRNG déterministe (mulberry32) : même composition à chaque rendu.
+  let seed = 0x1f3e5a7;
+  function rnd() {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  const R = (a, b) => a + (b - a) * rnd();
+  const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const TAU = Math.PI * 2;
+
+  const PET = ['#8fc6f1', '#79b3e9', '#a8d7f8', '#6c9fdb', '#bde3fb'];
+
+  // Ciel : indigo en haut, rose pêche à l'horizon.
+  function sky() {
+    const g = ctx.createLinearGradient(0, 0, 0, HZ);
+    g.addColorStop(0.00, '#060716');
+    g.addColorStop(0.30, '#11143a');
+    g.addColorStop(0.58, '#262762');
+    g.addColorStop(0.80, '#4f4079');
+    g.addColorStop(0.93, '#a77b98');
+    g.addColorStop(1.00, '#eeb29c');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, HZ + 2);
+    // lueur d'horizon, plus vive derrière les ruines
+    ctx.save();
+    ctx.translate(560, HZ);
+    ctx.scale(1, 0.42);
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 760);
+    glow.addColorStop(0, 'rgba(255,222,186,0.9)');
+    glow.addColorStop(0.3, 'rgba(244,170,170,0.4)');
+    glow.addColorStop(1, 'rgba(110,80,160,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(-900, -1200, 1800, 2000);
+    ctx.restore();
+  }
+
+  function stars() {
+    for (let i = 0; i < 340; i++) {
+      const x = R(0, W);
+      const y = Math.pow(rnd(), 1.4) * (HZ - 40);
+      if (x > 1060 && rnd() < 0.6) continue;
+      const a = R(0.3, 0.85) * (1 - 0.75 * (y / HZ));
+      const r = rnd() < 0.93 ? R(0.3, 0.8) : R(0.8, 1.2);
+      ctx.fillStyle = 'rgba(236,240,255,' + a.toFixed(3) + ')';
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, TAU);
+      ctx.fill();
+    }
+    // quelques étoiles plus vives, halo discret
+    for (let i = 0; i < 6; i++) {
+      const x = R(40, 1000), y = R(30, 230);
+      const g = ctx.createRadialGradient(x, y, 0, x, y, 6);
+      g.addColorStop(0, 'rgba(200,220,255,0.28)');
+      g.addColorStop(1, 'rgba(200,220,255,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = '#f4f7ff';
+      ctx.beginPath();
+      ctx.arc(x, y, 0.9, 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  // Collines lointaines, silhouettes sombres.
+  function hills() {
+    ctx.beginPath();
+    ctx.moveTo(0, H);
+    for (let x = 0; x <= W + 6; x += 6) {
+      const y = HZ - 16 - 14 * Math.sin(x * 0.0042 + 1.3) - 8 * Math.sin(x * 0.0113 + 0.2) - 3 * Math.sin(x * 0.037);
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(W + 6, H);
+    ctx.closePath();
+    ctx.fillStyle = '#1e1c4e';
+    ctx.fill();
+  }
+
+  function ground() {
+    const g = ctx.createLinearGradient(0, HZ, 0, H);
+    g.addColorStop(0, '#4a3f7c');
+    g.addColorStop(0.18, '#2b2b62');
+    g.addColorStop(0.55, '#16173f');
+    g.addColorStop(1, '#0a0b20');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, HZ, W, H - HZ);
+  }
+
+  // Brume d'horizon (ellipse écrasée).
+  function mist(alpha, rx) {
+    ctx.save();
+    ctx.translate(720, HZ + 6);
+    ctx.scale(1, 0.14);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rx || 900);
+    g.addColorStop(0, 'rgba(236,190,206,' + alpha + ')');
+    g.addColorStop(1, 'rgba(236,190,206,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(-1000, -1000, 2000, 2000);
+    ctx.restore();
+  }
+
+  function grass() {
+    for (let i = 0; i < 900; i++) {
+      const t = Math.pow(rnd(), 1.4);
+      const y = HZ + 6 + t * (H - HZ);
+      const x = R(0, W);
+      const len = lerp(3, 14, t) * R(0.7, 1.2);
+      ctx.strokeStyle = 'rgba(20,46,62,' + lerp(0.7, 0.4, t).toFixed(2) + ')';
+      ctx.lineWidth = lerp(0.8, 2, t);
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.quadraticCurveTo(x + R(-3, 3), y - len * 0.6, x + R(-4, 4), y - len);
+      ctx.stroke();
+    }
+  }
+
+  // Nemophila : cinq pétales bleus, cœur clair ou sombre, vue en perspective (aplatie).
+  function flower(c, x, y, r, a) {
+    const rot = R(0, TAU);
+    c.globalAlpha = a;
+    c.fillStyle = pick(PET);
+    for (let k = 0; k < 5; k++) {
+      const ang = rot + k * 1.2566;
+      c.beginPath();
+      c.ellipse(x + Math.cos(ang) * r * 0.5, y + Math.sin(ang) * r * 0.3, r * 0.5, r * 0.3, ang, 0, TAU);
+      c.fill();
+    }
+    c.fillStyle = rnd() < 0.6 ? '#f3f8ff' : '#2a3a7a';
+    c.beginPath();
+    c.ellipse(x, y, r * 0.2, r * 0.14, 0, 0, TAU);
+    c.fill();
+    c.globalAlpha = 1;
+  }
+
+  // Champ de fleurs : plus dense et plus petit vers l'horizon.
+  const field = [];
+  for (let i = 0; i < 2400; i++) {
+    const t = Math.pow(rnd(), 1.5); // 0 = horizon, 1 = premier plan
+    const y = HZ + 4 + t * (H - HZ + 40);
+    const x = R(-12, W + 12);
+    const r = lerp(1.6, 10, Math.pow(t, 1.1)) * R(0.8, 1.15);
+    field.push({ x: x, y: y, r: r, a: lerp(0.85, 0.5, t) });
+  }
+  field.sort((p, q) => p.y - q.y);
+
+  // Grain de pierre : petites taches claires et sombres, dans la forme donnée.
+  function speck(p, x0, y0, x1, y1, n) {
+    ctx.save();
+    ctx.clip(p);
+    for (let i = 0; i < n; i++) {
+      const dark = rnd() < 0.6;
+      ctx.fillStyle = dark ? 'rgba(10,10,30,' + R(0.08, 0.22).toFixed(3) + ')' : 'rgba(210,198,236,' + R(0.04, 0.12).toFixed(3) + ')';
+      const s = R(0.8, 2.6);
+      ctx.fillRect(R(x0, x1), R(y0, y1), s, s * 0.7);
+    }
+    ctx.restore();
+  }
+
+  // Lierre : petites feuilles qui retombent d'un bord.
+  function ivy(x, y, len, n) {
+    for (let i = 0; i < n; i++) {
+      const t = rnd();
+      const px = x + R(-6, 6) + Math.sin(t * 5) * 4;
+      const py = y + t * len;
+      ctx.fillStyle = rnd() < 0.5 ? 'rgba(47,94,96,0.75)' : 'rgba(62,112,108,0.6)';
+      ctx.beginPath();
+      ctx.ellipse(px, py, R(2, 4.5), R(1.2, 2.4), R(-0.8, 0.8), 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  // Colonne : fût cannelé, joints de tambour, socle, chapiteau si non brisée.
+  function column(x, yB, w, h, o) {
+    o = o || {};
+    const far = !!o.far;
+    const top = yB - h;
+    const p = new Path2D();
+    p.moveTo(x - w / 2, yB);
+    p.lineTo(x - w / 2, top + (o.broken ? R(2, 14) : 0));
+    if (o.broken) {
+      for (let i = 1; i < 6; i++) p.lineTo(x - w / 2 + (w * i) / 6, top + R(0, 26));
+    }
+    p.lineTo(x + w / 2, top + (o.broken ? R(0, 12) : 0));
+    p.lineTo(x + w / 2, yB);
+    p.closePath();
+    const g = ctx.createLinearGradient(x - w / 2, 0, x + w / 2, 0);
+    g.addColorStop(0, far ? '#24244f' : '#15163a');
+    g.addColorStop(0.3, far ? '#3a3970' : '#43426f');
+    g.addColorStop(0.55, far ? '#33335f' : '#4f4c7a');
+    g.addColorStop(0.85, far ? '#2a2a58' : '#2c2b58');
+    g.addColorStop(1, far ? '#1f2046' : '#14153a');
+    ctx.fillStyle = g;
+    ctx.fill(p);
+    speck(p, x - w / 2, top, x + w / 2, yB, 40 + w * 5);
+    ctx.strokeStyle = 'rgba(14,14,36,0.28)';
+    ctx.lineWidth = 1.1;
+    for (let i = 1; i < 6; i++) {
+      const xi = x - w / 2 + (w * i) / 6;
+      ctx.beginPath();
+      ctx.moveTo(xi, top + 10);
+      ctx.lineTo(xi, yB - 12);
+      ctx.stroke();
+    }
+    for (let yy = yB - 40; yy > top + 20; yy -= 40) {
+      ctx.beginPath();
+      ctx.moveTo(x - w / 2, yy);
+      ctx.lineTo(x + w / 2, yy + R(-1, 1));
+      ctx.stroke();
+    }
+    ctx.fillStyle = far ? '#2a2a58' : '#33335f';
+    ctx.fillRect(x - w * 0.66, yB - 12, w * 1.32, 12);
+    if (!o.broken) {
+      ctx.fillStyle = far ? '#2e2e5e' : '#3c3c6e';
+      ctx.fillRect(x - w * 0.62, top - 12, w * 1.24, 12);
+    }
+    ctx.strokeStyle = 'rgba(240,178,164,0.6)';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    const rimX = x < 560 ? x + w / 2 - 1.2 : x - w / 2 + 1.2;
+    ctx.moveTo(rimX, top + (o.broken ? 6 : 0));
+    ctx.lineTo(rimX, yB - 12);
+    ctx.stroke();
+  }
+
+  // Arche : deux piliers et une voûte en plein cintre ; gap = brèche facultative (fractions de π).
+  function arch(cx, yB, span, pillarH, th, gap, far) {
+    const sy = yB - pillarH;
+    const Ro = span + th / 2, Ri = span - th / 2;
+    const col = far ? '#2c2c5a' : '#413f6e';
+    const colD = far ? '#222250' : '#2b2a52';
+    const pl = new Path2D(); pl.rect(cx - span - th / 2, sy, th, pillarH);
+    const pr = new Path2D(); pr.rect(cx + span - th / 2, sy, th, pillarH);
+    ctx.fillStyle = colD;
+    ctx.fill(pl);
+    ctx.fill(pr);
+    speck(pl, cx - span - th / 2, sy, cx - span + th / 2, yB, 30);
+    speck(pr, cx + span - th / 2, sy, cx + span + th / 2, yB, 30);
+    ctx.fillStyle = far ? '#2a2a58' : '#33335f';
+    ctx.fillRect(cx - span - th * 0.8, yB - 10, th * 1.6, 10);
+    ctx.fillRect(cx + span - th * 0.8, yB - 10, th * 1.6, 10);
+    const segs = gap ? [[Math.PI, gap[0] * Math.PI], [gap[1] * Math.PI, 2 * Math.PI]] : [[Math.PI, 2 * Math.PI]];
+    for (const seg of segs) {
+      const a0 = seg[0], a1 = seg[1];
+      const p = new Path2D();
+      p.arc(cx, sy, Ro, a0, a1);
+      p.arc(cx, sy, Ri, a1, a0, true);
+      p.closePath();
+      ctx.fillStyle = col;
+      ctx.fill(p);
+      speck(p, cx - Ro, sy - Ro, cx + Ro, sy + 2, 90);
+      ctx.strokeStyle = 'rgba(14,14,36,0.3)';
+      ctx.lineWidth = 1.1;
+      for (let a = a0 + 0.22; a < a1 - 0.1; a += 0.27) {
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * Ri, sy + Math.sin(a) * Ri);
+        ctx.lineTo(cx + Math.cos(a) * Ro, sy + Math.sin(a) * Ro);
+        ctx.stroke();
+      }
+      const ra = Math.max(a0, Math.PI * 1.25), rb = Math.min(a1, Math.PI * 1.75);
+      if (rb > ra) {
+        ctx.strokeStyle = 'rgba(240,178,164,0.6)';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.arc(cx, sy, Ro - 1, ra, rb);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // Bloc effondré.
+  function block(x, y, w, h, far) {
+    const p = new Path2D(); p.rect(x, y, w, h);
+    const g = ctx.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, far ? '#34335f' : '#5f5c8e');
+    g.addColorStop(1, far ? '#222250' : '#2c2c58');
+    ctx.fillStyle = g;
+    ctx.fill(p);
+    speck(p, x, y, x + w, y + h, 12);
+    ctx.strokeStyle = 'rgba(240,178,164,0.4)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(x, y + 0.6);
+    ctx.lineTo(x + w, y + 0.6);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(14,14,36,0.3)';
+    ctx.beginPath();
+    ctx.moveTo(x + w * 0.4, y);
+    ctx.lineTo(x + w * 0.4 + R(-2, 2), y + h);
+    ctx.stroke();
+  }
+
+  // Tambour de colonne couché.
+  function drum(x, yc, len, d) {
+    const g = ctx.createLinearGradient(0, yc - d / 2, 0, yc + d / 2);
+    g.addColorStop(0, '#6a679a');
+    g.addColorStop(1, '#2a2a58');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, yc - d / 2, len, d);
+    ctx.fillStyle = '#7b78ad';
+    ctx.beginPath();
+    ctx.ellipse(x + len, yc, d * 0.2, d / 2, 0, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = '#403f72';
+    ctx.beginPath();
+    ctx.ellipse(x + len, yc, d * 0.13, d * 0.33, 0, 0, TAU);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(14,14,36,0.3)';
+    ctx.lineWidth = 1.1;
+    for (let xx = x + len * 0.35; xx < x + len - 6; xx += len * 0.33) {
+      ctx.beginPath();
+      ctx.moveTo(xx, yc - d / 2);
+      ctx.lineTo(xx, yc + d / 2);
+      ctx.stroke();
+    }
+  }
+
+  function ruins() {
+    // second plan : plus pâle, flouté, voilé par la brume
+    ctx.filter = 'blur(1.2px)';
+    column(120, HZ + 22, 40, 170, { far: true, broken: true });
+    column(190, HZ + 22, 32, 96, { far: true, broken: true });
+    ctx.filter = 'none';
+    mist(0.22, 520);
+    // ombres de contact au sol
+    ctx.fillStyle = 'rgba(8,8,24,0.3)';
+    ctx.filter = 'blur(3px)';
+    for (const sb of [[330, 150], [520, 70], [620, 60], [780, 130], [120, 60], [190, 50]]) {
+      ctx.beginPath();
+      ctx.ellipse(sb[0], HZ + 26, sb[1] * 0.3, 3, 0, 0, TAU);
+      ctx.fill();
+    }
+    ctx.filter = 'none';
+    // premier plan
+    arch(330, HZ + 24, 104, 150, 24, [1.80, 1.98], false);
+    column(520, HZ + 26, 46, 236, { broken: true });
+    column(620, HZ + 26, 40, 112, { broken: true });
+    arch(780, HZ + 24, 78, 118, 22, null, false);
+    drum(400, HZ + 30, 96, 40);
+    block(600, HZ + 18, 34, 18, false);
+    block(655, HZ + 26, 26, 14, false);
+    block(252, HZ + 36, 44, 20, false);
+    block(880, HZ + 30, 30, 14, false);
+    // lierre sur les piliers et les colonnes
+    ivy(214, HZ + 24 - 130, 110, 70);
+    ivy(494, HZ + 26 - 200, 120, 60);
+    ivy(698, HZ + 24 - 90, 80, 40);
+    ivy(856, HZ + 24 - 100, 70, 30);
+  }
+
+  // Lucioles et étincelles de magie.
+  function glow(x, y, rad, rgb, a) {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, rad);
+    g.addColorStop(0, 'rgba(' + rgb + ',' + a + ')');
+    g.addColorStop(0.35, 'rgba(' + rgb + ',' + (a * 0.35) + ')');
+    g.addColorStop(1, 'rgba(' + rgb + ',0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, rad, 0, TAU);
+    ctx.fill();
+  }
+  function sparks() {
+    const GOLD = '240,215,142', BLUE = '207,230,255';
+    const one = (x, y) => {
+      const c = rnd() < 0.62 ? GOLD : BLUE;
+      const r = R(0.7, 1.5);
+      glow(x, y, r * 5, c, R(0.3, 0.6));
+      ctx.fillStyle = 'rgba(255,255,250,0.9)';
+      ctx.beginPath();
+      ctx.arc(x, y, r * 0.5, 0, TAU);
+      ctx.fill();
+    };
+    for (let i = 0; i < 60; i++) one(R(160, 930), R(170, 560));
+    for (let i = 0; i < 16; i++) one(R(60, 1000), R(480, 620));
+  }
+
+  // Vignettage, bas et droite assombris pour les panneaux.
+  function shade() {
+    const v = ctx.createRadialGradient(700, 420, 280, 720, 450, 1050);
+    v.addColorStop(0, 'rgba(4,5,16,0)');
+    v.addColorStop(1, 'rgba(4,5,16,0.72)');
+    ctx.fillStyle = v;
+    ctx.fillRect(0, 0, W, H);
+    const b = ctx.createLinearGradient(0, 500, 0, H);
+    b.addColorStop(0, 'rgba(6,7,22,0)');
+    b.addColorStop(0.35, 'rgba(6,7,22,0.45)');
+    b.addColorStop(0.7, 'rgba(6,7,22,0.72)');
+    b.addColorStop(1, 'rgba(6,7,22,0.9)');
+    ctx.fillStyle = b;
+    ctx.fillRect(0, 500, W, H - 500);
+    const rg = ctx.createLinearGradient(940, 0, W, 0);
+    rg.addColorStop(0, 'rgba(6,7,22,0)');
+    rg.addColorStop(1, 'rgba(6,7,22,0.5)');
+    ctx.fillStyle = rg;
+    ctx.fillRect(940, 0, W - 940, H);
+  }
+
+  // Grain très léger (amplitude +-3).
+  function grain() {
+    const img = ctx.getImageData(0, 0, cv.width, cv.height);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (rnd() - 0.5) * 6;
+      d[i] += n;
+      d[i + 1] += n;
+      d[i + 2] += n;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  // Calque du premier plan, dessiné hors écran puis flouté.
+  const off = document.createElement('canvas');
+  off.width = cv.width;
+  off.height = cv.height;
+  const octx = off.getContext('2d');
+  octx.setTransform(S, 0, 0, S, 0, 0);
+
+  sky();
+  stars();
+  hills();
+  ground();
+  mist(0.4, 900);
+  grass();
+  const back = [], front = [], near = [];
+  for (const f of field) {
+    if (f.y < HZ + 20) back.push(f);
+    else if (f.y < 600) front.push(f);
+    else near.push(f);
+  }
+  for (const f of back) flower(ctx, f.x, f.y, f.r, f.a);
+  ruins();
+  for (const f of front) flower(octx, f.x, f.y, f.r, f.a * 0.85);
+  const haze = ctx.createLinearGradient(0, HZ, 0, HZ + 280);
+  haze.addColorStop(0, 'rgba(170,150,210,0.22)');
+  haze.addColorStop(1, 'rgba(170,150,210,0)');
+  ctx.fillStyle = haze;
+  ctx.fillRect(0, HZ, W, 280);
+  for (const f of near) flower(octx, f.x, f.y, f.r * 1.1, f.a * 0.7);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.filter = 'blur(4px)';
+  ctx.drawImage(off, 0, 0);
+  ctx.restore();
+  sparks();
+  shade();
+  grain();
+  window.__ready = true;
+})();
+</script>
+</body>
+</html>
