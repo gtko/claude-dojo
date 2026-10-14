@@ -5,3 +5,5 @@ cache/
 config.json
 *.log
 *.bak-*
+dist/
+build/

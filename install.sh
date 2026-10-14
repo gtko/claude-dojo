@@ -1,20 +1,18 @@
 #!/usr/bin/env bash
 # Claude Dojo : installation macOS (fond d'écran animé, hooks et statusline de Claude Code).
+# Mince wrapper : les questions restent ici, toute la logique est dans src/setup.js.
 # Idempotent : relançable sans erreur ni doublon. Désinstallation : uninstall.sh.
 # Usage : ./install.sh [--yes] [--no-launchd] [--help]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SRC="$SCRIPT_DIR/src"
-SWIFT_SRC="$SCRIPT_DIR/mac/DojoWallpaper.swift"
+SETUP="$SCRIPT_DIR/src/setup.js"
+BUILD_SCRIPT="$SCRIPT_DIR/scripts/build-app.sh"
 DOJO="$HOME/.config/claude-dojo"
 APP="$HOME/Applications/DojoWallpaper.app"
-LA="$HOME/Library/LaunchAgents"
-CLAUDE_DIR="$HOME/.claude"
-SETTINGS="$CLAUDE_DIR/settings.json"
-LABEL_AGENT="io.github.claude-dojo.agent"
-LABEL_WALL="io.github.claude-dojo.wallpaper"
-STAMP="$(date +%Y%m%d-%H%M%S)"
+SETTINGS="$HOME/.claude/settings.json"
+# Pas de sondage du trousseau gh pendant l'installation (inutile ici).
+export DOJO_DETECT_NO_GH_AUTH=1
 
 # Valeurs décidées pendant les questions
 NODE=""
@@ -25,13 +23,10 @@ TZ_NAME=""
 OWNERS=""
 ROOTS=""
 CALS=""
-SL_STATE=""
-SL_CMD=""
-SL_ACTION="set"
+SL_ACTION="keep"
 HEAVY="keep"
 BREW_DO=0
 MISSING=""
-MIN=""
 
 say()  { printf '==> %s\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
@@ -85,7 +80,6 @@ if [ "$YES" = 0 ] && { : </dev/tty; } 2>/dev/null; then INTERACTIVE=1; fi
 is_set()  { eval "[ \"\${$1+x}\" = x ]"; }
 env_val() { eval "printf '%s' \"\${$1}\""; }
 is_num()  { printf '%s' "$1" | grep -Eq '^-?[0-9]+(\.[0-9]+)?$'; }
-xml_esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
 
 # Question texte : réponse sur stdout (défaut si vide ou non interactif).
 ask_text() {
@@ -138,6 +132,8 @@ node_ok() {
   [ -n "${1:-}" ] && [ -x "$1" ] && "$1" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 18 ? 0 : 1)' >/dev/null 2>&1
 }
 
+# Seul moyen de lancer setup.js : trouver un node 18+ avant toute chose.
+# Ensuite, setup.js (detect) reste la référence pour le reste.
 # Node 18+ : PATH, Homebrew, /usr/local, volta, fnm, puis nvm (la version la plus récente d'abord).
 find_node() {
   local c list
@@ -160,50 +156,48 @@ EOF
   return 1
 }
 
-# Géocodage Open-Meteo : stdout = lat<TAB>lon<TAB>nom ; code retour 1 si rien trouvé.
-geocode() {
-  local json
-  json="$(curl -fsS --max-time 15 -G \
-    --data-urlencode "name=$1" --data-urlencode count=1 \
-    --data-urlencode language=fr --data-urlencode format=json \
-    'https://geocoding-api.open-meteo.com/v1/search' 2>/dev/null)" || return 1
-  "$NODE" - "$json" <<'JS'
-let j;
-try { j = JSON.parse(process.argv[2]); } catch (e) { process.exit(1); }
-const r = j && Array.isArray(j.results) ? j.results[0] : null;
-if (!r) process.exit(1);
-process.stdout.write([r.latitude, r.longitude, r.name].join('\t'));
-JS
+# Champ d'une réponse JSON de setup.js : json_field <json> <expression sur d> (vide si null ou absent).
+json_field() {
+  printf '%s' "$1" | "$NODE" -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));const v=($2);process.stdout.write(v==null?'':(typeof v==='object'?JSON.stringify(v):String(v)))"
 }
 
-# Lit settings.json (sans le modifier) : absent | none | dojo | other:<commande>. Exit 2 si invalide.
-probe_settings() {
-  "$NODE" - "$SETTINGS" <<'JS'
-const fs = require('fs');
-const file = process.argv[2];
-if (!fs.existsSync(file)) { console.log('absent'); process.exit(0); }
-const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
-let s;
-try {
-  const raw = fs.readFileSync(file, 'utf8');
-  s = raw.trim() === '' ? {} : JSON.parse(raw);
-} catch (e) { console.error(file + ' : JSON invalide (' + e.message + ')'); process.exit(2); }
-if (!isObj(s)) { console.error(file + ' : un objet JSON est attendu'); process.exit(2); }
-if (s.hooks !== undefined && !isObj(s.hooks)) { console.error(file + " : 'hooks' doit être un objet"); process.exit(2); }
-if (s.env !== undefined && !isObj(s.env)) { console.error(file + " : 'env' doit être un objet"); process.exit(2); }
-const sl = s.statusLine;
-if (!sl) { console.log('none'); process.exit(0); }
-const cmd = isObj(sl) ? [sl.command, ...(Array.isArray(sl.args) ? sl.args : [])].join(' ') : String(sl);
-if (/claude-dojo\/statusline\.js/.test(cmd)) console.log('dojo');
-else console.log('other:' + cmd);
-JS
+# Options JSON à partir de paires clé=valeur (true et false reconnus, le reste en texte).
+kv_json() {
+  "$NODE" -e 'const o={};for(const a of process.argv.slice(1)){const i=a.indexOf("=");const k=a.slice(0,i);const v=a.slice(i+1);o[k]=v==="true"?true:v==="false"?false:v;}process.stdout.write(JSON.stringify(o))' "$@"
+}
+
+# Lance setup.js, renvoie sa réponse JSON. Erreur : arrête avec le message de setup.js.
+setup() {
+  local out err
+  if ! out="$("$NODE" "$SETUP" "$@")"; then
+    err="$(json_field "$out" 'd.error' 2>/dev/null || true)"
+    die "${err:-setup.js a échoué ($1)}"
+  fi
+  printf '%s' "$out"
+}
+
+# Config à partir des réponses : URL d'agenda invalides ignorées (comme avant), ~ développé par setup.js.
+config_json() {
+  "$NODE" -e '
+const [name, lat, lon, tz, owners, roots, cals] = process.argv.slice(1);
+const csv = (s) => (s || "").split(",").map((x) => x.trim()).filter(Boolean);
+const urls = csv(cals);
+const valid = urls.filter((u) => /^(https?|webcal):\/\//i.test(u));
+if (valid.length !== urls.length) console.error("Attention : entrée(s) d agenda ignorée(s), attendu une URL https ou webcal.");
+const cfg = {};
+if (lat && lon) cfg.weather = { name, lat: Number(lat), lon: Number(lon), timezone: tz || "UTC" };
+cfg.calendars = valid;
+cfg.github = { owners: csv(owners) };
+cfg.projects = { roots: csv(roots), onlyOwners: false };
+process.stdout.write(JSON.stringify(cfg));
+' "$WEATHER_NAME" "$WEATHER_LAT" "$WEATHER_LON" "$TZ_NAME" "$OWNERS" "$ROOTS" "$CALS"
 }
 
 # ── 1. Pré-requis ────────────────────────────────────────────────────────
 say "Vérifications"
 [ "$(uname -s)" = Darwin ] || die "Claude Dojo ne s'installe que sur macOS."
-[ -d "$SRC" ] || die "dossier src/ introuvable à côté de install.sh ($SRC)."
-[ -f "$SWIFT_SRC" ] || die "mac/DojoWallpaper.swift introuvable ($SWIFT_SRC)."
+[ -f "$SETUP" ] || die "src/setup.js introuvable à côté de install.sh ($SETUP)."
+[ -x "$BUILD_SCRIPT" ] || die "scripts/build-app.sh introuvable ou non exécutable ($BUILD_SCRIPT)."
 if [ "$YES" = 0 ] && [ "$INTERACTIVE" = 0 ]; then
   warn "pas de terminal interactif : réponses par défaut (comme --yes)."
 fi
@@ -225,31 +219,42 @@ if ! swiftc --version >/dev/null 2>&1; then
 fi
 info "swiftc disponible"
 
-PROBE="$(probe_settings)" || die "$SETTINGS est illisible ou invalide : corrige-le (ou déplace-le), puis relance."
-case "$PROBE" in
-  other:*) SL_STATE=other; SL_CMD="${PROBE#other:}" ;;
-  *) SL_STATE="$PROBE" ;;
+DETECT="$(setup detect)"
+SETTINGS_ERR="$(json_field "$DETECT" 'd.settings.error' 2>/dev/null || true)"
+[ -z "$SETTINGS_ERR" ] || die "$SETTINGS est illisible ou invalide : corrige-le (ou déplace-le), puis relance."
+
+# statusline : aucune (none), dojo, ou autre (other)
+SL_CMD="$(json_field "$DETECT" 'd.settings.statusLine ? [d.settings.statusLine.command].concat(Array.isArray(d.settings.statusLine.args) ? d.settings.statusLine.args : []).join(" ") : ""')"
+case "$SL_CMD" in
+  "") SL_STATE=none ;;
+  *claude-dojo/statusline.js*) SL_STATE=dojo ;;
+  *) SL_STATE=other ;;
 esac
+HEAVY_NOW=0
+[ "$(json_field "$DETECT" 'd.settings.heavyGateDojo')" = true ] && HEAVY_NOW=1
+HEAVY_PERSO=0
+[ "$(json_field "$DETECT" 'd.settings.heavyGatePerso')" = true ] && HEAVY_PERSO=1
+CFG_EXISTS=0
+[ "$(json_field "$DETECT" 'd.install.configExists')" = true ] && CFG_EXISTS=1
 
 # ── 2. Questions ─────────────────────────────────────────────────────────
 say "Configuration"
-CFG_EXISTS=0
-if [ -f "$DOJO/config.json" ]; then CFG_EXISTS=1; fi
-
 if [ "$CFG_EXISTS" = 1 ]; then
   info "config.json existant conservé ($DOJO/config.json) : modifie-le pour la météo, l'agenda ou GitHub."
 else
   city=""
   if is_set DOJO_CITY; then city="$(env_val DOJO_CITY)"; else city="$(ask_text 'Ville pour la météo (vide = pas de météo)' '')"; fi
   if [ -n "$city" ]; then
-    lat=""; lon=""; geo=""
+    lat=""; lon=""
     if is_set DOJO_LAT && is_set DOJO_LON; then
       lat="$(env_val DOJO_LAT)"; lon="$(env_val DOJO_LON)"; WEATHER_NAME="$city"
     else
-      geo="$(geocode "$city" 2>/dev/null || true)"
-      if [ -n "$geo" ]; then
-        lat="$(printf '%s' "$geo" | cut -f1)"; lon="$(printf '%s' "$geo" | cut -f2)"
-        WEATHER_NAME="$(printf '%s' "$geo" | cut -f3)"
+      geo="$("$NODE" "$SETUP" geocode "$city" 2>/dev/null || true)"
+      glat="$(json_field "$geo" 'd.results && d.results[0] ? d.results[0].lat : ""' 2>/dev/null || true)"
+      if [ -n "$glat" ]; then
+        lat="$glat"
+        lon="$(json_field "$geo" 'd.results[0].lon' 2>/dev/null || true)"
+        WEATHER_NAME="$(json_field "$geo" 'd.results[0].name' 2>/dev/null || true)"
         info "Ville trouvée : $WEATHER_NAME ($lat, $lon)"
       else
         warn "géocodage impossible pour « $city »."
@@ -276,8 +281,6 @@ else
 fi
 
 # heavy-gate : non défini en --yes = état actuel conservé ; défaut interactif = état actuel
-HEAVY_NOW=0
-if grep -q 'claude-dojo/heavy-gate\.js' "$SETTINGS" 2>/dev/null; then HEAVY_NOW=1; fi
 if is_set DOJO_HEAVY_GATE; then
   case "$(yn_from_env DOJO_HEAVY_GATE)" in
     y) HEAVY=on ;;
@@ -288,13 +291,12 @@ elif [ "$INTERACTIVE" = 1 ]; then
   def=n; if [ "$HEAVY_NOW" = 1 ]; then def=y; fi
   if ask_yn "Activer heavy-gate (limite les suites lourdes lancées en parallèle sur Bash) ?" "$def"; then HEAVY=on; else HEAVY=off; fi
 fi
-if [ "$HEAVY" = on ] && grep -q 'heavy-gate\.js' "$SETTINGS" 2>/dev/null && [ "$HEAVY_NOW" = 0 ]; then
+if [ "$HEAVY" = on ] && [ "$HEAVY_PERSO" = 1 ] && [ "$HEAVY_NOW" = 0 ]; then
   warn "un autre heavy-gate est déjà enregistré dans $SETTINGS : les deux se cumuleraient."
 fi
 
 # statusline : aucune → installée ; dojo → mise à jour ; autre → remplacée seulement sur demande
 if [ "$SL_STATE" = other ]; then
-  SL_ACTION=keep
   sl_choice=ask
   if is_set DOJO_STATUSLINE; then sl_choice="$(yn_from_env DOJO_STATUSLINE)"; fi
   case "$sl_choice" in
@@ -306,240 +308,95 @@ if [ "$SL_STATE" = other ]; then
   esac
 fi
 
-# dépendances optionnelles
-for t in macmon media-control; do
-  if ! command -v "$t" >/dev/null 2>&1; then MISSING="$MISSING $t"; fi
-done
+# dépendances optionnelles (macmon, media-control) selon setup.js detect
+[ -n "$(json_field "$DETECT" 'd.macmon && d.macmon.path')" ] || MISSING="macmon"
+[ -n "$(json_field "$DETECT" 'd.mediaControl && d.mediaControl.path')" ] || MISSING="$MISSING media-control"
 MISSING="${MISSING# }"
-if command -v brew >/dev/null 2>&1; then
+BREW_PATH="$(json_field "$DETECT" 'd.brew && d.brew.path')"
+GH_PATH="$(json_field "$DETECT" 'd.gh && d.gh.path')"
+if [ -n "$BREW_PATH" ]; then
   if [ -n "$MISSING" ]; then
     choice=ask
     if is_set DOJO_BREW; then choice="$(yn_from_env DOJO_BREW)"; fi
     if [ "$choice" = y ] || { [ "$choice" = ask ] && ask_yn "Installer avec brew ($MISSING) : capteurs et musique du Dojo ?" n; }; then BREW_DO=1; fi
   fi
-  command -v gh >/dev/null 2>&1 || info "gh absent (optionnel, sert aux dépôts GitHub) : brew install gh"
+  [ -n "$GH_PATH" ] || info "gh absent (optionnel, sert aux dépôts GitHub) : brew install gh"
 else
   if [ -n "$MISSING" ]; then info "brew absent : installe $MISSING à la main pour les capteurs et la musique (optionnel)."; fi
-  command -v gh >/dev/null 2>&1 || info "gh absent (optionnel) : https://cli.github.com"
+  [ -n "$GH_PATH" ] || info "gh absent (optionnel) : https://cli.github.com"
 fi
 
 # ── 3. Installation ──────────────────────────────────────────────────────
 say "Fichiers dans $DOJO"
-mkdir -p "$DOJO/cache" "$LA" "$CLAUDE_DIR" "$HOME/Applications"
-for item in "$SRC"/*; do
-  [ -e "$item" ] || continue
-  name="$(basename "$item")"
-  case "$name" in config.json|cache|node_modules) continue ;; esac
-  if [ -d "$item" ]; then
-    rm -rf "${DOJO:?}/$name"
-    cp -R "$item" "$DOJO/$name"
-  else
-    cp -f "$item" "$DOJO/$name"
-  fi
-done
+setup install-files "$SCRIPT_DIR/src" >/dev/null
 
 if [ "$BREW_DO" = 1 ]; then
   say "brew install $MISSING"
   # shellcheck disable=SC2086 # la liste de paquets est volontairement découpée
-  if ! brew install $MISSING; then warn "brew install a échoué : capteurs et musique indisponibles."; fi
+  if ! "$BREW_PATH" install $MISSING; then warn "brew install a échoué : capteurs et musique indisponibles."; fi
 fi
 
 if [ "$CFG_EXISTS" = 0 ]; then
   say "config.json"
-  "$NODE" - "$DOJO/config.json" "$WEATHER_NAME" "$WEATHER_LAT" "$WEATHER_LON" "$TZ_NAME" "$OWNERS" "$ROOTS" "$CALS" <<'JS'
-const fs = require('fs');
-const [file, name, lat, lon, tz, owners, roots, cals] = process.argv.slice(2);
-const csv = (s) => (s || '').split(',').map((x) => x.trim()).filter(Boolean);
-const expand = (p) => p.replace(/^~(?=$|\/)/, process.env.HOME);
-const cfg = {};
-if (lat && lon) cfg.weather = { name, lat: Number(lat), lon: Number(lon), timezone: tz || 'UTC' };
-const urls = csv(cals);
-const valid = urls.filter((u) => /^(https?|webcal):\/\//i.test(u));
-if (valid.length !== urls.length) console.error("Attention : entrée(s) d'agenda ignorée(s), attendu une URL https ou webcal.");
-cfg.calendars = valid;
-cfg.github = { owners: csv(owners) };
-cfg.projects = { roots: csv(roots).map(expand), onlyOwners: false };
-fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 });
-JS
+  setup write-config "$(config_json)" >/dev/null
   info "créé : $DOJO/config.json (droits 0600, il peut contenir une URL privée)"
 fi
 
 say "Dépendances npm (node-ical)"
-NPM="$(dirname "$NODE")/npm"
-if [ ! -x "$NPM" ]; then NPM="$(command -v npm || true)"; fi
-[ -n "$NPM" ] || die "npm introuvable (il vient normalement avec node)."
-( cd "$DOJO" && PATH="$(dirname "$NODE"):$PATH" "$NPM" install --omit=dev --no-audit --no-fund --silent ) \
-  || die "npm install a échoué dans $DOJO (réseau ?). Relance install.sh une fois la connexion rétablie."
+setup npm-install "$NODE" >/dev/null
 
-say "DojoWallpaper.app (compilation Swift)"
-mkdir -p "$APP/Contents/MacOS"
-ARCH="$(uname -m)"
-BUILD_LOG="$DOJO/cache/swiftc.log"
-rm -f "$APP/Contents/MacOS/DojoWallpaper.new"
-for v in 11.0 12.0 13.0 14.0; do
-  if swiftc -O "$SWIFT_SRC" -o "$APP/Contents/MacOS/DojoWallpaper.new" \
-       -framework Cocoa -framework WebKit -target "$ARCH-apple-macos$v" >"$BUILD_LOG" 2>&1; then
-    MIN="$v"
-    break
-  fi
-  info "échec pour macOS $v minimum, essai suivant"
-done
-if [ -z "$MIN" ]; then
+say "DojoWallpaper.app (scripts/build-app.sh, sans DMG)"
+BUILD_TMP="$(mktemp -d)"
+trap 'rm -rf "$BUILD_TMP"' EXIT
+BUILD_LOG="$DOJO/cache/build-app.log"
+mkdir -p "$DOJO/cache"
+VERSION="$(json_field "$(cat "$SCRIPT_DIR/src/package.json")" 'd.version')"
+if ! BUILD_DIR="$BUILD_TMP/build" "$BUILD_SCRIPT" --version "$VERSION" --out "$BUILD_TMP/out" --no-dmg >"$BUILD_LOG" 2>&1; then
   tail -n 15 "$BUILD_LOG" >&2 || true
   die "compilation impossible (journal complet : $BUILD_LOG)"
 fi
-mv -f "$APP/Contents/MacOS/DojoWallpaper.new" "$APP/Contents/MacOS/DojoWallpaper"
 rm -f "$BUILD_LOG"
-cat > "$APP/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>CFBundleIdentifier</key><string>$LABEL_WALL</string>
-  <key>CFBundleName</key><string>DojoWallpaper</string>
-  <key>CFBundleExecutable</key><string>DojoWallpaper</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
-  <key>CFBundleVersion</key><string>1</string>
-  <key>LSMinimumSystemVersion</key><string>$MIN</string>
-  <key>LSUIElement</key><true/>
-  <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
-  <key>NSAppleEventsUsageDescription</key><string>Ramener la fenêtre d'une session Claude au clic sur son ninja.</string>
-</dict></plist>
-PLIST
-codesign --force --sign - "$APP" >/dev/null 2>&1 || warn "signature ad hoc impossible : Gatekeeper pourrait bloquer l'app."
-info "compilée pour $ARCH, macOS $MIN minimum : $APP"
+rm -rf "$APP"
+mkdir -p "$HOME/Applications"
+ditto "$BUILD_TMP/out/DojoWallpaper.app" "$APP"
+MIN="$(plutil -extract LSMinimumSystemVersion raw -o - "$APP/Contents/Info.plist" 2>/dev/null || printf '?')"
+info "compilée pour $(uname -m), macOS $MIN minimum : $APP"
 
+# Les plists sont écrits avant la fusion des réglages, chargés après (comme avant).
 say "LaunchAgents (écriture)"
-node_x="$(xml_esc "$NODE")"
-dojo_x="$(xml_esc "$DOJO")"
-app_x="$(xml_esc "$APP")"
-la_path="/opt/homebrew/bin:/usr/local/bin:$(xml_esc "$(dirname "$NODE")"):/usr/bin:/bin:/usr/sbin:/sbin"
-cat > "$LA/$LABEL_AGENT.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>$LABEL_AGENT</string>
-  <key>ProgramArguments</key><array><string>$node_x</string><string>$dojo_x/agent-mac.js</string></array>
-  <key>WorkingDirectory</key><string>$dojo_x</string>
-  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$la_path</string></dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>$dojo_x/cache/agent.log</string>
-  <key>StandardErrorPath</key><string>$dojo_x/cache/agent.log</string>
-</dict></plist>
-PLIST
-cat > "$LA/$LABEL_WALL.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>$LABEL_WALL</string>
-  <key>ProgramArguments</key><array><string>$app_x/Contents/MacOS/DojoWallpaper</string></array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
-  <key>LimitLoadToSessionType</key><string>Aqua</string>
-  <key>StandardOutPath</key><string>$dojo_x/cache/wallpaper.log</string>
-  <key>StandardErrorPath</key><string>$dojo_x/cache/wallpaper.log</string>
-</dict></plist>
-PLIST
-info "$LA/$LABEL_AGENT.plist"
-info "$LA/$LABEL_WALL.plist"
+WRITE_JSON="$(setup launchagents install "$(kv_json node="$NODE" app="$APP" noLaunchd=true)")"
+while IFS= read -r p; do
+  [ -n "$p" ] && info "$p"
+done <<EOF
+$(json_field "$WRITE_JSON" 'd.written.join("\n")')
+EOF
+while IFS= read -r w; do
+  [ -n "$w" ] && warn "$w"
+done <<EOF
+$(json_field "$WRITE_JSON" 'd.warnings.join("\n")')
+EOF
 
 say "Hooks et statusline dans $SETTINGS"
-merge_settings() {
-  "$NODE" - "$SETTINGS" "$NODE" "$DOJO" "$HEAVY" "$SL_ACTION" "$STAMP" <<'JS'
-const fs = require('fs');
-const path = require('path');
-const [file, node, dojo, heavyMode, slAction, stamp] = process.argv.slice(2);
-
-const EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Notification', 'Stop', 'SessionEnd'];
-const RE = {
-  hook: /claude-dojo\/hook\.js/,
-  heavy: /claude-dojo\/heavy-gate\.js/,
-  statusline: /claude-dojo\/statusline\.js/,
-};
-const q = (p) => '"' + p + '"';
-const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
-// Commande complète, quel que soit le format (« command » seule ou « command » + « args »)
-const cmdOf = (h) => [h.command, ...(Array.isArray(h.args) ? h.args : [])].join(' ');
-const isDojo = (h, re) => isObj(h) && re.test(cmdOf(h));
-const hasDojo = (list, re) => Array.isArray(list) && list.some((g) => isObj(g) && Array.isArray(g.hooks) && g.hooks.some((h) => isDojo(h, re)));
-
-// Retire les entrées dojo d'un événement et insère « canonical » à la place de la première occurrence.
-// canonical = null : suppression seule.
-function setDojoGroup(list, re, canonical) {
-  const out = [];
-  let at = -1;
-  for (const g of list) {
-    if (!isObj(g) || !Array.isArray(g.hooks) || !g.hooks.some((h) => isDojo(h, re))) { out.push(g); continue; }
-    if (at < 0) at = out.length;
-    const rest = g.hooks.filter((h) => !isDojo(h, re));
-    if (rest.length) out.push({ ...g, hooks: rest });
-  }
-  if (canonical) { if (at < 0) out.push(canonical); else out.splice(at, 0, canonical); }
-  return out;
-}
-
-let before = null;
-let s = {};
-if (fs.existsSync(file)) {
-  before = fs.readFileSync(file, 'utf8');
-  s = before.trim() === '' ? {} : JSON.parse(before);
-}
-if (!isObj(s.hooks)) s.hooks = {};
-
-for (const ev of EVENTS) {
-  const list = Array.isArray(s.hooks[ev]) ? s.hooks[ev] : [];
-  s.hooks[ev] = setDojoGroup(list, RE.hook, {
-    hooks: [{ type: 'command', command: q(node) + ' ' + q(dojo + '/hook.js'), async: true }],
-  });
-}
-
-if (heavyMode === 'on') {
-  s.hooks.PreToolUse = setDojoGroup(s.hooks.PreToolUse, RE.heavy, {
-    matcher: 'Bash',
-    hooks: [{ type: 'command', command: q(node) + ' ' + q(dojo + '/heavy-gate.js'), timeout: 10 }],
-  });
-  if (!isObj(s.env)) s.env = {};
-  if (s.env.VITEST_MAX_WORKERS === undefined) s.env.VITEST_MAX_WORKERS = '2';
-} else if (heavyMode === 'off') {
-  const had = hasDojo(s.hooks.PreToolUse, RE.heavy);
-  if (Array.isArray(s.hooks.PreToolUse)) s.hooks.PreToolUse = setDojoGroup(s.hooks.PreToolUse, RE.heavy, null);
-  if (had && isObj(s.env) && s.env.VITEST_MAX_WORKERS === '2') {
-    delete s.env.VITEST_MAX_WORKERS;
-    if (Object.keys(s.env).length === 0) delete s.env;
-  }
-}
-
-const statusLine = { type: 'command', command: q(node) + ' ' + q(dojo + '/statusline.js'), refreshInterval: 30 };
-if (slAction === 'replace') s.statusLine = statusLine;
-else if (slAction === 'set' && (!s.statusLine || isDojo(s.statusLine, RE.statusline))) s.statusLine = statusLine;
-
-const after = JSON.stringify(s, null, 2) + '\n';
-if (before !== null && after === before) { console.log('RESULT:unchanged'); process.exit(0); }
-if (before !== null) {
-  const bak = file + '.bak-' + stamp;
-  fs.copyFileSync(file, bak);
-  console.log('BACKUP:' + bak);
-}
-fs.mkdirSync(path.dirname(file), { recursive: true });
-fs.writeFileSync(file, after);
-console.log('RESULT:' + (before === null ? 'created' : 'updated'));
-JS
-}
-MERGE_OUT="$(merge_settings)" || die "fusion de $SETTINGS impossible : fichier laissé tel quel."
-case "$MERGE_OUT" in
-  *RESULT:unchanged*) info "déjà à jour : aucune modification, aucune sauvegarde" ;;
-  *RESULT:created*) info "créé avec les hooks Dojo" ;;
-  *RESULT:updated*) info "mis à jour (ajouts Dojo uniquement)" ;;
+merge_opts=(node="$NODE" statusLine="$SL_ACTION")
+case "$HEAVY" in
+  on) merge_opts+=(heavyGate=true) ;;
+  off) merge_opts+=(heavyGate=false) ;;
 esac
-case "$MERGE_OUT" in
-  *BACKUP:*) info "sauvegarde : $(printf '%s\n' "$MERGE_OUT" | sed -n 's/^BACKUP://p')" ;;
-esac
+MERGE="$(setup merge-settings "$(kv_json "${merge_opts[@]}")")"
+if [ "$(json_field "$MERGE" 'd.changed')" = false ]; then
+  info "déjà à jour : aucune modification, aucune sauvegarde"
+elif [ "$(json_field "$MERGE" 'd.before === null')" = true ]; then
+  info "créé avec les hooks Dojo"
+else
+  info "mis à jour (ajouts Dojo uniquement)"
+fi
+BACKUP="$(json_field "$MERGE" 'd.backup' 2>/dev/null || true)"
+[ -z "$BACKUP" ] || info "sauvegarde : $BACKUP"
 case "$SL_ACTION" in
   replace) info "statusline : remplacée par celle de Dojo" ;;
-  set) info "statusline : Dojo" ;;
-  keep) info "statusline existante conservée (pour la remplacer : DOJO_STATUSLINE=y ou réponse oui)" ;;
+  keep)
+    if [ "$SL_STATE" = other ]; then info "statusline existante conservée (pour la remplacer : DOJO_STATUSLINE=y ou réponse oui)"
+    else info "statusline : Dojo"; fi ;;
 esac
 case "$HEAVY" in
   on) info "heavy-gate : enregistré (VITEST_MAX_WORKERS=2 si absent)" ;;
@@ -548,35 +405,31 @@ case "$HEAVY" in
 esac
 
 # ── 4. launchd ───────────────────────────────────────────────────────────
-UIDN="$(id -u)"
 if [ "$NO_LAUNCHD" = 0 ]; then
   say "LaunchAgents : migration puis (re)chargement"
-  # Migration : seuls les anciens labels com.<auteur>.claude-dojo.* sont retirés (pas de glob *claude-dojo*).
-  for p in "$LA"/com.*.claude-dojo.agent.plist "$LA"/com.*.claude-dojo.wallpaper.plist; do
-    [ -e "$p" ] || continue
-    name="$(basename "$p" .plist)"
-    launchctl bootout "gui/$UIDN/$name" 2>/dev/null || true
-    rm -f "$p"
-    info "migration : ancien LaunchAgent $name déchargé et supprimé"
-  done
-  for label in "$LABEL_AGENT" "$LABEL_WALL"; do
-    launchctl bootout "gui/$UIDN/$label" 2>/dev/null || true
-    i=0
-    # bootout est asynchrone : on attend le déchargement avant de recharger
-    while [ "$i" -lt 10 ] && launchctl print "gui/$UIDN/$label" >/dev/null 2>&1; do sleep 0.5; i=$((i + 1)); done
-    if launchctl bootstrap "gui/$UIDN" "$LA/$label.plist" 2>/dev/null; then
-      info "$label : chargé"
-    else
-      warn "$label : chargement impossible. Essaie : launchctl bootstrap gui/$UIDN $LA/$label.plist"
-    fi
-  done
+  LOAD="$(setup launchagents install "$(kv_json node="$NODE" app="$APP")")"
+  while IFS= read -r n; do
+    [ -n "$n" ] && info "migration : ancien LaunchAgent $n déchargé et supprimé"
+  done <<EOF
+$(json_field "$LOAD" 'd.migrated.join("\n")')
+EOF
+  while IFS= read -r l; do
+    [ -n "$l" ] && info "$l : chargé"
+  done <<EOF
+$(json_field "$LOAD" 'd.loaded.join("\n")')
+EOF
+  while IFS= read -r w; do
+    [ -n "$w" ] && warn "$w"
+  done <<EOF
+$(json_field "$LOAD" 'd.warnings.join("\n")')
+EOF
 else
   say "LaunchAgents : écrits mais ni chargés ni déchargés (--no-launchd)"
-  for p in "$LA"/com.*.claude-dojo.agent.plist "$LA"/com.*.claude-dojo.wallpaper.plist; do
-    [ -e "$p" ] || continue
-    name="$(basename "$p" .plist)"
-    warn "ancien LaunchAgent $name laissé en place (--no-launchd). Relance sans --no-launchd pour le retirer."
-  done
+  while IFS= read -r w; do
+    [ -n "$w" ] && warn "$w"
+  done <<EOF
+$(json_field "$WRITE_JSON" 'd.warnings.join("\n")')
+EOF
 fi
 
 # ── 5. Récapitulatif ─────────────────────────────────────────────────────

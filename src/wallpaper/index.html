@@ -1492,6 +1492,10 @@ async function poll() {
     document.body.classList.add('offline');
   }
 }
+// Démo navigateur (#demo) : la zone sûre de l'encoche vient normalement de l'app Mac (pushSafe).
+// Valeurs telles que pushSafe les envoie pour un MacBook Pro 16" (1728 pt de large, zoom 0,68) :
+// encoche 200 × 32 pt, zone sûre haute 32 pt, divisées par le zoom (32 / 0,68 = 47 ; 200 / 0,68 = 294).
+if (location.hash === '#demo') setSafe({ top: 47, left: 0, notchW: 294, notchH: 47, mirror: false });
 poll();
 setInterval(poll, 2000);
 
