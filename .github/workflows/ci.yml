@@ -94,7 +94,7 @@ jobs:
           pattern='gtko|grego|mus-inn|Minzac|CascadeProjects|dotworld|mediamodifier|hermes'
           # The repository URL is allowed: remove it before matching.
           hits="$(grep -rniaE "$pattern" --exclude-dir=.git --exclude=ci.yml . \
-            | sed -E 's#github\.com/gtko/claude-dojo##g' \
+            | sed -E 's#gtko/claude-dojo##g' \
             | grep -iaE "$pattern" || true)"
           if [ -n "$hits" ]; then
             echo "$hits"
