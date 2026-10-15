@@ -124,15 +124,31 @@ pwsh -File install.ps1
 
 The installer is idempotent: running it again updates the installation without duplicating anything. It first stops the running agent and wallpaper, then:
 
-1. copies the Dojo files to `%USERPROFILE%\.config\claude-dojo` and installs their npm dependencies. It creates `config.json` the first time only, and keeps an existing one;
+1. copies the Dojo files to `%USERPROFILE%\.config\claude-dojo`, including the interface in `windows\ui` (without its `tests` folder), and installs their npm dependencies. It creates `config.json` the first time only, and keeps an existing one;
 2. adds the Dojo hooks to `%USERPROFILE%\.claude\settings.json`, after saving a backup of the file. An existing status line is kept. The heavy-gate hook is registered too (matcher `Bash|PowerShell`), unless you run `pwsh -File install.ps1 -NoHeavyGate`;
 3. sets up autostart with the `ClaudeDojoAgent` and `ClaudeDojoWallpaper` values of `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. The agent starts through `start-agent.vbs`, a hidden launcher, so no console window appears;
 4. gets `DojoWallpaper.exe` from the `DojoWallpaper-windows-x64.zip` asset of the release for this version of Dojo, checked against its `.sha256` file, and replaces the file already installed. If the release has no `.sha256` file, or the download fails, and the .NET SDK 8 is installed, it compiles the file instead. If that fails too, the installed file is kept and the installer says so;
-5. starts the agent in the background, at `http://localhost:7777`, and the wallpaper again if it was running.
+5. starts the agent in the background, at `http://localhost:7777`, and the wallpaper again if it was running;
+6. on a first installation only (there is no `config.json` before the run), starts the wallpaper with the setup assistant open. The assistant does not open in CI, in a non-interactive session, or with `pwsh -File install.ps1 -NoWizard` (or `DOJO_NO_WIZARD=1`).
 
 If `DojoWallpaper.exe` cannot be obtained, the installer says so. The agent and the Claude Code hooks still work without the wallpaper.
 
-The wallpaper has a tray icon (**Dojo Wallpaper**). Its menu offers **Interactive** (clicks go to the wallpaper, the default) or **Passive** (the wallpaper stays behind the icons), **Mirror left / right**, **Manual pause**, **Reload**, **Open config**, **Start with Windows** and **Quit Dojo**.
+The wallpaper has a tray icon (**Dojo Wallpaper**). Its menu offers **Interactive** (clicks go to the wallpaper, the default) or **Passive** (the wallpaper stays behind the icons), **Mirror left / right**, **Manual pause**, **Reload**, **Open config**, **Start with Windows** and **Quit Dojo**. Three more items open a window each: **Theme and background…**, **Wallpaper gallery…** and **Setup assistant…** (the configuration, step by step).
+
+### Terminal themes on Windows
+
+Two optional parts, both off by default:
+
+- **Windows Terminal**: a profile named `Claude Dojo`, with the colours of the theme and its background image when it has one. It is a fragment in `%LOCALAPPDATA%\Microsoft\Windows Terminal\Fragments\claude-dojo\`. Your Windows Terminal `settings.json` is never modified.
+- **Welcome header**: a logo and two lines from the theme at the start of each interactive PowerShell session. It is a block marked `# >>> claude-dojo >>>` in the PowerShell 7 and Windows PowerShell 5.1 profiles. `DOJO_WELCOME=off` turns it off.
+
+To turn them on:
+
+```powershell
+'{"windowsTerminal":true,"welcome":true}' | node "$env:USERPROFILE\.config\claude-dojo\setup.js" terminal apply -
+```
+
+`terminal remove` takes them off, and uninstalling removes them too.
 
 ### Uninstall
 
@@ -142,11 +158,11 @@ pwsh -File uninstall.ps1          # keeps config.json and your backgrounds
 pwsh -File uninstall.ps1 -Purge   # also deletes config.json and backgrounds
 ```
 
-The uninstaller stops the agent and the wallpaper, then removes the autostart values and the launcher, `DojoWallpaper.exe`, and the Dojo entries in `%USERPROFILE%\.claude\settings.json` (a backup is saved first). Processes that run from another folder, such as a personal agent, are left alone.
+The uninstaller stops the agent and the wallpaper, then removes the autostart values and the launcher, `DojoWallpaper.exe`, the interface in `windows\ui`, the terminal options above, and the Dojo entries in `%USERPROFILE%\.claude\settings.json` (a backup is saved first). Processes that run from another folder, such as a personal agent, are left alone.
 
 ### Files and logs
 
-- `%USERPROFILE%\.config\claude-dojo\`: the Dojo files, `config.json`, `start-agent.vbs`, `windows\bin\DojoWallpaper.exe`, and `cache\collector.log`.
+- `%USERPROFILE%\.config\claude-dojo\`: the Dojo files, `config.json`, `start-agent.vbs`, `windows\bin\DojoWallpaper.exe`, `windows\ui\` (the interface pages), and `cache\collector.log`.
 - `%USERPROFILE%\.claude\dojo\`: the state of each Claude Code session, written by the hooks.
 - `%LOCALAPPDATA%\claude-dojo\`: the current track and its cover, written by the media helper.
 - `%LOCALAPPDATA%\DojoWallpaper\dojo.log`: the log of the wallpaper.
@@ -157,10 +173,10 @@ The [configuration](#configuration) is the same on both systems, except that the
 
 | | macOS | Windows |
 |---|---|---|
-| Installation | DMG and setup assistant, or `install.sh` | `install.ps1` from the command line only. There is no setup assistant and no **Réglages…** window: change the settings in `config.json` |
+| Installation | DMG and setup assistant, or `install.sh` | `install.ps1` from the command line. The setup assistant opens after a first installation, and from the tray menu. There is no **Réglages…** window: the other settings are in `config.json` |
 | Window zone | Optional. Keeps the windows of other apps out of the panels | Not available: Dojo never moves windows, so no Accessibility permission is needed |
-| Terminal themes | Ghostty, Terminal.app and the zsh header | Not available |
-| Wallpaper gallery | **Fonds** menu and **Fonds d'écran…** window | Not in the tray menu |
+| Terminal themes | Ghostty, Terminal.app and the zsh header | Windows Terminal profile and PowerShell header, see [Terminal themes on Windows](#terminal-themes-on-windows) |
+| Wallpaper gallery | **Fonds** menu and **Fonds d'écran…** window | **Wallpaper gallery…** in the tray menu |
 | Menu | Menu bar icon | Tray icon, as described above |
 | Autostart | LaunchAgents in `~/Library/LaunchAgents` | `HKCU` Run values, with no administrator rights |
 | Sensors | `macmon` for temperatures and power | CPU name and memory from Windows. Temperatures come from [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor), which is optional: it must be running with its web server on port 8085 (`http://localhost:8085/data.json`). Without it, no temperature is shown |
@@ -404,7 +420,7 @@ Stage Manager has its own idea of where windows go. When it is on, Dojo also res
 - Apps that do not support the Accessibility API, or whose windows are not standard windows, are left alone.
 ## Terminal themes
 
-*macOS only. Windows has no terminal themes.*
+*macOS: Ghostty, Terminal.app and zsh. On Windows, see [Terminal themes on Windows](#terminal-themes-on-windows).*
 
 Each theme can also style your terminal. The terminal part of a theme has four pieces, and you choose which ones to apply:
 
@@ -704,7 +720,7 @@ launchctl kickstart -k gui/$(id -u)/io.github.claude-dojo.wallpaper
 - The themes are data in `src/themes/`, so adding one needs no change to the engine, as long as its fields are the ones listed in [Create a theme](#create-a-theme).
 - The unit tests run with `node --test test/`. The geometry of the window zone (zone computation, coordinate conversion, fitting a window) is plain Swift in `mac/WindowZoneGeometry.swift`, tested by `scripts/test-swift.sh`. The Accessibility behavior itself cannot run in CI: see the manual checks in [CONTRIBUTING.md](CONTRIBUTING.md).
 - CI runs the checks below, and also an install, reinstall and uninstall in a temporary `HOME`.
-- On Windows, CI runs `node --test test/`, `pwsh -File windows/build.ps1 -Test`, and an install and uninstall of `install.ps1` and `uninstall.ps1` in a temporary profile, with `DOJO_SKIP_REGISTRY=1` and `DOJO_SKIP_EXE=1` (which skip the registry and the exe download).
+- On Windows, CI runs `node --test test/`, `node --test windows/ui/tests/` when that folder exists, `pwsh -File windows/build.ps1 -Test`, and an install and uninstall of `install.ps1` and `uninstall.ps1` in a temporary profile, with `DOJO_SKIP_REGISTRY=1` and `DOJO_SKIP_EXE=1` (which skip the registry and the exe download). The install runs with `-NoWizard`, and the job checks that `windows\ui` is installed without its `tests` folder.
 
 ```sh
 bash -n install.sh uninstall.sh
