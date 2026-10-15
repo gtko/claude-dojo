@@ -1,7 +1,7 @@
 # claude-dojo
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
 ![Claude Code](https://img.shields.io/badge/Claude%20Code-supported-D97757)
 ![Node >= 18](https://img.shields.io/badge/node-%3E%3D%2018-brightgreen)
 ![Swift](https://img.shields.io/badge/Swift-native-F05138?logo=swift&logoColor=white)
@@ -10,9 +10,11 @@
 
 ![claude-dojo overview](docs/screenshots/overview.webp)
 
-An animated macOS desktop wallpaper that shows every active Claude Code session as a ninja, surrounded by live panels for your system, GitHub, local projects, AI usage and quotas.
+An animated desktop wallpaper for macOS and Windows that shows every active Claude Code session as a ninja, surrounded by live panels for your system, GitHub, local projects, AI usage and quotas.
 
 ## Install
+
+This section covers macOS. For Windows, see [Windows installation](#windows-installation).
 
 ### 1. Get the app
 
@@ -100,7 +102,77 @@ To build the app and the DMG yourself:
 
 This writes `dist/DojoWallpaper.app` (universal binary, minimum macOS 12.0) and `dist/ClaudeDojo-1.0.0.dmg`. `--no-dmg` builds only the app, `--out DIR` changes the output folder, and `--version` sets the version (the default is `git describe --tags --always`). The build needs the Xcode Command Line Tools and npm.
 
+## Windows installation
+
+On Windows, the wallpaper is `DojoWallpaper.exe`. It shows the same page as on macOS, fed by the same local agent. Installation is done from the command line, and it needs no administrator rights.
+
+### Requirements
+
+- Windows 10 or Windows 11, 64-bit.
+- Node.js 18 or later. The installer looks for `node.exe` in `PATH` and in the usual install locations (Program Files, Volta, nvm-windows). To install it: `winget install OpenJS.NodeJS.LTS`.
+- The Microsoft Edge WebView2 Runtime, which `DojoWallpaper.exe` uses. It is usually already installed on Windows 11 and on up-to-date Windows 10; otherwise install the Evergreen runtime from Microsoft.
+- PowerShell 7 (`pwsh`) to run the installer, and Git to clone the repository.
+- Optional: the .NET SDK 8. It is used only if the release file cannot be downloaded: Dojo then compiles `DojoWallpaper.exe` with `windows/build.ps1`.
+
+### Install
+
+```powershell
+git clone https://github.com/gtko/claude-dojo.git
+cd claude-dojo
+pwsh -File install.ps1
+```
+
+The installer is idempotent: running it again updates the installation without duplicating anything. It:
+
+1. copies the Dojo files to `%USERPROFILE%\.config\claude-dojo` and installs their npm dependencies. It creates `config.json` the first time only, and keeps an existing one;
+2. adds the Dojo hooks to `%USERPROFILE%\.claude\settings.json`, after saving a backup of the file. An existing status line is kept. The heavy-gate hook is registered too (matcher `Bash|PowerShell`), unless you run `pwsh -File install.ps1 -NoHeavyGate`;
+3. sets up autostart with the `ClaudeDojoAgent` and `ClaudeDojoWallpaper` values of `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. The agent starts through `start-agent.vbs`, a hidden launcher, so no console window appears;
+4. gets `DojoWallpaper.exe` from the `DojoWallpaper-windows-x64.zip` asset of the release for this version of Dojo, checked against its `.sha256` file. If that fails and the .NET SDK 8 is installed, it compiles the file instead;
+5. starts the agent in the background, at `http://localhost:7777`.
+
+If `DojoWallpaper.exe` cannot be obtained, the installer says so. The agent and the Claude Code hooks still work without the wallpaper.
+
+The wallpaper has a tray icon (**Dojo Wallpaper**). Its menu offers **Interactive** (clicks go to the wallpaper, the default) or **Passive** (the wallpaper stays behind the icons), **Mirror left / right**, **Manual pause**, **Reload**, **Open config**, **Start with Windows** and **Quit Dojo**.
+
+### Uninstall
+
+```powershell
+cd claude-dojo
+pwsh -File uninstall.ps1          # keeps config.json
+pwsh -File uninstall.ps1 -Purge   # also deletes config.json
+```
+
+The uninstaller removes the autostart values and the launcher, `DojoWallpaper.exe`, and the Dojo entries in `%USERPROFILE%\.claude\settings.json` (a backup is saved first).
+
+### Files and logs
+
+- `%USERPROFILE%\.config\claude-dojo\`: the Dojo files, `config.json`, `start-agent.vbs`, `windows\bin\DojoWallpaper.exe`, and `cache\collector.log`.
+- `%USERPROFILE%\.claude\dojo\`: the state of each Claude Code session, written by the hooks.
+- `%LOCALAPPDATA%\claude-dojo\`: the current track and its cover, written by the media helper.
+- `%LOCALAPPDATA%\DojoWallpaper\dojo.log`: the log of the wallpaper.
+
+The [configuration](#configuration) is the same on both systems, except that the `windowZone` and `terminal` blocks are macOS only.
+
+### Differences from macOS
+
+| | macOS | Windows |
+|---|---|---|
+| Installation | DMG and setup assistant, or `install.sh` | `install.ps1` from the command line only. There is no setup assistant and no **Réglages…** window: change the settings in `config.json` |
+| Window zone | Optional. Keeps the windows of other apps out of the panels | Not available: Dojo never moves windows, so no Accessibility permission is needed |
+| Terminal themes | Ghostty, Terminal.app and the zsh header | Not available |
+| Wallpaper gallery | **Fonds** menu and **Fonds d'écran…** window | Not in the tray menu |
+| Menu | Menu bar icon | Tray icon, as described above |
+| Autostart | LaunchAgents in `~/Library/LaunchAgents` | `HKCU` Run values, with no administrator rights |
+| Sensors | `macmon` for temperatures and power | CPU name and memory from Windows. Temperatures come from [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor), which is optional: it must be running with its web server on port 8085 (`http://localhost:8085/data.json`). Without it, no temperature is shown |
+| Battery | Battery panel | Read from Windows. The panel is hidden on a desktop PC |
+| Current track | `media-control` | The Windows media session, for example Spotify or a browser |
+| Claude Code heavy-gate | `Bash` commands | `Bash` and `PowerShell` commands |
+
+On Windows, the wallpaper **pauses** when a window covers the screen (full screen, or a maximized window), when the PC runs on battery, and when battery saver is on. The **Manual pause** item of the tray menu pauses it on request. The pause rules are kept in the `Pause` block of `dojo-wallpaper.json`, next to `DojoWallpaper.exe`.
+
 ## Features
+
+The features below describe macOS. For the Windows differences, see [Windows installation](#windows-installation).
 
 - **One ninja per Claude Code session**, with its state (working, waiting for your approval, idle). A click brings the matching terminal window forward.
 - **System panels**: CPU, GPU, temperatures and power (with `macmon`), memory with the top processes, disks, network, battery, and local servers listening on your machine.
@@ -296,6 +368,8 @@ Each theme remembers its background in the `backgroundByTheme` key of [config.js
 The gallery talks only to `wallhaven.cc` (search and API), `w.wallhaven.cc` (full images) and `th.wallhaven.cc` (thumbnails), over HTTPS. The requests are public: there is no account and no API key. They carry the theme's search terms, wallpaper ids and page numbers, and the header `User-Agent: claude-dojo/<version>`, which Wallhaven requires. Apart from these requests, which show your IP address to Wallhaven as any website does, nothing about you is sent. The full list is in [Outgoing network requests](#outgoing-network-requests).
 ## Window zone
 
+*macOS only. Windows never moves windows, so there is no window zone there.*
+
 The wallpaper panels sit behind your windows, so a maximized window hides them. The window zone is an option that keeps the windows of your other apps out of the panels, so they stay visible. It is **off by default**.
 
 When it is on, Dojo measures the panels on each screen: the left column, the right column and, if you ask for it, the clock and weather band at the top. What remains is the free zone: one rectangle in the middle of each screen, plus a margin (8 pt by default). A standard window that overlaps a panel is moved into the free zone. It is made smaller only if it is larger than the zone, and never below the minimum size the app allows. Dojo waits until you stop moving a window (150 ms, and never while the mouse button is down) before it acts, so dragging a window is not fought.
@@ -329,6 +403,8 @@ Stage Manager has its own idea of where windows go. When it is on, Dojo also res
 - Only the windows of the current Space are seen. Windows in other Spaces are checked when you switch to them and they send a move or resize event.
 - Apps that do not support the Accessibility API, or whose windows are not standard windows, are left alone.
 ## Terminal themes
+
+*macOS only. Windows has no terminal themes.*
 
 Each theme can also style your terminal. The terminal part of a theme has four pieces, and you choose which ones to apply:
 
@@ -383,7 +459,7 @@ Untick the boxes, or run `node ~/.config/claude-dojo/setup.js terminal remove` t
 
 ### Limits
 
-- macOS only, like the rest of Dojo. The header works in zsh only, and only in Ghostty and Terminal.app. Other terminals show nothing.
+- macOS only. The header works in zsh only, and only in Ghostty and Terminal.app. Other terminals show nothing.
 - The shaders and the animated logo need Ghostty 1.x. The generated configuration was checked with `ghostty +validate-config` on Ghostty 1.3.1.
 - fastfetch is optional. Install it with `brew install fastfetch`. Without it, the header is plain text with the same colours and the two lines.
 - Terminal.app has no graphics protocol, so its logo is drawn with half-block characters, and it is not animated.
@@ -411,6 +487,8 @@ Untick the boxes, or run `node ~/.config/claude-dojo/setup.js terminal remove` t
 
 ## Requirements
 
+For macOS. The Windows requirements are in [Windows installation](#windows-installation).
+
 - macOS 12.0 (Monterey) or later. The app in the DMG is a universal binary (Apple silicon and Intel), so nothing is compiled on your Mac.
 - Node.js 18 or later. The assistant checks for it.
 - For the [source install](#from-source-developers) only: Xcode Command Line Tools (`xcode-select --install`), which provide `swiftc`.
@@ -428,6 +506,8 @@ Optional tools:
 A missing optional tool simply hides its panel. No error is shown.
 
 ## What the installer does and asks
+
+macOS only. On Windows, the installer is `install.ps1`, described in [Windows installation](#windows-installation).
 
 The source installer (`install.sh`):
 
@@ -484,7 +564,7 @@ If `~/.config/claude-dojo/config.json` already exists, it is kept as is and the 
 
 ## Configuration
 
-The file is `~/.config/claude-dojo/config.json`. Every block is optional. Without a block, its panel stays hidden.
+The file is `~/.config/claude-dojo/config.json` (on Windows, `%USERPROFILE%\.config\claude-dojo\config.json`). Every block is optional. Without a block, its panel stays hidden. The `windowZone` and `terminal` blocks are macOS only.
 
 | Key | Purpose |
 |---|---|
@@ -550,7 +630,7 @@ Links clicked in the wallpaper open in your default browser.
 
 ## heavy-gate
 
-heavy-gate is an optional `PreToolUse` hook (matcher `Bash`). It refuses to start a heavy command when the machine is already busy. The commands it checks are `test`, `check`, `lint`, `typecheck` and `build` scripts run through `npm`, `pnpm` or `yarn`; `vitest`, `playwright`, `tsc` and `eslint`, called directly or through `npx`, `bunx` or `pnpm exec`; `turbo run`; and `next build`. The gate counts the running `vitest`, `turbo run`, `tsc`, `eslint` and `next build` processes, and the total number of `node` processes. The refusal explains the reason, and Claude can retry later or run only the test files that changed.
+heavy-gate is an optional `PreToolUse` hook (matcher `Bash`; on Windows, `Bash|PowerShell`, and the processes are listed with `Get-CimInstance` instead of `ps`). It refuses to start a heavy command when the machine is already busy. The commands it checks are `test`, `check`, `lint`, `typecheck` and `build` scripts run through `npm`, `pnpm` or `yarn`; `vitest`, `playwright`, `tsc` and `eslint`, called directly or through `npx`, `bunx` or `pnpm exec`; `turbo run`; and `next build`. The gate counts the running `vitest`, `turbo run`, `tsc`, `eslint` and `next build` processes, and the total number of `node` processes. The refusal explains the reason, and Claude can retry later or run only the test files that changed.
 
 Default limits:
 
@@ -624,6 +704,7 @@ launchctl kickstart -k gui/$(id -u)/io.github.claude-dojo.wallpaper
 - The themes are data in `src/themes/`, so adding one needs no change to the engine, as long as its fields are the ones listed in [Create a theme](#create-a-theme).
 - The unit tests run with `node --test test/`. The geometry of the window zone (zone computation, coordinate conversion, fitting a window) is plain Swift in `mac/WindowZoneGeometry.swift`, tested by `scripts/test-swift.sh`. The Accessibility behavior itself cannot run in CI: see the manual checks in [CONTRIBUTING.md](CONTRIBUTING.md).
 - CI runs the checks below, and also an install, reinstall and uninstall in a temporary `HOME`.
+- On Windows, CI runs `node --test test/`, `pwsh -File windows/build.ps1 -Test`, and an install and uninstall of `install.ps1` and `uninstall.ps1` in a temporary profile, with `DOJO_SKIP_REGISTRY=1` and `DOJO_SKIP_EXE=1` (which skip the registry and the exe download).
 
 ```sh
 bash -n install.sh uninstall.sh
@@ -643,11 +724,13 @@ claude-dojo is released under the MIT License. See [LICENSE](LICENSE).
 
 ## Français
 
-claude-dojo est un fond d'écran animé pour macOS : chaque session Claude Code active apparaît sous forme de ninja, entouré de panneaux système, GitHub, quotas et coûts d'usage IA.
+claude-dojo est un fond d'écran animé pour macOS et Windows : chaque session Claude Code active apparaît sous forme de ninja, entouré de panneaux système, GitHub, quotas et coûts d'usage IA.
 
 Installation : téléchargez `ClaudeDojo-<version>.dmg` depuis la page [Releases](https://github.com/gtko/claude-dojo/releases), glissez DojoWallpaper.app dans Applications, puis ouvrez-le. Au premier lancement, Gatekeeper le bloque (app non notarisée) : Réglages Système › Confidentialité et sécurité › « Ouvrir quand même ». L'assistant guide ensuite l'installation. Prérequis : macOS 12 ou plus et Node.js 18 ou plus.
 
 Installation depuis les sources (développeurs) : `git clone https://github.com/gtko/claude-dojo.git && cd claude-dojo && ./install.sh` (Node 18 ou plus et Xcode Command Line Tools requis).
+
+Windows : installation en ligne de commande, sans droits administrateur (`pwsh -File install.ps1` depuis le clone, Node 18 ou plus et WebView2 requis). Voir [Windows installation](#windows-installation) pour les prérequis, la désinstallation et les différences avec macOS.
 
 Fonds d'écran : chaque thème propose une galerie de vrais fonds [Wallhaven](https://wallhaven.cc), en contenu SFW uniquement. Ils sont téléchargés en arrière-plan (sauf si `wallpapers.autoDownload` vaut `false` dans `config.json`) et restent sur votre Mac, avec la source de chaque image. Hors ligne et sans fond téléchargé, c'est le fond du thème qui s'affiche. Le menu **Fonds** permet de les changer.
 
