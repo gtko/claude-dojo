@@ -420,7 +420,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         switch configured {
         case .some(true):
+            let upgraded = await upgradeRuntime()
             startWallpaper()
+            if upgraded { reloadWallpaperWhenAgentReady() }
             startPackSync()
             if forceSetup { openSetup(editing: true) }
         case .some(false):
@@ -429,6 +431,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // setup.js absent ou en erreur : le fond d'écran reste lancé comme avant
             startWallpaper()
             if forceSetup { openSetup(editing: false) }
+        }
+    }
+
+    /// Remplacer l'app ne met pas à jour ~/.config/claude-dojo : setup.js recopie le runtime embarqué s'il est plus récent
+    /// et redémarre l'agent. Renvoie true si le runtime a été mis à jour. Erreur : journalisée, le fond démarre quand même.
+    private func upgradeRuntime() async -> Bool {
+        do {
+            let options = try DojoPaths.json(UpgradeOptions(appPath: Bundle.main.bundlePath))
+            let result: UpgradeRuntimeResult = try await runner.call("upgrade-runtime", [runner.runtimeDir.path, options], timeout: 120)
+            return result.upgraded == true
+        } catch {
+            fputs("claude-dojo : mise à jour du runtime impossible (\(error.localizedDescription))\n", stderr)
+            return false
+        }
+    }
+
+    /// Après une mise à jour : attend que l'agent redémarré réponde (/theme, au plus 20 s), puis recharge la page du fond.
+    private func reloadWallpaperWhenAgentReady() {
+        Task { @MainActor in
+            let probe = URL(string: "/theme", relativeTo: wallpaperURL)!
+            for _ in 0..<40 {
+                if let reply = try? await URLSession.shared.data(from: probe),
+                   (reply.1 as? HTTPURLResponse)?.statusCode == 200 { break }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+            wallpaper.reloadAll()
         }
     }
 
