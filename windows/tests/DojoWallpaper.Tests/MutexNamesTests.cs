@@ -14,7 +14,15 @@ namespace DojoWallpaper.Tests
             list.Add(new KeyValuePair<string, Action>("MutexNames : 32 caracteres acceptes, 33 refuses", Length));
             list.Add(new KeyValuePair<string, Action>("MutexNames : caracteres interdits et saut de ligne final ignores", Invalid));
             list.Add(new KeyValuePair<string, Action>("MutexNames : lecture de DOJO_INSTANCE dans l'environnement", FromEnvironment));
+            list.Add(new KeyValuePair<string, Action>("MutexNames : dossier WebView2 propre a DOJO_INSTANCE valide", WebView2Folder));
             return list;
+        }
+
+        private static void WebView2Folder()
+        {
+            Assert.AreEqual("webview2", MutexNames.WebView2Folder(null), "absent");
+            Assert.AreEqual("webview2", MutexNames.WebView2Folder("demo\n"), "invalide");
+            Assert.AreEqual("webview2-demo", MutexNames.WebView2Folder("demo"), "demo");
         }
 
         private static void Absent()

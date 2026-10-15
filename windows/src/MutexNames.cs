@@ -35,5 +35,12 @@ namespace DojoWallpaper
         {
             return value != null && SuffixRe.IsMatch(value);
         }
+
+        // Dossier WebView2 (sous %LOCALAPPDATA%\DojoWallpaper) : "webview2", ou "webview2-<suffixe>" si DOJO_INSTANCE
+        // est valide. Sans cela, une instance de demonstration rejoint le processus navigateur de l'instance reelle.
+        public static string WebView2Folder(string value)
+        {
+            return IsValidSuffix(value) ? "webview2-" + value : "webview2";
+        }
     }
 }

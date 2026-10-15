@@ -404,7 +404,7 @@ namespace DojoWallpaper
             string dataDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "DojoWallpaper",
-                "webview2");
+                MutexNames.WebView2Folder(Environment.GetEnvironmentVariable(MutexNames.InstanceVariable)));
             Directory.CreateDirectory(dataDir);
             var options = new CoreWebView2EnvironmentOptions
             {
