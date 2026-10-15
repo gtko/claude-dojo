@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace DojoWallpaper
@@ -34,8 +35,8 @@ namespace DojoWallpaper
         public const int MaxTitleLength = 200;
         public const int MaxUrlLength = 2048;
 
-        // Identifiant de thème (openWindow) : \z et non $, pour refuser un saut de ligne final.
-        private static readonly Regex ThemeIdPattern = new Regex(@"^[a-z0-9][a-z0-9_-]{0,39}\z", RegexOptions.CultureInvariant);
+        // Identifiant de thème (openWindow) : meme forme que setup.js (THEME_ID_RE). \z et non $, pour refuser un saut de ligne final.
+        private static readonly Regex ThemeIdPattern = new Regex(@"\A[a-z0-9-]+\z", RegexOptions.CultureInvariant);
 
         // Hotes externes ouvrables (openUrl), en https uniquement.
         public static readonly string[] AllowedUrlHosts =
@@ -46,6 +47,9 @@ namespace DojoWallpaper
 
         private readonly IBridgeHost _host;
         private readonly Action<string> _post;
+        // Une seule commande qui ecrit a la fois pour cette fenetre (verrou ; l'ordre d'arrivee n'est pas garanti).
+        // Les lectures ne passent pas par ce verrou. Chaque fenetre a son UiBridge : pas de verrou entre fenetres.
+        private readonly SemaphoreSlim _writeGate = new SemaphoreSlim(1, 1);
 
         // post recoit le JSON de la reponse ; il peut etre appele hors du thread UI (la fenetre se charge du marshalling).
         public UiBridge(IBridgeHost host, Action<string> post)
@@ -161,7 +165,23 @@ namespace DojoWallpaper
                 IList<string> args = ReadArgs(Get(msg, "args"));
                 string stdin = Get(msg, "stdin") as string;
                 BridgeCall call = BridgeCommands.Validate(cmd, args, stdin);
-                IDictionary<string, object> result = await _host.RunSetupAsync(call);
+                IDictionary<string, object> result;
+                if (call.Writes)
+                {
+                    await _writeGate.WaitAsync();
+                    try
+                    {
+                        result = await _host.RunSetupAsync(call);
+                    }
+                    finally
+                    {
+                        _writeGate.Release();
+                    }
+                }
+                else
+                {
+                    result = await _host.RunSetupAsync(call);
+                }
                 return result ?? Fail("réponse vide.");
             }
             catch (BridgeRejectedException ex)

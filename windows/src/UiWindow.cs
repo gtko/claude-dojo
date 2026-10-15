@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
@@ -30,16 +31,21 @@ namespace DojoWallpaper
         private readonly WebView2 _web;
         private readonly UiBridge _bridge;
         private readonly bool _debug;
+        // Tailles en DIP (voir UiLayout.ToPixels) : converties en pixels reels a chaque creation de handle et changement de DPI.
+        private readonly Size _sizeDip;
+        private readonly Size _minSizeDip;
 
         private UiWindow(string page, string title, Size size, Size minSize, string query)
         {
             _page = page;
             _query = query;
+            _sizeDip = size;
+            _minSizeDip = minSize;
             _debug = Environment.GetEnvironmentVariable("DOJO_UI_DEBUG") == "1";
             Text = title;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = size;
-            MinimumSize = minSize;
+            // Pas de mise a l'echelle WinForms : les tailles sont deja converties en pixels (ApplyDpi).
+            AutoScaleMode = AutoScaleMode.None;
             BackColor = Background;
             Icon = AppIcon();
 
@@ -56,6 +62,33 @@ namespace DojoWallpaper
                     Windows.Remove(_page);
                 }
             };
+        }
+
+        // Taille en pixels reels pour le DPI donne. Minimum d'abord : il peut relever la taille courante.
+        private void ApplyDpi(int dpi)
+        {
+            MinimumSize = UiLayout.ToPixels(_minSizeDip, dpi);
+            ClientSize = UiLayout.ToPixels(_sizeDip, dpi);
+        }
+
+        // DPI reel de la fenetre (Windows 10 1607+). Mesure sur un ecran a 125 % : Control.DeviceDpi valait 96 a la
+        // creation du handle, la taille restait donc en pixels DIP (980x720 au lieu de 1225x900).
+        [DllImport("user32.dll")]
+        private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            uint dpi = GetDpiForWindow(Handle);
+            ApplyDpi(dpi > 0 ? (int)dpi : DeviceDpi);
+        }
+
+        // Deplacement vers un ecran a autre DPI : la taille en DIP ne change pas, seuls les pixels changent.
+        // WebView2 (Dock Fill) suit la taille du formulaire ; son zoom reste 1 (le DPI est gere par WebView2).
+        protected override void OnDpiChanged(DpiChangedEventArgs e)
+        {
+            base.OnDpiChanged(e);
+            ApplyDpi(e.DeviceDpiNew);
         }
 
         // Ouvre la page (ou la ramene au premier plan si elle est deja ouverte).
@@ -228,7 +261,7 @@ namespace DojoWallpaper
                 using (var dialog = new OpenFileDialog())
                 {
                     dialog.Title = "Choisir une image de fond";
-                    dialog.Filter = "Images (*.jpg;*.jpeg;*.png;*.webp;*.heic;*.bmp)|*.jpg;*.jpeg;*.png;*.webp;*.heic;*.bmp";
+                    dialog.Filter = "Images (*.jpg;*.jpeg;*.png;*.webp;*.heic)|*.jpg;*.jpeg;*.png;*.webp;*.heic";
                     dialog.CheckFileExists = true;
                     dialog.Multiselect = false;
                     if (dialog.ShowDialog(_owner) != DialogResult.OK)

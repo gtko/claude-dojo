@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.IO;
 using System.Threading.Tasks;
 
@@ -27,6 +28,8 @@ namespace DojoWallpaper.Tests
             list.Add(new KeyValuePair<string, Action>("UiLayout : pages et recherche par nom", LayoutPages));
             list.Add(new KeyValuePair<string, Action>("UiLayout : dossier windows\\ui trouve depuis bin ou build", LayoutUiDir));
             list.Add(new KeyValuePair<string, Action>("UiLayout : dossier d'installation comme setup.js", LayoutInstall));
+            list.Add(new KeyValuePair<string, Action>("UiLayout : conversion DIP -> pixels selon le DPI", DipToPixels));
+            list.Add(new KeyValuePair<string, Action>("UiBridge : commandes qui ecrivent sérialisées, lectures non bloquées", WriteGate));
             return list;
         }
 
@@ -36,12 +39,18 @@ namespace DojoWallpaper.Tests
             public readonly List<BridgeCall> Calls = new List<BridgeCall>();
             public readonly List<string> Events = new List<string>();
             public bool ThrowOnSetup;
+            // Si fourni, remplace la reponse fixe de RunSetupAsync (simulation d'une commande longue).
+            public Func<BridgeCall, Task<IDictionary<string, object>>> SetupHook;
 
             public Task<IDictionary<string, object>> RunSetupAsync(BridgeCall call)
             {
                 if (ThrowOnSetup)
                 {
                     throw new InvalidOperationException("boom");
+                }
+                if (SetupHook != null)
+                {
+                    return SetupHook(call);
                 }
                 Calls.Add(call);
                 return Task.FromResult<IDictionary<string, object>>(Obj("ok", true, "echo", call.Command));
@@ -309,7 +318,6 @@ namespace DojoWallpaper.Tests
         {
             var host = new FakeHost();
             int posts;
-            string tooLong = "a" + new string('b', 40);
             string[] refused =
             {
                 "{\"page\":\"nope\"}",
@@ -320,8 +328,8 @@ namespace DojoWallpaper.Tests
                 "{\"page\":\"gallery\",\"theme\":\"Naruto\"}",
                 "{\"page\":\"gallery\",\"theme\":\"../etc\"}",
                 "{\"page\":\"gallery\",\"theme\":\"\"}",
-                "{\"page\":\"gallery\",\"theme\":\"-naruto\"}",
-                "{\"page\":\"gallery\",\"theme\":\"" + tooLong + "\"}",
+                "{\"page\":\"gallery\",\"theme\":\"dojo_2\"}",
+                "{\"page\":\"gallery\",\"theme\":\"naruto\\n\"}",
                 "{\"page\":\"gallery\",\"theme\":7}",
                 "{\"page\":\"themes\",\"theme\":true}",
             };
@@ -354,7 +362,9 @@ namespace DojoWallpaper.Tests
         private static void ThemeIdAndQuery()
         {
             Assert.IsTrue(UiBridge.IsValidThemeId("naruto"), "nom simple");
-            Assert.IsTrue(UiBridge.IsValidThemeId("dojo_2-x"), "tiret et souligné");
+            Assert.IsTrue(UiBridge.IsValidThemeId("dojo-2-x"), "tirets et chiffres");
+            Assert.IsTrue(UiBridge.IsValidThemeId("-naruto"), "meme forme que setup.js (THEME_ID_RE)");
+            Assert.IsFalse(UiBridge.IsValidThemeId("dojo_2"), "souligné refusé, comme setup.js");
             Assert.IsFalse(UiBridge.IsValidThemeId("naruto\n"), "saut de ligne final refusé");
             Assert.IsFalse(UiBridge.IsValidThemeId("naruto&x=1"), "caractère de query refusé");
             Assert.IsFalse(UiBridge.IsValidThemeId(null), "null");
@@ -398,6 +408,65 @@ namespace DojoWallpaper.Tests
             {
                 TestFiles.DeleteDir(root);
             }
+        }
+
+        // Tailles des pages en DIP, converties en pixels reels : 1 DIP = 1 px a 96 DPI, 1,25 px a 120 DPI, etc.
+        private static void DipToPixels()
+        {
+            Assert.AreEqual(96, UiLayout.ToPixels(96, 96), "100 % : identique");
+            Assert.AreEqual(950, UiLayout.ToPixels(760, 120), "760 DIP a 125 %");
+            Assert.AreEqual(800, UiLayout.ToPixels(640, 120), "640 DIP a 125 %");
+            Assert.AreEqual(1140, UiLayout.ToPixels(760, 144), "760 DIP a 150 %");
+            Assert.AreEqual(1520, UiLayout.ToPixels(760, 192), "760 DIP a 200 %");
+            Assert.AreEqual(694, UiLayout.ToPixels(555, 120), "693,75 arrondi a 694");
+            Assert.AreEqual(2, UiLayout.ToPixels(1, 144), "1,5 arrondi vers le haut (demi loin de zero)");
+            Assert.AreEqual(96, UiLayout.ToPixels(96, 0), "DPI nul traite comme 96");
+            Assert.AreEqual(96, UiLayout.ToPixels(96, -5), "DPI negatif traite comme 96");
+
+            Size wizard = UiLayout.ToPixels(new Size(760, 640), 120);
+            Assert.AreEqual("950x800", wizard.Width + "x" + wizard.Height, "assistant a 125 %");
+
+            // Chaque page : le minimum reste inferieur ou egal a la taille, a tous les DPI courants.
+            foreach (int dpi in new[] { 96, 120, 144, 168, 192 })
+            {
+                foreach (UiPage page in UiLayout.Pages)
+                {
+                    Size size = UiLayout.ToPixels(page.Size, dpi);
+                    Size min = UiLayout.ToPixels(page.MinSize, dpi);
+                    Assert.IsTrue(min.Width <= size.Width && min.Height <= size.Height, page.Key + " a " + dpi + " DPI : minimum <= taille");
+                }
+            }
+        }
+
+        // Commandes qui ecrivent : une a la fois par fenetre. Une lecture ne attend pas. Deux ecritures : la seconde attend la premiere.
+        private static void WriteGate()
+        {
+            var host = new FakeHost();
+            var order = new List<string>();
+            var sent = new List<string>();
+            var firstWrite = new TaskCompletionSource<IDictionary<string, object>>();
+            int calls = 0;
+            host.SetupHook = call =>
+            {
+                order.Add(call.Command + (call.Argv.Count > 1 ? ":" + call.Argv[1] : string.Empty));
+                calls++;
+                return calls == 1
+                    ? firstWrite.Task
+                    : Task.FromResult<IDictionary<string, object>>(Obj("ok", true));
+            };
+            var bridge = new UiBridge(host, sent.Add);
+
+            Task a = bridge.HandleAsync(UiSource, "{\"id\":1,\"kind\":\"cmd\",\"cmd\":\"set-theme\",\"args\":[\"demo\"]}");
+            Task b = bridge.HandleAsync(UiSource, "{\"id\":2,\"kind\":\"cmd\",\"cmd\":\"set-theme\",\"args\":[\"other\"]}");
+            Task c = bridge.HandleAsync(UiSource, "{\"id\":3,\"kind\":\"cmd\",\"cmd\":\"themes\",\"args\":[]}");
+
+            Assert.IsTrue(c.Wait(TimeSpan.FromSeconds(5)), "la lecture ne attend pas l'ecriture en cours");
+            Assert.AreEqual("set-theme:demo|themes", string.Join("|", order), "seule la premiere ecriture est lancee");
+
+            firstWrite.SetResult(Obj("ok", true));
+            Assert.IsTrue(Task.WhenAll(a, b).Wait(TimeSpan.FromSeconds(5)), "les deux ecritures se terminent");
+            Assert.AreEqual("set-theme:demo|themes|set-theme:other", string.Join("|", order), "la seconde ecriture part apres la premiere");
+            Assert.AreEqual(3, sent.Count, "une reponse par message");
         }
 
         private static void LayoutInstall()

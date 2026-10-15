@@ -19,6 +19,7 @@ namespace DojoWallpaper.Tests
             list.Add(new KeyValuePair<string, Action>("BridgeCommands : options terminal (cles booleennes, 2 Ko)", TerminalJson));
             list.Add(new KeyValuePair<string, Action>("BridgeCommands : set-background (chemin absolu, extension, existence)", SetBackground));
             list.Add(new KeyValuePair<string, Action>("BridgeCommands : wallpapers use (mots-cles, id, fichier)", WallpaperUse));
+            list.Add(new KeyValuePair<string, Action>("BridgeCommands : commandes qui ecrivent (Writes) et lectures", WriteFlags));
             return list;
         }
 
@@ -105,7 +106,9 @@ namespace DojoWallpaper.Tests
             Call("set-theme", null, "a");
             Call("set-theme", null, "1a");
             Call("set-theme", null, new string('a', 40));
-            Refused("set-theme", null, new string('a', 41));
+            // Meme forme que setup.js (THEME_ID_RE = /^[a-z0-9-]+$/) : pas de borne de longueur ni de souligné.
+            Call("set-theme", null, new string('a', 41));
+            Refused("set-theme", null, "a_b");
             Refused("set-theme", null, "_a");
             Refused("set-theme", null, "A");
             Refused("set-theme", null, "a\n");
@@ -181,6 +184,13 @@ namespace DojoWallpaper.Tests
             Argv(Call("set-background", null, "default"), 120, "set-background|default");
             Refused("set-background", null, "fond.png");
             Refused("set-background", null, "C:\\dojo-inexistant\\fond.png");
+            // Chemins reseau (UNC, \\?\, //) et non absolus : refuses avant tout acces disque.
+            Refused("set-background", null, "\\\\serveur\\partage\\fond.png");
+            Refused("set-background", null, "\\\\?\\C:\\fond.png");
+            Refused("set-background", null, "//serveur/partage/fond.png");
+            Refused("set-background", null, "C:fond.png");
+            Refused("set-background", null, "\\fond.png");
+            Refused("set-background", null, "..\\fond.png");
 
             string dir = TestFiles.NewDir();
             try
@@ -195,11 +205,47 @@ namespace DojoWallpaper.Tests
                 Refused("set-background", null, Path.Combine(dir, "absent.png"));
                 Refused("set-background", null, png + "\n");
                 Refused("set-background", null, png, "extra");
+
+                // Extensions de setup.js (BG_EXT) : .bmp et .heif ne sont plus acceptes.
+                string bmp = Path.Combine(dir, "fond.bmp");
+                string heif = Path.Combine(dir, "fond.heif");
+                TestFiles.Write(bmp, "x");
+                TestFiles.Write(heif, "x");
+                Refused("set-background", null, bmp);
+                Refused("set-background", null, heif);
+                string heic = Path.Combine(dir, "fond.heic");
+                TestFiles.Write(heic, "x");
+                Argv(Call("set-background", null, heic), 120, "set-background|" + heic);
             }
             finally
             {
                 TestFiles.DeleteDir(dir);
             }
+        }
+
+        // Writes : ce qui modifie la config, les fonds ou le terminal passe par le verrou de la fenetre (UiBridge).
+        private static void WriteFlags()
+        {
+            Assert.IsTrue(Call("write-config", "{\"theme\":\"demo\"}", "-").Writes, "write-config");
+            Assert.IsTrue(Call("merge-settings", "{\"a\":1}", "-").Writes, "merge-settings");
+            Assert.IsTrue(Call("set-theme", null, "demo").Writes, "set-theme");
+            Assert.IsTrue(Call("set-background", null, "default").Writes, "set-background");
+            Assert.IsTrue(Call("wallpapers", null, "use", "theme").Writes, "wallpapers use");
+            Assert.IsTrue(Call("wallpapers", null, "download", "abc123").Writes, "wallpapers download");
+            Assert.IsTrue(Call("wallpapers", null, "sync").Writes, "wallpapers sync");
+            Assert.IsTrue(Call("wallpapers", null, "next").Writes, "wallpapers next");
+            Assert.IsTrue(Call("terminal", null, "apply", "{\"ghostty\":true}").Writes, "terminal apply");
+            Assert.IsTrue(Call("terminal", null, "remove").Writes, "terminal remove");
+
+            Assert.IsFalse(Call("themes", null).Writes, "themes");
+            Assert.IsFalse(Call("detect", null).Writes, "detect");
+            Assert.IsFalse(Call("status", null).Writes, "status");
+            Assert.IsFalse(Call("geocode", null, "Paris").Writes, "geocode");
+            Assert.IsFalse(Call("wallpapers", null, "list", "demo").Writes, "wallpapers list");
+            Assert.IsFalse(Call("wallpapers", null, "search", "demo").Writes, "wallpapers search");
+            Assert.IsFalse(Call("wallpapers", null, "local", "demo").Writes, "wallpapers local");
+            Assert.IsFalse(Call("wallpapers", null, "progress", "demo").Writes, "wallpapers progress");
+            Assert.IsFalse(Call("terminal", null, "status").Writes, "terminal status");
         }
 
         private static void WallpaperUse()

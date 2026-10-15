@@ -22,10 +22,16 @@ namespace DojoWallpaper
     {
         public const string OverrideVariable = "DOJO_NODE";
         public const int MinimumMajor = 18;
+        // Echec de recherche memorise : les sondes de node peuvent durer 5 s chacune, pas a chaque appel.
+        public static readonly TimeSpan FailureCacheDuration = TimeSpan.FromSeconds(30);
 
         private static readonly object Gate = new object();
         private static NodeInfo cached;
+        private static NodeInfo missed;
+        private static DateTime missedUntilUtc = DateTime.MinValue;
         private static readonly Regex MajorRe = new Regex(@"\A\s*v?(\d+)", RegexOptions.IgnoreCase);
+        // Dossier absolu : lettre de lecteur ou partage UNC. Les entrees relatives de PATH sont ignorees.
+        private static readonly Regex AbsoluteDirRe = new Regex(@"\A(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/])");
 
         // Candidats dans l'ordre de recherche. Fonction pure : aucun acces au disque.
         public static IList<string> Candidates(
@@ -36,7 +42,13 @@ namespace DojoWallpaper
             {
                 foreach (string dir in pathDirs)
                 {
-                    AddCandidate(list, dir == null ? null : dir.Trim().Trim('"'), "node.exe");
+                    string trimmed = dir == null ? null : dir.Trim().Trim('"');
+                    // Entree relative de PATH (« . », « bin ») : node serait cherche dans le dossier courant. Ignoree.
+                    if (trimmed == null || !AbsoluteDirRe.IsMatch(trimmed))
+                    {
+                        continue;
+                    }
+                    AddCandidate(list, trimmed, "node.exe");
                 }
             }
             AddCandidate(list, programFiles, Path.Combine("nodejs", "node.exe"));
@@ -93,6 +105,10 @@ namespace DojoWallpaper
                 {
                     return cached;
                 }
+                if (DateTime.UtcNow < missedUntilUtc)
+                {
+                    return missed;
+                }
 
                 NodeInfo firstPresent = null;
                 foreach (string candidate in SystemCandidates())
@@ -122,6 +138,10 @@ namespace DojoWallpaper
                         firstPresent = info;
                     }
                 }
+                // Aucun node >= 18 trouve (firstPresent : plus ancien ou null) : memorise pendant FailureCacheDuration.
+                // Un node installe entre-temps n'est vu qu'apres ce delai.
+                missed = firstPresent;
+                missedUntilUtc = DateTime.UtcNow + FailureCacheDuration;
                 return firstPresent;
             }
         }

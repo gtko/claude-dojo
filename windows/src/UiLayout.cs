@@ -5,7 +5,7 @@ using System.IO;
 
 namespace DojoWallpaper
 {
-    // Page de l'interface (fenetre generique UiWindow) : fichier dans windows\ui, titre, tailles.
+    // Page de l'interface (fenetre generique UiWindow) : fichier dans windows\ui, titre, tailles en DIP.
     public sealed class UiPage
     {
         public UiPage(string key, string file, string title, Size size, Size minSize)
@@ -21,6 +21,7 @@ namespace DojoWallpaper
         public string Key { get; private set; }
         public string File { get; private set; }
         public string Title { get; private set; }
+        // Tailles en DIP (unites independantes du DPI, comme les pixels CSS de la page) : UiLayout.ToPixels les convertit.
         public Size Size { get; private set; }
         public Size MinSize { get; private set; }
     }
@@ -28,12 +29,28 @@ namespace DojoWallpaper
     // Pages de l'interface et emplacements des dossiers (install, interface).
     public static class UiLayout
     {
+        // DPI de reference (100 %) : 1 DIP = 1 pixel a 96 DPI.
+        public const int BaseDpi = 96;
+
         public static readonly UiPage[] Pages =
         {
             new UiPage("themes", "themes.html", "Thème et fond", new Size(980, 720), new Size(760, 560)),
             new UiPage("gallery", "gallery.html", "Galerie de fonds", new Size(900, 640), new Size(640, 480)),
             new UiPage("wizard", "wizard.html", "Assistant de configuration", new Size(760, 640), new Size(680, 560)),
         };
+
+        // Pixels reels d'une dimension en DIP pour un DPI donne (120 DPI = 125 %). Arrondi au pixel le plus proche
+        // (demi vers le haut). DPI nul ou negatif : traite comme 96.
+        public static int ToPixels(int dip, int dpi)
+        {
+            int effective = dpi > 0 ? dpi : BaseDpi;
+            return (int)Math.Round(dip * (double)effective / BaseDpi, MidpointRounding.AwayFromZero);
+        }
+
+        public static Size ToPixels(Size dip, int dpi)
+        {
+            return new Size(ToPixels(dip.Width, dpi), ToPixels(dip.Height, dpi));
+        }
 
         // Page par nom court (« themes », « gallery », « wizard »), ou null.
         public static UiPage Find(string key)

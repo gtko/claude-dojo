@@ -14,7 +14,27 @@ namespace DojoWallpaper.Tests
             list.Add(new KeyValuePair<string, Action>("NodeLocator : dossiers nvm tries du plus recent au plus ancien", VersionOrder));
             list.Add(new KeyValuePair<string, Action>("NodeLocator : version majeure et seuil 18", MajorAndThreshold));
             list.Add(new KeyValuePair<string, Action>("NodeLocator : DOJO_NODE prioritaire (fichier present ou absent)", OverrideVariable));
+            list.Add(new KeyValuePair<string, Action>("NodeLocator : entrees relatives de PATH ignorees", RelativePathEntries));
             return list;
+        }
+
+        // « . », « bin », « C:tools » (lecteur relatif) et les vides : pas de node cherche dans le dossier courant.
+        private static void RelativePathEntries()
+        {
+            IList<string> list = NodeLocator.Candidates(
+                new[] { ".", "bin", "C:tools", @"\racine", "  ", @"C:\a", @"\\srv\share\bin" },
+                @"C:\PF",
+                @"C:\Users\u",
+                @"C:\nvm",
+                new string[0]);
+            string expected = string.Join("|", new[]
+            {
+                @"C:\a\node.exe",
+                @"\\srv\share\bin\node.exe",
+                @"C:\PF\nodejs\node.exe",
+                @"C:\Users\u\.volta\bin\node.exe",
+            });
+            Assert.AreEqual(expected, string.Join("|", list), "seules les entrees absolues de PATH restent");
         }
 
         private static void CandidateOrder()

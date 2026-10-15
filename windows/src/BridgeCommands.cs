@@ -19,12 +19,36 @@ namespace DojoWallpaper
             Argv = new List<string>(argv).AsReadOnly();
             Stdin = stdin;
             TimeoutSeconds = timeoutSeconds;
+            Writes = IsWriteCall(command, Argv);
         }
 
         public string Command { get; private set; }
         public IList<string> Argv { get; private set; }
         public string Stdin { get; private set; }
         public int TimeoutSeconds { get; private set; }
+
+        // Vrai si l'appel modifie la configuration, les fonds ou le terminal : le pont les sérialise par fenêtre.
+        public bool Writes { get; private set; }
+
+        // argv[0] = commande, argv[1] = sous-commande (wallpapers, terminal).
+        private static bool IsWriteCall(string command, IList<string> argv)
+        {
+            string action = argv.Count > 1 ? argv[1] : null;
+            switch (command)
+            {
+                case "write-config":
+                case "merge-settings":
+                case "set-theme":
+                case "set-background":
+                    return true;
+                case "wallpapers":
+                    return action == "use" || action == "download" || action == "sync" || action == "next";
+                case "terminal":
+                    return action == "apply" || action == "remove";
+                default:
+                    return false;
+            }
+        }
     }
 
     // Refus d'une commande ou d'un argument. Le message est lisible (francais) et peut etre affiche tel quel.
@@ -43,12 +67,15 @@ namespace DojoWallpaper
         public const int MaxTerminalJsonBytes = 2048;
         public const int MaxGeocodeLength = 100;
 
-        private static readonly Regex ThemeIdRe = new Regex(@"\A[a-z0-9][a-z0-9_-]{0,39}\z");
+        // Identifiant de theme : meme forme que setup.js (THEME_ID_RE). \z et non $, pour refuser un saut de ligne final.
+        private static readonly Regex ThemeIdRe = new Regex(@"\A[a-z0-9-]+\z");
         private static readonly Regex WallhavenIdRe = new Regex(@"\A[A-Za-z0-9]{3,16}\z");
         private static readonly Regex FileNameRe = new Regex(@"\A(?!-)[A-Za-z0-9._-]{1,80}\z");
         private static readonly Regex PageRe = new Regex(@"\A[0-9]{1,4}\z");
-        private static readonly Regex AbsolutePathRe = new Regex(@"\A(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/])");
-        private static readonly string[] ImageExtensions = { ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".bmp" };
+        // Chemin absolu local : lettre de lecteur. Les chemins reseau (UNC) sont refuses avant (RequireImagePath).
+        private static readonly Regex AbsolutePathRe = new Regex(@"\A[A-Za-z]:[\\/]");
+        // Extensions de fond : memes que setup.js (BG_EXT).
+        private static readonly string[] ImageExtensions = { ".jpg", ".jpeg", ".png", ".webp", ".heic" };
         private static readonly string[] TerminalKeys = { "ghostty", "terminalApp", "windowsTerminal", "welcome" };
         private static readonly string[] TerminalActions = { "status", "apply", "remove" };
         private static readonly string[] WallpaperActions =
@@ -275,7 +302,7 @@ namespace DojoWallpaper
         {
             if (!ThemeIdRe.IsMatch(id))
             {
-                throw Refuse("identifiant de thème invalide (lettres minuscules, chiffres, tirets, underscores).");
+                throw Refuse("identifiant de thème invalide (lettres minuscules, chiffres, tirets).");
             }
         }
 
@@ -308,6 +335,11 @@ namespace DojoWallpaper
 
         private static void RequireImagePath(string path)
         {
+            // Chemins reseau refuses (\\serveur\partage, \\?\, //serveur) : aucun acces SMB depuis l'interface.
+            if (path.StartsWith(@"\\", StringComparison.Ordinal) || path.StartsWith("//", StringComparison.Ordinal))
+            {
+                throw Refuse("chemin réseau (UNC) refusé pour l'image de fond.");
+            }
             if (!AbsolutePathRe.IsMatch(path))
             {
                 throw Refuse("chemin absolu attendu pour l'image de fond.");
@@ -315,7 +347,7 @@ namespace DojoWallpaper
             string ext = Path.GetExtension(path).ToLowerInvariant();
             if (Array.IndexOf(ImageExtensions, ext) < 0)
             {
-                throw Refuse("extension d'image non prise en charge (jpg, jpeg, png, webp, heic, heif, bmp).");
+                throw Refuse("extension d'image non prise en charge (jpg, jpeg, png, webp, heic).");
             }
             bool exists;
             try
