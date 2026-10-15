@@ -850,8 +850,9 @@ const isInside = (child, parent) => child === parent || child.startsWith(parent 
 const RUNTIME_FILES = new Set(['package.json', 'package-lock.json', 'config.example.json']);
 const RUNTIME_DIRS = new Set(['wallpaper', 'themes', 'node_modules']);
 // Windows seulement : src/windows/ (media.ps1). Son bin/ (DojoWallpaper.exe) n'est pas du runtime : jamais effacé.
+// ui/ (interface WebView2) est copié à part par installWinUi : il est gardé ici le temps de cette copie.
 const WIN_RUNTIME_DIRS = new Set(['windows']);
-const KEEP_IN_DEST = { windows: ['bin'] };
+const KEEP_IN_DEST = { windows: ['bin', 'ui'] };
 
 // Cible d'un lien symbolique : son realpath, ou sa cible lexicale s'il est cassé.
 function linkTarget(link) {
@@ -871,15 +872,40 @@ function assertLinksInside(dir, root) {
   }
 }
 
+// Windows seulement : interface (windows/ui, à côté de src/ dans le dépôt) copiée sans tests/ vers windows\ui de
+// l'installation. Ses liens sont vérifiés avant toute écriture. real : null si le dossier source est absent (clone
+// supprimé après l'installation, par exemple) : l'installation gardée n'est alors pas touchée.
+const WIN_UI_EXCLUDE = new Set(['tests']);
+function winUiSource(srcReal) {
+  const from = path.join(path.dirname(srcReal), 'windows', 'ui');
+  let real;
+  try { real = fs.realpathSync(from); } catch { return { from, real: null }; }
+  if (!fs.statSync(real).isDirectory()) return { from, real: null };
+  assertLinksInside(real, real);
+  return { from, real };
+}
+function installWinUi(ui) {
+  const to = path.join(paths.dojo(), 'windows', 'ui');
+  clearDest(to);
+  fs.mkdirSync(to, { recursive: true });
+  for (const name of fs.readdirSync(ui.real).sort()) {
+    if (WIN_UI_EXCLUDE.has(name)) continue;
+    fs.cpSync(path.join(ui.real, name), path.join(to, name), { recursive: true, dereference: false, verbatimSymlinks: true });
+  }
+  return to;
+}
+
 // Copie src/ vers ~/.config/claude-dojo. config.json et cache/ ne sont jamais écrasés.
 // Les liens ne sont jamais suivis : ceux qui pointent dans le dossier source sont recopiés comme liens,
 // ceux qui sortent (y compris dans node_modules) font échouer l'installation avant toute écriture.
+// Windows : windows/ui (sans tests/) est aussi copié, à côté de windows/bin. Renvoie les avertissements (warnings).
 function installFiles(srcDir) {
   if (!srcDir || srcDir.trim() === '') fail('dossier source manquant.');
   const src = path.resolve(srcDir);
   let real;
   try { real = fs.realpathSync(src); } catch { fail(`dossier source introuvable : ${src}`); }
   if (!fs.statSync(real).isDirectory()) fail(`dossier source attendu : ${src}`);
+  const ui = WIN ? winUiSource(real) : null;
 
   const items = [];
   for (const name of fs.readdirSync(real).sort()) {
@@ -913,10 +939,17 @@ function installFiles(srcDir) {
     fs.cpSync(from, to, { recursive: true, dereference: false, verbatimSymlinks: true });
     copied.push(dir ? name + '/' : name);
   }
-  return { ok: true, copied, dest };
+  const warnings = [];
+  if (ui && ui.real) {
+    installWinUi(ui);
+    copied.push('windows/ui/');
+  } else if (ui) {
+    warnings.push(`interface Windows introuvable (${ui.from}) : windows\\ui de l'installation n'a pas été mis à jour.`);
+  }
+  return { ok: true, copied, dest, warnings };
 }
 
-// Vide la destination d'un dossier du runtime avant recopie. keep : entrées à garder (windows/bin).
+// Vide la destination d'un dossier du runtime avant recopie. keep : entrées à garder (windows/bin, windows/ui).
 function clearDest(to, keep = []) {
   if (keep.length === 0) { fs.rmSync(to, { recursive: true, force: true }); return; }
   let names = [];
