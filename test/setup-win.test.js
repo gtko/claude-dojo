@@ -243,6 +243,7 @@ function cli(home, args, { input, env = {} } = {}) {
       ...process.env,
       USERPROFILE: home,
       HOME: home,
+      LOCALAPPDATA: path.join(home, 'AppData', 'Local'), // fragment Windows Terminal : jamais le vrai profil
       DOJO_SKIP_REGISTRY: '1',
       DOJO_SKIP_EXE: '1',
       DOJO_DETECT_NO_GH_AUTH: '1',
@@ -457,6 +458,27 @@ test('uninstall Windows sans purge : config.json et backgrounds\\ gardés, runti
     assert.deepEqual(out.out.config.kept, ['config.json', 'backgrounds']);
     assert.equal(fs.readFileSync(path.join(dest, 'backgrounds', 'naruto', 'perso.jpg'), 'utf8'), 'fond perso');
     assert.equal(fs.existsSync(path.join(dest, 'agent-win.js')), false, 'runtime retiré');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('uninstall Windows : fragment Windows Terminal et bloc PowerShell retirés (symétrique de terminal apply)', winOnly, () => {
+  const home = winHome();
+  try {
+    const local = path.join(home, 'AppData', 'Local');
+    const frag = path.join(local, 'Microsoft', 'Windows Terminal', 'Fragments', 'claude-dojo', 'claude-dojo.json');
+    const ps = path.join(home, 'Documents', 'PowerShell', 'profile.ps1');
+    const applied = cli(home, ['terminal', 'apply', '{"windowsTerminal":true,"welcome":true}'], { env: { LOCALAPPDATA: local } });
+    assert.equal(applied.code, 0, applied.stderr);
+    assert.equal(fs.existsSync(frag), true);
+    assert.equal(fs.existsSync(ps), true);
+    const out = cli(home, ['uninstall', '{}'], { env: { LOCALAPPDATA: local } });
+    assert.equal(out.code, 0, out.stderr);
+    assert.deepEqual(out.out.terminal.windowsTerminal.action, 'removed');
+    assert.equal(fs.existsSync(frag), false, 'fragment retiré');
+    assert.equal(fs.existsSync(ps), false, 'profil créé par Dojo supprimé');
+    assert.equal(fs.existsSync(path.join(dojoDir(home), 'terminal')), false, 'terminal/ retiré');
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

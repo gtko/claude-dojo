@@ -16,7 +16,9 @@ const https = require('https');
 const crypto = require('crypto');
 const { execFile, execFileSync } = require('child_process');
 
-const WIN = process.platform === 'win32';
+// DOJO_FORCE_PLATFORM ne sert qu'aux tests (simule win32 ou darwin) ; sinon la plateforme réelle.
+const PLATFORM = process.env.DOJO_FORCE_PLATFORM || process.platform;
+const WIN = PLATFORM === 'win32';
 const LABEL_AGENT = 'io.github.claude-dojo.agent';
 const LABEL_WALL = 'io.github.claude-dojo.wallpaper';
 const LEGACY_RE = /^com\.[^.]+\.claude-dojo\.(agent|wallpaper)$/;
@@ -34,10 +36,29 @@ const THEME_ID_RE = /^[a-z0-9-]+$/;
 const DEFAULT_THEME = 'naruto';
 const BG_EXT = ['.jpg', '.jpeg', '.png', '.heic', '.webp'];
 const BG_MAX_BYTES = 50 * 1024 * 1024;
-// Options terminal (config.json, clé terminal) : Ghostty, Terminal.app, zsh (welcome).
-const TERM_KEYS = ['ghostty', 'terminalApp', 'welcome'];
-// src/terminal/ (welcome.zsh) est copié sous ce nom dans la config : « terminal/ » y désigne les fichiers générés.
+// Options terminal (config.json, clé terminal). macOS : Ghostty, Terminal.app, zsh (welcome). Windows : Windows Terminal
+// (fragment) et accueil PowerShell (welcome). TERM_KEYS = toutes (validation de write-config) ; termKeys() = celles de la plateforme.
+const TERM_KEYS_MAC = ['ghostty', 'terminalApp', 'welcome'];
+const TERM_KEYS_WIN = ['windowsTerminal', 'welcome'];
+const TERM_KEYS = [...TERM_KEYS_MAC, 'windowsTerminal'];
+const termKeys = () => (WIN ? TERM_KEYS_WIN : TERM_KEYS_MAC);
+// Arguments acceptés par terminal apply/remove : sous Windows, ghostty et terminalApp sont acceptés et ignorés (skipped).
+const termArgKeys = () => (WIN ? TERM_KEYS : TERM_KEYS_MAC);
+// src/terminal/ (welcome.zsh, welcome.ps1) est copié sous ce nom dans la config : « terminal/ » y désigne les fichiers générés.
 const TERM_SRC_INSTALLED = 'terminal-src';
+// Windows Terminal : fragment claude-dojo.json (dossier Fragments\claude-dojo) avec un profil « Claude Dojo » au GUID fixe
+// ci-dessous. Le GUID ne change jamais ; le profil de l'utilisateur et son settings.json ne sont jamais modifiés.
+const WT_FRAGMENT = 'claude-dojo.json';
+const WT_PROFILE_GUID = '{8f3e5a2c-6d1b-4e97-b0a4-3c9d7f15e264}';
+const WT_PROFILE_NAME = 'Claude Dojo';
+const WT_BG_OPACITY = 0.25;
+// Accueil PowerShell : bloc marqué dans les deux profils (PowerShell 7 et Windows PowerShell 5.1). welcome.ps1 est copié
+// dans terminal/ ; le bloc le charge seulement en session interactive.
+const PS_BEGIN = '# >>> claude-dojo >>>';
+const PS_END = '# <<< claude-dojo <<<';
+const WELCOME_PS = 'welcome.ps1';
+// Fichiers de terminal/ d'un thème lus par welcome.ps1 (logo et réglages de l'accueil).
+const WELCOME_THEME_FILES = ['logo.txt', 'lists.txt'];
 // Windows : valeurs HKCU\...\Run gérées par setup.js, valeur écrite par le réglage « démarrer avec Windows » de l'exe,
 // et exe du fond d'écran (windows/bin/, téléchargé ou compilé).
 const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
@@ -698,7 +719,7 @@ function validateConfig(c) {
     }
   }
   if (c.terminal !== undefined && c.terminal !== null) {
-    if (!isObj(c.terminal)) fail('terminal doit être un objet {ghostty, terminalApp, welcome} de booléens.');
+    if (!isObj(c.terminal)) fail('terminal doit être un objet {ghostty, terminalApp, welcome, windowsTerminal} de booléens.');
     for (const k of TERM_KEYS) {
       if (c.terminal[k] !== undefined && typeof c.terminal[k] !== 'boolean') fail(`terminal.${k} doit être un booléen.`);
     }
@@ -1465,7 +1486,7 @@ function attempt(fn, dir, dryRun, warnings, what) {
 // Désinstallation Windows, symétrique de l'installation. D'abord les processus Dojo (un fichier en cours d'exécution
 // ne se supprime pas), puis valeurs Run et lanceur, exe, entrées de settings.json (sauvegarde avant), puis dossier
 // d'installation. Chaque étape va au bout : un échec est remonté dans warnings. Sans --purge, config.json et
-// backgrounds\ restent. Les options terminal (Ghostty, Terminal.app, zsh) n'existent pas sous Windows.
+// backgrounds\ restent. Options terminal : fragment Windows Terminal et accueil PowerShell (terminalRemove, sans erreur si rien).
 async function uninstallWin(opts) {
   const dryRun = opts.dryRun === true;
   const warnings = [];
@@ -1496,6 +1517,15 @@ async function uninstallWin(opts) {
     settings = { changed: false, backup: null, diff: '', error: errText(e) };
   }
   const dojo = paths.dojo();
+  // Options terminal : fragment Windows Terminal, blocs des profils PowerShell, dossier terminal/. Avant le dossier
+  // d'installation, qui contient welcome.ps1 et theme/.
+  let terminal;
+  try {
+    terminal = await terminalRemove({ windowsTerminal: true, welcome: true }, { dryRun, dropDir: true });
+  } catch (e) {
+    terminal = { error: errText(e) };
+    warnings.push(`options terminal non retirées (${errText(e)})`);
+  }
   const config = attempt(() => (opts.purge === true ? removeTree(dojo, true, dryRun) : removeInstallKeepConfig(dojo, dryRun)),
     dojo, dryRun, warnings, 'configuration');
   const stateDir = paths.stateDir();
@@ -1509,7 +1539,7 @@ async function uninstallWin(opts) {
     appRemoved,
     appRemaining,
     settings: { changed: settings.changed, backup: settings.backup, diff: settings.diff, error: settings.error || null },
-    terminal: { skipped: 'win32' },
+    terminal,
     config,
     states,
     warnings,
@@ -1697,7 +1727,7 @@ async function setTheme(arg) {
   // Options terminal actives : les données du nouveau thème sont vérifiées, puis régénérées AVANT d'écrire config.theme.
   // Si la régénération échoue, config.json garde l'ancien thème.
   const opts = terminalOptions();
-  const regenerated = TERM_KEYS.some((k) => opts[k]);
+  const regenerated = termKeys().some((k) => opts[k]);
   if (regenerated) terminalSources(id, opts);
   const terminal = regenerated ? await terminalApply(null, id) : null;
   writeConfig({ theme: id });
@@ -2683,7 +2713,7 @@ function ghosttyConfText(T) {
 function terminalOptions() {
   const t = (readConfig() || {}).terminal;
   const o = isObj(t) ? t : {};
-  return Object.fromEntries(TERM_KEYS.map((k) => [k, o[k] === true]));
+  return Object.fromEntries(termKeys().map((k) => [k, o[k] === true]));
 }
 // Profil Terminal importé par Dojo (state.json, managed.terminalApp), ou null.
 function managedTerminal() {
@@ -2701,6 +2731,7 @@ function checkConfigReadable() {
 
 // Données nécessaires aux options demandées (vérifiées avant toute écriture).
 function terminalSources(theme, want) {
+  if (WIN) return winSources(theme, want);
   const out = { themeSrc: null, welcomeSrc: null, profile: null };
   if (want.ghostty || want.terminalApp) {
     const dir = path.join(paths.themes(), theme, 'terminal');
@@ -2879,13 +2910,14 @@ function replaceThemeDir(src, dest) {
 // Régénère tout ce qui est installé pour les options demandées, puis enregistre ces options. Options manquantes = celles enregistrées.
 // theme : thème à appliquer (set-theme, avant d'écrire config.theme) ; sans lui, celui de config.json.
 async function terminalApply(arg, theme = null) {
+  if (WIN) return terminalApplyWin(arg, theme);
   checkConfigReadable();
   const recorded = terminalOptions();
   const want = arg === null ? recorded : { ...recorded, ...arg };
   const id = theme ?? themesInfo().theme;
   const src = terminalSources(id, want);
   const T = termPaths();
-  const anyOn = TERM_KEYS.some((k) => want[k]);
+  const anyOn = termKeys().some((k) => want[k]);
   if (anyOn) {
     fs.mkdirSync(T.dir, { recursive: true, mode: 0o700 });
     if (want.ghostty || want.terminalApp) replaceThemeDir(src.themeSrc, T.theme);
@@ -2915,6 +2947,7 @@ async function terminalApply(arg, theme = null) {
 // Retire les composants sélectionnés (sel) : lignes, profil, fichiers. dropDir : retire aussi le dossier terminal/ (uninstall).
 // Le dossier reste tant qu'une option reste active. Les options retirées sont marquées false dans config.json.
 async function terminalRemove(sel, opts = {}) {
+  if (WIN) return terminalRemoveWin(sel, opts);
   const dryRun = opts.dryRun === true;
   const T = termPaths();
   const ghostty = sel.ghostty ? wireResult(wireBlock(false, ghosttyWire(T), dryRun), 'configPath') : null;
@@ -2922,28 +2955,28 @@ async function terminalRemove(sel, opts = {}) {
   const terminalApp = sel.terminalApp ? await terminalRemoveProfile(managedTerminal(), dryRun) : null;
   const was = terminalOptions();
   const left = { ...was };
-  for (const k of TERM_KEYS) if (sel[k]) left[k] = false;
+  for (const k of termKeys()) if (sel[k]) left[k] = false;
   if (!dryRun) {
     if (sel.ghostty) fs.rmSync(T.ghosttyConf, { force: true });
     if (sel.welcome) fs.rmSync(T.welcome, { force: true });
     if (!left.ghostty && !left.terminalApp) fs.rmSync(T.theme, { recursive: true, force: true });
     // Seules les options réellement actives passent à false : un retrait sans rien d'installé ne touche pas config.json.
     const patch = {};
-    for (const k of TERM_KEYS) if (sel[k] && was[k]) patch[k] = false;
+    for (const k of termKeys()) if (sel[k] && was[k]) patch[k] = false;
     if (Object.keys(patch).length && readConfig() !== null) writeConfig({ terminal: patch });
   }
-  const dropDir = opts.dropDir === true || TERM_KEYS.every((k) => !left[k]);
+  const dropDir = opts.dropDir === true || termKeys().every((k) => !left[k]);
   const dir = removeTree(T.dir, dropDir, dryRun);
   return { ok: true, dryRun, ghostty, terminalApp, welcome, dir, options: left };
 }
 async function terminalRemoveCli(raw) {
   const o = terminalArg(raw);
   const sel = {};
-  for (const k of TERM_KEYS) sel[k] = o === null ? true : o[k] === true;
+  for (const k of termArgKeys()) sel[k] = o === null ? true : o[k] === true;
   return terminalRemove(sel);
 }
 
-// Argument terminal : objet {ghostty?, terminalApp?, welcome?} de booléens. Vide ou absent = null.
+// Argument terminal : objet {ghostty?, terminalApp?, welcome?, windowsTerminal?} de booléens (selon la plateforme). Vide ou absent = null.
 function terminalArg(raw) {
   const text = readArg(raw);
   if (text.trim() === '') return null;
@@ -2951,8 +2984,9 @@ function terminalArg(raw) {
   try { o = JSON.parse(text); } catch (e) { fail(`JSON invalide en argument : ${e.message}`); }
   if (!isObj(o)) fail('options terminal : un objet JSON est attendu.');
   const out = {};
+  const allowed = termArgKeys();
   for (const [k, v] of Object.entries(o)) {
-    if (!TERM_KEYS.includes(k)) fail(`option terminal inconnue : ${k} (attendu ghostty, terminalApp ou welcome).`);
+    if (!allowed.includes(k)) fail(`option terminal inconnue : ${k} (attendu ${allowed.slice(0, -1).join(', ')} ou ${allowed[allowed.length - 1]}).`);
     if (typeof v !== 'boolean') fail(`terminal.${k} doit être un booléen.`);
     out[k] = v;
   }
@@ -2961,6 +2995,7 @@ function terminalArg(raw) {
 
 // Lecture seule : options, état réel des fichiers et de Terminal.app.
 async function terminalStatus() {
+  if (WIN) return terminalStatusWin();
   const rec = managedTerminal();
   const z = zshrcInfo();
   return {
@@ -2982,6 +3017,289 @@ async function terminalStatus() {
   };
 }
 
+// ── Terminal sous Windows : Windows Terminal (fragment) et accueil PowerShell ────────────
+// Mêmes commandes que macOS (terminal status|apply|remove, set-theme, uninstall). ghostty et terminalApp sont ignorées
+// (skipped) ; aucun appel à defaults, plutil ou pgrep. LOCALAPPDATA (fragment) et USERPROFILE (profils) sont relus à
+// chaque appel : les tests les redéfinissent dans un dossier temporaire.
+const winSkipped = () => ({ installed: false, applied: false, skipped: 'win32' });
+// welcome.ps1 dans terminal/ (T.welcome désigne welcome.zsh, côté macOS).
+const winWelcomeFile = (T) => path.join(T.dir, WELCOME_PS);
+const localAppData = () => process.env.LOCALAPPDATA || path.join(home(), 'AppData', 'Local');
+const wtFragmentsDir = () => path.join(localAppData(), 'Microsoft', 'Windows Terminal', 'Fragments', 'claude-dojo');
+const wtFragmentFile = () => path.join(wtFragmentsDir(), WT_FRAGMENT);
+// Profils PowerShell : [PowerShell 7 (Documents\PowerShell), Windows PowerShell 5.1 (Documents\WindowsPowerShell)].
+const psProfiles = () => {
+  const docs = path.join(home(), 'Documents');
+  return [path.join(docs, 'PowerShell', 'profile.ps1'), path.join(docs, 'WindowsPowerShell', 'profile.ps1')];
+};
+// Bloc d'accueil en ASCII seul : Windows PowerShell 5.1 lit un .ps1 sans BOM en ANSI. Le chemin part de USERPROFILE,
+// donc il reste valable même si le nom d'utilisateur contient des caractères non ASCII.
+const PS_BLOCK = [
+  PS_BEGIN,
+  '# Accueil claude-dojo (gere par setup.js : terminal remove le retire). Session interactive seulement.',
+  "if ([Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and $env:DOJO_WELCOME -ne 'off') {",
+  "  $dojoWelcome = Join-Path $env:USERPROFILE '.config\\claude-dojo\\terminal\\welcome.ps1'",
+  '  if (Test-Path -LiteralPath $dojoWelcome) { & $dojoWelcome }',
+  '}',
+  PS_END,
+];
+const WT_ANSI = ['black', 'red', 'green', 'yellow', 'blue', 'purple', 'cyan', 'white'];
+const WT_ANSI_ALL = [...WT_ANSI, ...WT_ANSI.map((n) => 'bright' + n[0].toUpperCase() + n.slice(1))];
+// Palette Windows Terminal d'un thème, lue dans terminal/ghostty.theme (généré à partir de theme.json : même source que macOS).
+function themePalette(id, text) {
+  const pal = [];
+  const top = {};
+  for (const line of text.split(/\r?\n/)) {
+    const p = /^palette\s*=\s*(\d{1,2})=(#[0-9a-fA-F]{6})\s*$/.exec(line);
+    if (p) { pal[Number(p[1])] = p[2]; continue; }
+    const t = /^(background|foreground|cursor-color|selection-background)\s*=\s*(#[0-9a-fA-F]{6})\s*$/.exec(line);
+    if (t) top[t[1]] = t[2];
+  }
+  for (let i = 0; i < 16; i += 1) if (!pal[i]) fail(`thème ${id} : couleur ${i} absente de ghostty.theme.`);
+  for (const k of ['background', 'foreground', 'cursor-color', 'selection-background']) {
+    if (!top[k]) fail(`thème ${id} : ${k} absent de ghostty.theme.`);
+  }
+  return {
+    background: top.background,
+    foreground: top.foreground,
+    cursorColor: top['cursor-color'],
+    selectionBackground: top['selection-background'],
+    ...Object.fromEntries(WT_ANSI_ALL.map((n, i) => [n, pal[i]])),
+  };
+}
+// Données d'un thème pour Windows : palette et fond (Windows Terminal), welcome.ps1 et terminal/ (accueil).
+// Vérifiées avant toute écriture.
+function winSources(theme, want) {
+  const out = { themeSrc: null, welcomeSrc: null, palette: null, background: null, name: theme };
+  const meta = listThemes().find((t) => t.id === theme);
+  if (meta) out.name = meta.name;
+  if (want.windowsTerminal || want.welcome) {
+    const dir = path.join(paths.themes(), theme, 'terminal');
+    if (!isDirAt(dir)) fail(`thème ${theme} : dossier terminal/ absent (${dir}).`);
+    out.themeSrc = fs.realpathSync(dir);
+    assertLinksInside(out.themeSrc, out.themeSrc);
+  }
+  if (want.windowsTerminal) {
+    const ghostty = path.join(out.themeSrc, 'ghostty.theme');
+    if (!isFileAt(ghostty)) fail(`thème ${theme} : ghostty.theme absent (palette Windows Terminal).`);
+    out.palette = themePalette(theme, fs.readFileSync(ghostty, 'utf8'));
+    const bg = path.join(paths.themes(), theme, 'background.jpg');
+    out.background = isFileAt(bg) ? bg : null;
+  }
+  if (want.welcome) {
+    const w = path.join(paths.terminalSrc(), WELCOME_PS);
+    if (!isFileAt(w)) fail(`${WELCOME_PS} introuvable : ${w}`);
+    out.welcomeSrc = w;
+  }
+  return out;
+}
+// Windows Terminal installé : paquet Microsoft.WindowsTerminal (ou Preview) ou alias wt.exe. Information seulement.
+function windowsTerminalInstalled() {
+  const local = localAppData();
+  let pkgs = [];
+  try { pkgs = fs.readdirSync(path.join(local, 'Packages')); } catch { /* dossier absent */ }
+  return pkgs.some((n) => /^Microsoft\.WindowsTerminal(Preview)?_/.test(n))
+    || isFileAt(path.join(local, 'Microsoft', 'WindowsApps', 'wt.exe'));
+}
+// Fragment : schéma « Claude Dojo <thème> » et profil « Claude Dojo » (GUID fixe). Fond : themes/<id>/background.jpg si présent.
+function wtFragment(src) {
+  const name = `Claude Dojo ${src.name}`;
+  const profile = { guid: WT_PROFILE_GUID, name: WT_PROFILE_NAME, commandline: 'powershell.exe -NoLogo', colorScheme: name };
+  if (src.background) {
+    Object.assign(profile, {
+      backgroundImage: src.background,
+      backgroundImageOpacity: WT_BG_OPACITY,
+      backgroundImageStretchMode: 'uniformToFill',
+    });
+  }
+  return { schemes: [{ name, ...src.palette }], profiles: [profile] };
+}
+// Fichier à nous : écrit seulement si son contenu change, sans sauvegarde (écriture atomique).
+function applyWtFragment(src) {
+  const file = wtFragmentFile();
+  const text = JSON.stringify(wtFragment(src), null, 2) + '\n';
+  const existed = isFileAt(file);
+  const action = existed && readText(file) === text ? 'unchanged' : existed ? 'updated' : 'added';
+  if (action !== 'unchanged') writeAtomic(file, text);
+  return { action, path: file, installed: windowsTerminalInstalled() };
+}
+// Fragment retiré, puis son dossier claude-dojo s'il est vide. Absent = rien à faire.
+function removeWtFragment(dryRun) {
+  const dir = wtFragmentsDir();
+  const file = wtFragmentFile();
+  const existed = isFileAt(file);
+  let dirRemoved = false;
+  if (!dryRun) {
+    if (existed) fs.rmSync(file, { force: true });
+    if (isDirAt(dir) && fs.readdirSync(dir).length === 0) { fs.rmdirSync(dir); dirRemoved = true; }
+  }
+  return { action: existed ? 'removed' : 'none', path: file, dirRemoved, dryRun };
+}
+// Fragment présent, avec le profil Claude Dojo (GUID fixe).
+function wtApplied() {
+  try {
+    const j = JSON.parse(fs.readFileSync(wtFragmentFile(), 'utf8'));
+    return isObj(j) && Array.isArray(j.profiles) && j.profiles.some((p) => isObj(p) && p.guid === WT_PROFILE_GUID);
+  } catch { return false; }
+}
+// Bloc présent : marqueur de début suivi du marqueur de fin, chacun seul sur sa ligne. Une BOM en tête est ignorée.
+const splitBom = (text) => (text.startsWith('\uFEFF') ? ['\uFEFF', text.slice(1)] : ['', text]);
+function hasPsBlock(text) {
+  const lines = splitBom(text)[1].split('\n').map(bare);
+  const b = lines.indexOf(PS_BEGIN);
+  return b >= 0 && lines.indexOf(PS_END, b + 1) > b;
+}
+// Retire chaque bloc (du marqueur de début au marqueur de fin inclus) ; le reste du fichier garde ses octets. Bloc en fin
+// de fichier sans retour final : le retour ajouté avant le bloc part aussi.
+function stripPsBlocks(text) {
+  const [bom, body] = splitBom(text);
+  const parts = body.split(/(?<=\n)/);
+  for (;;) {
+    const b = parts.findIndex((l) => bare(l) === PS_BEGIN);
+    const e = b < 0 ? -1 : parts.findIndex((l, i) => i > b && bare(l) === PS_END);
+    if (e < 0) break;
+    const noEol = !parts[e].endsWith('\n');
+    parts.splice(b, e - b + 1);
+    if (noEol && b > 0) parts[b - 1] = parts[b - 1].replace(/\r?\n$/, '');
+  }
+  return bom + parts.join('');
+}
+// Bloc remplacé (ou ajouté) en fin de fichier. Fin de ligne dominante ; CRLF pour un fichier sans retour à la ligne.
+// Sans retour final après le bloc quand le fichier n'en avait pas : le retrait restitue alors les octets d'origine.
+function setPsBlock(text) {
+  const [bom, base] = splitBom(stripPsBlocks(text));
+  const eol = /\n/.test(text) ? dominantEol(text) : '\r\n';
+  const block = PS_BLOCK.join(eol);
+  if (base === '') return bom + block + eol;
+  return base.endsWith('\n') ? bom + base + block + eol : bom + base + eol + block;
+}
+// Fichiers que Dojo a créés (profils absents avant) : listés dans state.managed, supprimés au retrait s'ils sont vides.
+const PS_CREATED = 'powershellCreated';
+const managedList = (key) => {
+  const v = readState().managed;
+  return isObj(v) && Array.isArray(v[key]) ? [...v[key]] : [];
+};
+const setManagedList = (key, list) => setManaged(key, list.length ? list : null);
+function applyPsProfiles() {
+  const created = new Set(managedList(PS_CREATED));
+  const out = psProfiles().map((file) => {
+    const existed = fs.existsSync(realFile(file));
+    const before = readText(file);
+    const r = editConfigFile(file, setPsBlock);
+    if (r.changed && !existed) created.add(file);
+    const action = !r.changed ? 'unchanged' : hasPsBlock(before) ? 'updated' : existed ? 'added' : 'created';
+    return { path: file, action, backup: r.backup };
+  });
+  setManagedList(PS_CREATED, [...created]);
+  return { profiles: out };
+}
+function removePsProfiles(dryRun) {
+  const created = managedList(PS_CREATED);
+  const files = psProfiles();
+  const out = files.map((file) => {
+    if (!fs.existsSync(realFile(file))) return { path: file, action: 'none', deleted: false, backup: null };
+    const before = readText(file);
+    // Fichier créé par Dojo et réduit à rien : supprimé, sans sauvegarde (il n'a jamais eu de contenu utilisateur).
+    if (!dryRun && created.includes(file) && stripPsBlocks(before) === '') {
+      fs.rmSync(realFile(file), { force: true });
+      return { path: file, action: before !== '' ? 'removed' : 'none', deleted: true, backup: null };
+    }
+    const r = editConfigFile(file, stripPsBlocks, dryRun);
+    return { path: file, action: r.changed ? 'removed' : 'none', deleted: false, backup: r.backup };
+  });
+  if (!dryRun) setManagedList(PS_CREATED, created.filter((f) => !files.includes(f)));
+  return { profiles: out };
+}
+
+// Lecture seule : options, fragment et blocs présents, Windows Terminal installé.
+async function terminalStatusWin() {
+  const [ps7, ps5] = psProfiles();
+  const block = (f) => hasPsBlock(readText(f));
+  return {
+    ok: true,
+    platform: 'win32',
+    theme: themesInfo().theme,
+    options: terminalOptions(),
+    windowsTerminal: { installed: windowsTerminalInstalled(), fragmentsDir: wtFragmentsDir(), applied: wtApplied() },
+    powershell: { profilePath: ps7, windowsPowerShellPath: ps5, welcome: block(ps7) && block(ps5) },
+    ghostty: winSkipped(),
+    terminalApp: winSkipped(),
+  };
+}
+// Régénère ce qui est installé pour les options demandées (fragment, theme/, welcome.ps1, blocs), puis enregistre les options.
+// Une option absente de arg garde sa valeur enregistrée ; une option désactivée retire ce qu'elle avait posé.
+async function terminalApplyWin(arg, theme = null) {
+  checkConfigReadable();
+  const recorded = terminalOptions();
+  const want = arg === null ? recorded : { ...recorded, ...arg };
+  const id = theme ?? themesInfo().theme;
+  const on = { windowsTerminal: want.windowsTerminal === true, welcome: want.welcome === true };
+  const src = winSources(id, on);
+  const T = termPaths();
+  const anyOn = on.windowsTerminal || on.welcome;
+  if (anyOn) fs.mkdirSync(T.dir, { recursive: true, mode: 0o700 });
+  if (on.welcome) {
+    // welcome.ps1 lit seulement logo.txt et lists.txt : le reste de terminal/ (frames, shaders) n'est pas copié.
+    fs.rmSync(T.theme, { recursive: true, force: true });
+    fs.mkdirSync(T.theme, { recursive: true });
+    for (const n of WELCOME_THEME_FILES) {
+      if (isFileAt(path.join(src.themeSrc, n))) fs.copyFileSync(path.join(src.themeSrc, n), path.join(T.theme, n));
+    }
+    writeAtomic(winWelcomeFile(T), fs.readFileSync(src.welcomeSrc));
+  } else {
+    fs.rmSync(T.theme, { recursive: true, force: true });
+    fs.rmSync(winWelcomeFile(T), { force: true });
+  }
+  const windowsTerminal = on.windowsTerminal ? applyWtFragment(src) : removeWtFragment(false);
+  const powershell = on.welcome ? applyPsProfiles() : removePsProfiles(false);
+  if (!anyOn) fs.rmSync(T.dir, { recursive: true, force: true });
+  writeConfig({ terminal: on });
+  return {
+    ok: true,
+    platform: 'win32',
+    theme: id,
+    options: on,
+    dir: T.dir,
+    windowsTerminal,
+    powershell,
+    ghostty: winSkipped(),
+    terminalApp: winSkipped(),
+  };
+}
+// Retire les composants sélectionnés (sel) : fragment, blocs PowerShell, fichiers générés. Rien d'installé = no-op.
+// dropDir : retire aussi le dossier terminal/ (uninstall).
+async function terminalRemoveWin(sel, opts = {}) {
+  const dryRun = opts.dryRun === true;
+  const T = termPaths();
+  const was = terminalOptions();
+  const left = { ...was };
+  if (sel.windowsTerminal) left.windowsTerminal = false;
+  if (sel.welcome) left.welcome = false;
+  const windowsTerminal = sel.windowsTerminal ? removeWtFragment(dryRun) : null;
+  const powershell = sel.welcome ? removePsProfiles(dryRun) : null;
+  if (!dryRun) {
+    if (sel.welcome) fs.rmSync(winWelcomeFile(T), { force: true });
+    if (!left.welcome) fs.rmSync(T.theme, { recursive: true, force: true });
+    // Seules les options réellement actives passent à false : un retrait sans rien d'installé ne touche pas config.json.
+    const patch = {};
+    for (const k of termKeys()) if (sel[k] && was[k]) patch[k] = false;
+    if (Object.keys(patch).length && readConfig() !== null) writeConfig({ terminal: patch });
+  }
+  const dropDir = opts.dropDir === true || (!left.windowsTerminal && !left.welcome);
+  const dir = removeTree(T.dir, dropDir, dryRun);
+  return {
+    ok: true,
+    platform: 'win32',
+    dryRun,
+    windowsTerminal,
+    powershell,
+    ghostty: winSkipped(),
+    terminalApp: winSkipped(),
+    dir,
+    options: left,
+  };
+}
+
 // ── Dispatch CLI ─────────────────────────────────────────────────────────
 const USAGE = [
   'node setup.js detect',
@@ -3000,8 +3318,8 @@ const USAGE = [
   'node setup.js wallpapers next',
   'node setup.js wallpapers local <theme>',
   'node setup.js terminal status',
-  'node setup.js terminal apply [{ghostty,terminalApp,welcome}|-]   (sans argument : options enregistrées)',
-  'node setup.js terminal remove [{ghostty,terminalApp,welcome}|-]  (sans argument : tout)',
+  'node setup.js terminal apply [{ghostty,terminalApp,welcome}|{windowsTerminal,welcome}|-]   (macOS | Windows ; sans argument : options enregistrées)',
+  'node setup.js terminal remove [{ghostty,terminalApp,welcome}|{windowsTerminal,welcome}|-]  (sans argument : tout)',
   'node setup.js geocode <ville>',
   'node setup.js install-files <srcdir>',
   'node setup.js upgrade-runtime <srcdir> [{appPath,noLaunchd}|-]   (runtime plus récent que l\'installé : copie + redémarrage de l\'agent)',

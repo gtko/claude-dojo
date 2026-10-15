@@ -23,7 +23,7 @@ const appDirsOf = (home) => [path.join(home, 'Applications'), path.join(home, 'S
 // USERPROFILE suit HOME : sous Windows, os.homedir() ne lit que USERPROFILE.
 function cli(home, args, { input, env = {} } = {}) {
   const r = spawnSync(process.execPath, [SETUP, ...args], {
-    env: { ...process.env, HOME: home, USERPROFILE: home, DOJO_DETECT_NO_GH_AUTH: '1', DOJO_APPS_DIRS: appDirsOf(home), ...env },
+    env: { ...process.env, HOME: home, USERPROFILE: home, LOCALAPPDATA: path.join(home, 'AppData', 'Local'), DOJO_DETECT_NO_GH_AUTH: '1', DOJO_APPS_DIRS: appDirsOf(home), ...env },
     input,
     encoding: 'utf8',
     timeout: 60000,

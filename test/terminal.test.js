@@ -106,6 +106,8 @@ function makeEnv({ prefs = true } = {}) {
   mk(path.join(home, '.config', 'claude-dojo', 'config.json'), JSON.stringify({ theme: 'alpha' }));
   if (prefs) mk(path.join(home, 'Library', 'Preferences', 'com.apple.Terminal.plist'), 'placeholder');
   const env = {
+    // Ces tests décrivent macOS : la plateforme est fixée (sous Windows, setup.js prendrait la branche win32).
+    DOJO_FORCE_PLATFORM: 'darwin',
     PATH: path.join(root, 'bin') + path.delimiter + (process.env.PATH || '/usr/bin:/bin'),
     HOME: home,
     USERPROFILE: home,
