@@ -69,6 +69,9 @@
     <Compile Include="..\..\src\UiBridge.cs">
       <Link>src\UiBridge.cs</Link>
     </Compile>
+    <Compile Include="..\..\src\MutexNames.cs">
+      <Link>src\MutexNames.cs</Link>
+    </Compile>
   </ItemGroup>
 
 </Project>

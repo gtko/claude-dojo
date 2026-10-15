@@ -8,7 +8,7 @@ namespace DojoWallpaper
     internal static class Program
     {
         // Global\ : une seule instance pour toute la machine (toutes sessions confondues).
-        private const string MutexName = @"Global\DojoWallpaper";
+        // DOJO_INSTANCE (valeur valide) ajoute un suffixe au nom : voir MutexNames.
         private const int MaxExitAfterSeconds = 86400;
 
         [STAThread]
@@ -16,7 +16,7 @@ namespace DojoWallpaper
         {
             bool core = HasArg(args, "--core");
             bool createdNew;
-            using (var mutex = new Mutex(true, MutexName, out createdNew))
+            using (var mutex = new Mutex(true, MutexNames.FromEnvironment(), out createdNew))
             {
                 if (!createdNew)
                 {

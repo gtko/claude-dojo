@@ -74,6 +74,7 @@ namespace DojoWallpaper.Tests
             tests.AddRange(BridgeCommandsTests.Cases());
             tests.AddRange(NodeRunnerTests.Cases());
             tests.AddRange(NodeLocatorTests.Cases());
+            tests.AddRange(MutexNamesTests.Cases());
             tests.AddRange(UiBridgeTests.Cases());
             PauseLogicTests.Register(tests);
 
