@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>DojoWallpaper</AssemblyName>
+    <RootNamespace>DojoWallpaper</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <!-- Intermediaires hors de bin\ : bin\ ne contient que le binaire final (versionne). -->
+    <BaseOutputPath>build\</BaseOutputPath>
+    <BaseIntermediateOutputPath>obj\</BaseIntermediateOutputPath>
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin\**;tests\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <!-- JavaScriptSerializer (config JSON, BCL .NET Framework : pas de NuGet). -->
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <WebView2Version>1.0.4258.31</WebView2Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="$(WebView2Version)" />
+  </ItemGroup>
+
+  <!-- Le package ne copie que le loader de l'architecture de la cible (x64 ici).
+       On fournit aussi le loader x86 sous runtimes\win-x86\native (layout attendu pour .NET Framework). -->
+  <ItemGroup Condition="Exists('$(NuGetPackageRoot)microsoft.web.webview2\$(WebView2Version)\runtimes\win-x86\native\WebView2Loader.dll')">
+    <Content Include="$(NuGetPackageRoot)microsoft.web.webview2\$(WebView2Version)\runtimes\win-x86\native\WebView2Loader.dll">
+      <Link>runtimes\win-x86\native\WebView2Loader.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>
