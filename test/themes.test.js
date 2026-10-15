@@ -163,8 +163,10 @@ test('set-background : jpg copié dans backgrounds/ (dossier 0700, fichier 0600)
   assert.equal(path.dirname(dest), backgroundsOf(home));
   assert.match(path.basename(dest), /^[0-9a-f]{12}\.jpg$/, 'sha1 court + extension en minuscules');
   assert.deepEqual(fs.readFileSync(dest), fs.readFileSync(src), 'contenu copié à l identique');
-  assert.equal(fs.statSync(dest).mode & 0o777, 0o600);
-  assert.equal(fs.statSync(backgroundsOf(home)).mode & 0o777, 0o700);
+  if (process.platform !== 'win32') { // Windows n'a pas de bits POSIX : fs.statSync rend toujours 0666/0777
+    assert.equal(fs.statSync(dest).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(backgroundsOf(home)).mode & 0o777, 0o700);
+  }
   assert.equal(readJson(configFile(home)).background, dest);
   assert.equal(cli(home, ['themes'], { env }).out.background, dest);
 
@@ -335,7 +337,8 @@ test('write-config : theme et background validés, null efface la clé, ~ dével
   assert.equal(r.code, 0, r.raw);
   let cfg = readJson(configFile(home));
   assert.equal(cfg.theme, 'frieren');
-  assert.equal(cfg.background, path.join(home, '.config', 'claude-dojo', 'backgrounds', 'fond.jpg'));
+  // path.normalize : sous Windows, ~ est remplacé par concaténation (séparateurs mélangés), même fichier.
+  assert.equal(path.normalize(cfg.background), path.join(home, '.config', 'claude-dojo', 'backgrounds', 'fond.jpg'));
 
   r = cli(home, ['write-config', JSON.stringify({ background: null, theme: null })]);
   assert.equal(r.code, 0, r.raw);

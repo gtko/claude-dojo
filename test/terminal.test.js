@@ -19,6 +19,8 @@ const SETUP = path.join(REPO, 'src', 'setup.js');
 const THEMES_SRC = path.join(REPO, 'src', 'themes');
 const HAS_PLUTIL = spawnSync('/bin/sh', ['-c', 'command -v plutil'], { encoding: 'utf8' }).status === 0;
 const NEEDS_PLUTIL = HAS_PLUTIL ? false : 'plutil absent (macOS requis)';
+// Ghostty, Terminal.app, zsh et chemins POSIX dans les fichiers générés : fonctionnalités macOS, pas Windows.
+const MAC_ONLY = process.platform === 'win32' && 'Ghostty / Terminal.app / zsh : macOS uniquement';
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 const CREATED = [];
@@ -193,7 +195,7 @@ const RICH_CASES = {
   'fichier vide existant': '',
 };
 
-test('apply ghostty+welcome : fichiers générés, lignes exactes, sauvegardes, retrait octet pour octet', () => {
+test('apply ghostty+welcome : fichiers générés, lignes exactes, sauvegardes, retrait octet pour octet', { skip: MAC_ONLY }, () => {
   const E = makeEnv();
   fs.mkdirSync(path.dirname(ghosttyFile(E)), { recursive: true });
   fs.writeFileSync(ghosttyFile(E), RICH_GHOSTTY);
@@ -300,7 +302,7 @@ test('fichier créé à l apply (zshrc absent) : vidé au retrait, sans sauvegar
   assert.equal(readText(zshrc(E)), '');
 });
 
-test('ghostty : création de ~/.config/ghostty/config si absent, une seule ligne config-file après 2 apply', () => {
+test('ghostty : création de ~/.config/ghostty/config si absent, une seule ligne config-file après 2 apply', { skip: MAC_ONLY }, () => {
   const E = makeEnv();
   assert.equal(fs.existsSync(ghosttyFile(E)), false);
   const r = ok(cli(E, ['terminal', 'apply', '{"ghostty":true}']));
@@ -315,7 +317,7 @@ test('ghostty : création de ~/.config/ghostty/config si absent, une seule ligne
   assert.equal(fs.existsSync(appSupportGhostty(E)), false, 'Application Support non créé');
 });
 
-test('ghostty : ~/.config/ghostty/config prioritaire ; Application Support seul utilisé si c est le seul', () => {
+test('ghostty : ~/.config/ghostty/config prioritaire ; Application Support seul utilisé si c est le seul', { skip: MAC_ONLY }, () => {
   const E = makeEnv();
   fs.mkdirSync(path.dirname(appSupportGhostty(E)), { recursive: true });
   fs.writeFileSync(appSupportGhostty(E), 'x = 1');
@@ -413,7 +415,7 @@ test('ancienne ligne source gérée : reconnue comme posée, apply la met à jou
   assert.equal(ok(cli(E, ['terminal', 'apply', '{"welcome":true}'])).welcome.action, 'unchanged');
 });
 
-test('bloc à jour déplacé à la main en tête de fichier (ex. avant le instant prompt de p10k) : apply le laisse en place', () => {
+test('bloc à jour déplacé à la main en tête de fichier (ex. avant le instant prompt de p10k) : apply le laisse en place', { skip: MAC_ONLY }, () => {
   const E = makeEnv();
   const welcomeFile = path.join(generated(E), 'welcome.zsh');
   const line = `[[ -r "${welcomeFile}" ]] && source "${welcomeFile}"`;
@@ -456,7 +458,7 @@ for (const [label, content] of [['avec retour final', 'a = 1\r\nb = 2\r\n'], ['s
   });
 }
 
-test('.zshrc et config Ghostty en liens symboliques : apply x2 sans doublon, retrait complet, les liens restent des liens', () => {
+test('.zshrc et config Ghostty en liens symboliques : apply x2 sans doublon, retrait complet, les liens restent des liens', { skip: MAC_ONLY }, () => {
   const E = makeEnv();
   const dots = path.join(E.home, 'dotfiles');
   fs.mkdirSync(dots, { recursive: true });
@@ -489,7 +491,7 @@ test('ghostty.conf : custom-shader-animation = true (animation seulement fenêtr
   assert.equal(/custom-shader-animation = always/.test(conf), false, 'always animerait hors focus');
 });
 
-test('chemins avec espaces : valeurs quotées dans ghostty.conf, theme et source zsh', () => {
+test('chemins avec espaces : valeurs quotées dans ghostty.conf, theme et source zsh', { skip: MAC_ONLY }, () => {
   const E = makeEnv();
   ok(cli(E, ['terminal', 'apply', '{"ghostty":true,"welcome":true}']));
   const conf = readText(path.join(generated(E), 'ghostty.conf'));
@@ -498,7 +500,7 @@ test('chemins avec espaces : valeurs quotées dans ghostty.conf, theme et source
   assert.ok(readText(zshrc(E)).includes('source "' + path.join(generated(E), 'welcome.zsh') + '"'));
 });
 
-test('ghostty.conf : une ligne custom-shader par .glsl, triées, lien symbolique inclus, notes.txt exclu', () => {
+test('ghostty.conf : une ligne custom-shader par .glsl, triées, lien symbolique inclus, notes.txt exclu', { skip: MAC_ONLY }, () => {
   const E = makeEnv();
   // lien relatif dans le thème source (autorisé : il reste dans terminal/)
   fs.symlinkSync('b.glsl', path.join(E.root, 'themes', 'alpha', 'terminal', 'shaders', 'z-link.glsl'));
@@ -598,7 +600,7 @@ test('set-theme sans option terminal active : aucun fichier terminal touché', (
   assert.deepEqual(changed, [path.join('.config', 'claude-dojo', 'config.json')]);
 });
 
-test('set-theme régénère theme/ quand une option est active ; shaders absents chez beta', () => {
+test('set-theme régénère theme/ quand une option est active ; shaders absents chez beta', { skip: MAC_ONLY }, () => {
   const E = makeEnv();
   ok(cli(E, ['terminal', 'apply', '{"ghostty":true}']));
   const r = ok(cli(E, ['set-theme', 'beta']));
@@ -630,7 +632,7 @@ test('set-theme : apply en échec (import Terminal) -> config.json garde l ancie
   assert.equal(stateObj(E).managed.terminalApp.profile, 'Dojo Alpha', 'profil enregistré inchangé');
 });
 
-test('theme/ jamais à moitié copié : copie en erreur -> ancien theme/ intact, config inchangée, aucun dossier temporaire', { skip: IS_ROOT ? 'root : chmod sans effet' : false }, () => {
+test('theme/ jamais à moitié copié : copie en erreur -> ancien theme/ intact, config inchangée, aucun dossier temporaire', { skip: MAC_ONLY || (IS_ROOT ? 'root : chmod sans effet' : false) }, () => {
   const E = makeEnv();
   ok(cli(E, ['terminal', 'apply', '{"ghostty":true}']));
   const T = generated(E);
@@ -708,7 +710,7 @@ test('status : forme JSON exacte, lecture seule', () => {
   assert.deepEqual(snapshot(E.home), before, 'status n écrit rien');
 });
 
-test('Terminal.app lancé : open-file, aucun appel defaults, prefs intactes', () => {
+test('Terminal.app lancé : open-file, aucun appel defaults, prefs intactes', { skip: MAC_ONLY }, () => {
   const E = makeEnv();
   const storeBefore = readBytes(E.store);
   setRunning(E, true);

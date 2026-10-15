@@ -57,6 +57,9 @@ const writeRawConfig = (obj) => {
   fs.writeFileSync(configFile(), JSON.stringify(obj));
 };
 const modeOf = (p) => fs.statSync(p).mode & 0o777;
+// Windows n'a pas de bits POSIX : fs.statSync y rend toujours 0666/0777, les modes ne sont comparés que hors Windows.
+const POSIX_MODES = process.platform !== 'win32';
+const assertMode = (p, mode) => { if (POSIX_MODES) assert.equal(modeOf(p), mode); };
 const wp = (args, deps = {}) => setup.main(['wallpapers', ...args], deps);
 const noSleep = async () => {};
 
@@ -231,14 +234,14 @@ test('download : jpeg et png nominaux, modes 0600/0700, index.json, retour JSON'
   assert.equal(b.file, path.join(bgDir('naruto'), 'wallhaven-mlq73y.png'));
   assert.deepEqual(fs.readFileSync(a.file), JPEG);
   assert.deepEqual(fs.readFileSync(b.file), PNG);
-  assert.equal(modeOf(a.file), 0o600);
-  assert.equal(modeOf(b.file), 0o600);
-  assert.equal(modeOf(bgRoot()), 0o700);
-  assert.equal(modeOf(bgDir('naruto')), 0o700);
+  assertMode(a.file, 0o600);
+  assertMode(b.file, 0o600);
+  assertMode(bgRoot(), 0o700);
+  assertMode(bgDir('naruto'), 0o700);
   const index = JSON.parse(fs.readFileSync(path.join(bgRoot(), 'index.json'), 'utf8'));
   assert.deepEqual(index.map((e) => e.id).sort(), ['8o99v2', 'mlq73y']);
   assert.deepEqual(Object.keys(index[0]).sort(), ['downloadedAt', 'file', 'id', 'resolution', 'source', 'theme']);
-  assert.equal(modeOf(path.join(bgRoot(), 'index.json')), 0o600);
+  assertMode(path.join(bgRoot(), 'index.json'), 0o600);
   // Requêtes image : sans redirection suivie, User-Agent présent, délai maximal.
   const imgCall = f.calls.find((c) => c.url.includes('w.wallhaven.cc'));
   assert.equal(imgCall.opts.redirect, 'error');
@@ -947,7 +950,7 @@ test('sync nominal : déjà présent sauté, SFW téléchargé, sketchy en faile
   for (const id of downloaded) {
     const file = path.join(bgDir('naruto'), `wallhaven-${id}.jpg`);
     assert.deepEqual(fs.readFileSync(file), JPEG);
-    assert.equal(modeOf(file), 0o600);
+    assertMode(file, 0o600);
   }
   assert.deepEqual(readConfig(), { theme: 'naruto' }, 'config non modifiée : le défaut bundled ne change pas le fond');
   assert.equal(fs.existsSync(progressOf('naruto')), false, 'progression retirée en fin de sync');
@@ -965,12 +968,12 @@ test('sync : progression lisible pendant le run (running, total, done, current),
     if (id === 'dpg97o') {
       const p = await wp(['progress', 'naruto']);
       const file = progressOf('naruto');
-      snaps.push({ ...p, current: JSON.parse(fs.readFileSync(file, 'utf8')).current, mode: modeOf(file) });
+      snaps.push({ ...p, current: JSON.parse(fs.readFileSync(file, 'utf8')).current, ...(POSIX_MODES && { mode: modeOf(file) }) });
     }
     return jsonRes(apiData(id));
   });
   await wp(['sync', 'naruto'], { fetch: f.fetch, sleep: noSleep });
-  assert.deepEqual(snaps, [{ ok: true, theme: 'naruto', running: true, total: curatedIds('naruto').length, done: 1, current: 'dpg97o', mode: 0o600 }]);
+  assert.deepEqual(snaps, [{ ok: true, theme: 'naruto', running: true, total: curatedIds('naruto').length, done: 1, current: 'dpg97o', ...(POSIX_MODES && { mode: 0o600 }) }]);
   assert.deepEqual(await wp(['progress', 'naruto']), { ok: true, theme: 'naruto', running: false, total: 0, done: 0 });
 });
 

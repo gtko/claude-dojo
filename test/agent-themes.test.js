@@ -127,7 +127,8 @@ before(async () => {
 
   PORT = await freePort();
   child = spawn(process.execPath, [path.join(runtime, 'agent-mac.js')], {
-    env: { ...process.env, HOME: home, DOJO_PORT: String(PORT) },
+    // USERPROFILE aussi : sous Windows, os.homedir() (lu par l'agent) ne regarde que USERPROFILE.
+    env: { ...process.env, HOME: home, USERPROFILE: home, DOJO_PORT: String(PORT) },
     stdio: 'ignore',
   });
   await waitReady(child);
