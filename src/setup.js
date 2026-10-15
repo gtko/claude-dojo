@@ -3071,7 +3071,7 @@ function regPersonalDir() {
   const dir = m[1].replace(/%([^%]+)%/g, (all, name) => process.env[name] ?? all);
   // reg.exe écrit en page de code OEM : un chemin non ASCII mal décodé contient U+FFFD. On n'accepte qu'un dossier
   // existant, pour ne jamais créer de dossier parasite (repli sur <profil>\Documents).
-  if (!path.isAbsolute(dir) || dir.includes('%') || dir.includes('�')) return null;
+  if (!path.isAbsolute(dir) || dir.includes('%') || dir.includes('FFFD')) return null;
   try { return fs.statSync(dir).isDirectory() ? dir : null; } catch { return null; }
 }
 const documentsDir = () => {
