@@ -1,4 +1,4 @@
-// PreToolUse (matcher Bash) : limite le nombre de suites lourdes (vitest, turbo run, tsc, eslint, next build)
+// PreToolUse (matcher Bash|PowerShell) : limite le nombre de suites lourdes (vitest, turbo run, tsc, eslint, next build)
 // lancees en parallele sur la machine. Si le seuil est atteint, refus via permissionDecision "deny".
 // Seuils par defaut adaptes a la machine :
 //   - HEAVY_GATE_MAX (suites racines) : max(2, floor(coeurs / 3))
@@ -6,11 +6,13 @@
 // Les variables d'environnement HEAVY_GATE_MAX / HEAVY_GATE_MAX_NODE restent prioritaires.
 // Echappement : HEAVY_GATE=off dans la commande ou dans l'env.
 // Fail-open : toute erreur -> exit 0 silencieux (ne jamais bloquer Claude Code).
-// Ne tue aucun processus : lecture seule via `ps`.
+// Ne tue aucun processus : lecture seule via `ps` (macOS/Linux) ou Get-CimInstance (Windows, `ps` n'existe pas).
 'use strict';
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+
+const WIN = process.platform === 'win32';
 
 const DEFAULT_MAX = Math.max(2, Math.floor(os.cpus().length / 3));
 const DEFAULT_MAX_NODE = Math.max(2, Math.round(os.totalmem() / 2 ** 30) * 2);   // plafond global de processus node (tous outils confondus)
@@ -53,8 +55,34 @@ function parseMaxNode() {
   return Number.isFinite(v) && v >= 0 ? v : DEFAULT_MAX_NODE;
 }
 
+// Windows : une seule requete CIM (pid, ppid, nom, ligne de commande), memorisee pour countNode et listHeavy.
+// Chemins normalises : `\` -> `/` et guillemets retires, pour que les regex ci-dessous marchent comme sous ps.
+let winProcs = null;
+function winProcesses() {
+  if (winProcs) return winProcs;
+  const script =
+    '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;' +
+    'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress';
+  const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+    timeout: 4000,
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    windowsHide: true,
+  });
+  const list = [].concat(JSON.parse(out.trim() || '[]') || []); // ConvertTo-Json rend un objet seul si un processus
+  winProcs = list.map((p) => ({
+    pid: Number(p.ProcessId),
+    ppid: Number(p.ParentProcessId),
+    comm: String(p.Name || ''),
+    args: String(p.CommandLine || '').replace(/\\/g, '/').replace(/"/g, ''),
+  }));
+  return winProcs;
+}
+
 // Nombre de processus node sur la machine (workers vitest, outils, serveurs…).
 function countNode() {
+  if (WIN) return winProcesses().filter((p) => /^node(\.exe)?$/i.test(p.comm)).length;
   const out = execFileSync('ps', ['-axo', 'comm='], { encoding: 'utf8', timeout: 3000 });
   return out.split('\n').filter((c) => /(^|\/)node$/.test(c.trim())).length;
 }
@@ -63,13 +91,16 @@ function countNode() {
 function labelOf(p) {
   const wt = /^(.*?)\/(?:\.claude\/worktrees|\.worktrees)\/([^/]+)(.*)$/.exec(p);
   if (wt) return `worktree ${wt[2]}${wt[3]}`;
-  const home = os.homedir();
+  const home = os.homedir().replace(/\\/g, '/');
   return p.startsWith(home) ? '~' + p.slice(home.length) : p;
 }
 
 // Repli sans lsof : dossier deduit du premier chemin absolu de la ligne de commande.
+// Sous Windows (chemins C:/…), l'executable (ex. C:/Program Files/nodejs/node.exe) est saute avant.
+const ABS_ARG = WIN ? /(?:^|\s)([A-Za-z]:\/[^\s]+|\/[^\s]+)/ : /(?:^|\s)(\/[^\s]+)/;
+const WIN_EXE = /^[A-Za-z]:\/.*?\.exe\s/i;
 function dirFromArgs(args) {
-  const m = /(?:^|\s)(\/[^\s]+)/.exec(args);
+  const m = ABS_ARG.exec(WIN ? args.replace(WIN_EXE, '') : args);
   if (!m) return null;
   let p = m[1];
   const nm = p.indexOf('/node_modules');
@@ -79,7 +110,7 @@ function dirFromArgs(args) {
 // Cwd reels des processus (lsof, rapide ; en cas d'echec, Map vide -> repli sur les args).
 function cwdsOf(pids) {
   const map = new Map();
-  if (!pids.length) return map;
+  if (WIN || !pids.length) return map; // pas de lsof sous Windows : repli sur les args
   let out = '';
   try {
     out = execFileSync('lsof', ['-a', '-d', 'cwd', '-Fpn', '-p', pids.join(',')], {
@@ -98,20 +129,27 @@ function cwdsOf(pids) {
   return map;
 }
 
-function listHeavy() {
+// macOS/Linux : pid, ppid, ligne de commande via ps.
+function psProcesses() {
   const out = execFileSync('ps', ['-axww', '-o', 'pid=,ppid=,args='], {
     encoding: 'utf8',
     timeout: 3000,
     stdio: ['ignore', 'pipe', 'ignore'],
   });
-  const ppid = new Map(); // pid -> ppid, sur TOUS les processus (pour remonter les ancetres)
-  const found = [];
+  const procs = [];
   for (const line of out.split('\n')) {
     const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
-    if (!m) continue;
-    const pid = Number(m[1]);
-    const args = m[3];
-    ppid.set(pid, Number(m[2]));
+    if (m) procs.push({ pid: Number(m[1]), ppid: Number(m[2]), args: m[3] });
+  }
+  return procs;
+}
+
+function listHeavy() {
+  const procs = WIN ? winProcesses() : psProcesses();
+  const ppid = new Map(); // pid -> ppid, sur TOUS les processus (pour remonter les ancetres)
+  const found = [];
+  for (const { pid, ppid: parent, args } of procs) {
+    ppid.set(pid, parent);
     if (pid === process.pid || args.includes('heavy-gate.js')) continue;
     if (WRAPPER_START.test(args) || WRAPPER_PM.test(args)) continue;
     const kind = KINDS.find((k) => k.test(args));
@@ -171,7 +209,7 @@ function main() {
   process.stdin.on('end', () => {
     try {
       const input = JSON.parse(raw);
-      if (!input || input.tool_name !== 'Bash') return;
+      if (!input || (input.tool_name !== 'Bash' && input.tool_name !== 'PowerShell')) return;
       const ti = input.tool_input || {};
       const command = typeof ti.command === 'string' ? ti.command : '';
       if (!command) return;
