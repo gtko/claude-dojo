@@ -463,7 +463,7 @@ function fakeApp(dir) {
   return bundle;
 }
 
-test('uninstall retire aussi le bundle du dossier système quand il est inscriptible', () => {
+test('uninstall retire aussi le bundle du dossier système quand il est inscriptible', { skip: IS_WIN && 'bundles .app macOS : uninstall Windows supprime le dossier de l exe' }, () => {
   const home = tmpHome();
   const mainApp = fakeApp(path.join(home, 'Applications'));
   const sysApp = fakeApp(path.join(home, 'SysApplications'));

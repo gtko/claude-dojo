@@ -448,7 +448,9 @@ test('uninstall (même HOME) : sans purge, backgrounds/ et config restent ; avec
   let r = cli(home, ['uninstall', JSON.stringify({ noLaunchd: true })]);
   assert.equal(r.code, 0, r.raw);
   assert.equal(r.out.config.removed, false, 'config conservée sans purge');
-  assert.ok(fs.existsSync(dest), 'backgrounds/ conservé sans purge');
+  // Sous Windows, sans purge seul config.json reste (contrat de uninstall côté Windows, cf. aide de setup.js).
+  if (process.platform === 'win32') assert.equal(fs.existsSync(dest), false, 'backgrounds/ retiré sans purge (Windows)');
+  else assert.ok(fs.existsSync(dest), 'backgrounds/ conservé sans purge');
 
   r = cli(home, ['uninstall', JSON.stringify({ noLaunchd: true, purge: true })]);
   assert.equal(r.code, 0, r.raw);
