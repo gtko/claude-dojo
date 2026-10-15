@@ -180,6 +180,16 @@ jobs:
         shell: pwsh
         run: node --test test/
 
+      - name: Unit tests (Windows interface, windows/ui/tests)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath 'windows/ui/tests')) {
+            Write-Host 'windows/ui/tests absent : rien a tester'
+            exit 0
+          }
+          node --test windows/ui/tests/
+          if ($LASTEXITCODE -ne 0) { throw "tests de l'interface en echec (code $LASTEXITCODE)" }
+
       - name: Build and unit tests (DojoWallpaper.exe)
         shell: pwsh
         run: pwsh -File windows/build.ps1 -Test
@@ -197,12 +207,18 @@ jobs:
           $env:USERPROFILE = $profileDir
           Write-Host "Temporary USERPROFILE: $profileDir"
 
-          pwsh -NoProfile -File install.ps1
+          pwsh -NoProfile -File install.ps1 -NoWizard
           if ($LASTEXITCODE -ne 0) { throw "install.ps1 a echoue (code $LASTEXITCODE)" }
           $settings = Join-Path $profileDir '.claude\settings.json'
           if (-not (Test-Path -LiteralPath $settings)) { throw "settings.json absent apres install : $settings" }
           Write-Host "ok $settings"
+          # Interface copiee sans tests/ (dossier de developpement).
+          $ui = Join-Path $profileDir '.config\claude-dojo\windows\ui'
+          if (-not (Test-Path -LiteralPath (Join-Path $ui 'wizard.html'))) { throw "windows\ui absent apres install : $ui" }
+          if (Test-Path -LiteralPath (Join-Path $ui 'tests')) { throw "windows\ui\tests installe, il ne doit pas l'etre : $ui" }
+          Write-Host "ok $ui"
 
           pwsh -NoProfile -File uninstall.ps1
           if ($LASTEXITCODE -ne 0) { throw "uninstall.ps1 a echoue (code $LASTEXITCODE)" }
+          if (Test-Path -LiteralPath (Join-Path $ui 'wizard.html')) { throw "windows\ui encore present apres uninstall : $ui" }
           Write-Host "Install and uninstall OK"
