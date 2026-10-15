@@ -285,7 +285,7 @@ test('profil cp1252 (« é » en 0xE9) : skipped à l\'apply et au retrait, fich
   const out = ok(apply(E, { welcome: true }));
   assert.deepEqual(out.powershell.profiles.map((p) => p.action), ['skipped', 'skipped']);
   for (const p of out.powershell.profiles) {
-    assert.match(p.warning, /^profil non UTF-8 \(non UTF-8\), ajoutez manuellement dans /);
+    assert.match(p.warning, /^profil non UTF-8 \(codage inconnu\), ajoutez manuellement dans /);
     assert.match(p.warning, /# >>> claude-dojo >>>/, 'le bloc à ajouter à la main figure dans l\'avertissement');
   }
   assert.ok(fs.readFileSync(E.ps5).equals(original), 'profil Windows PowerShell identique, octet pour octet');

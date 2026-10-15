@@ -3248,7 +3248,7 @@ const setManagedList = (key, list) => setManaged(key, list.length ? list : null)
 function psEncodingProblem(buf) {
   if (buf.length >= 2 && ((buf[0] === 0xff && buf[1] === 0xfe) || (buf[0] === 0xfe && buf[1] === 0xff))) return 'UTF-16';
   if (buf.includes(0)) return 'octets nuls';
-  try { new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { return 'non UTF-8'; }
+  try { new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { return 'codage inconnu'; }
   return null;
 }
 function applyPsProfiles() {
