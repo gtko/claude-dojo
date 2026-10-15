@@ -32,7 +32,8 @@ const appDirsOf = (home) => [path.join(home, 'Applications'), path.join(home, 'S
 // Lance setup.js (ou une copie installée via script) avec HOME temporaire.
 // DOJO_THEMES_DIR n'est transmis que si env le fournit : sinon les thèmes réels de src/ sont lus.
 function cli(home, args, { input, env = {}, script = SETUP } = {}) {
-  const childEnv = { ...process.env, HOME: home, DOJO_DETECT_NO_GH_AUTH: '1', DOJO_APPS_DIRS: appDirsOf(home), ...env };
+  // USERPROFILE aussi : sous Windows, setup.js lit USERPROFILE (et non HOME).
+  const childEnv = { ...process.env, HOME: home, USERPROFILE: home, DOJO_DETECT_NO_GH_AUTH: '1', DOJO_APPS_DIRS: appDirsOf(home), ...env };
   if (!('DOJO_THEMES_DIR' in env)) delete childEnv.DOJO_THEMES_DIR;
   const r = spawnSync(process.execPath, [script, ...args], { env: childEnv, input, encoding: 'utf8', timeout: 60000 });
   const raw = r.stdout.trim();
@@ -448,9 +449,7 @@ test('uninstall (même HOME) : sans purge, backgrounds/ et config restent ; avec
   let r = cli(home, ['uninstall', JSON.stringify({ noLaunchd: true })]);
   assert.equal(r.code, 0, r.raw);
   assert.equal(r.out.config.removed, false, 'config conservée sans purge');
-  // Sous Windows, sans purge seul config.json reste (contrat de uninstall côté Windows, cf. aide de setup.js).
-  if (process.platform === 'win32') assert.equal(fs.existsSync(dest), false, 'backgrounds/ retiré sans purge (Windows)');
-  else assert.ok(fs.existsSync(dest), 'backgrounds/ conservé sans purge');
+  assert.ok(fs.existsSync(dest), 'backgrounds/ conservé sans purge (macOS et Windows)');
 
   r = cli(home, ['uninstall', JSON.stringify({ noLaunchd: true, purge: true })]);
   assert.equal(r.code, 0, r.raw);

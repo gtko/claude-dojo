@@ -108,6 +108,7 @@ function makeEnv({ prefs = true } = {}) {
   const env = {
     PATH: path.join(root, 'bin') + path.delimiter + (process.env.PATH || '/usr/bin:/bin'),
     HOME: home,
+    USERPROFILE: home,
     DOJO_DETECT_NO_GH_AUTH: '1',
     DOJO_APPS_DIRS: [path.join(home, 'Applications'), path.join(home, 'SysApplications')].join(path.delimiter),
     DOJO_THEMES_DIR: root,

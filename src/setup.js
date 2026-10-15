@@ -4,7 +4,7 @@
 //   argument : JSON en ligne de commande, ou « - » pour lire le JSON sur stdin.
 // Sortie : une ligne JSON sur stdout. Succès : exit 0 {"ok":true,...}. Erreur : exit 1 {"ok":false,"error":"..."}.
 // Node >= 18, aucune dépendance. Le HOME est relu à chaque appel (process.env.HOME, sinon os.homedir()).
-// Sous Windows (win32) : os.homedir() (USERPROFILE) ; HOME n'est pris que s'il est un chemin Windows absolu.
+// Sous Windows (win32) : USERPROFILE (sinon os.homedir()) ; HOME est ignoré (Git Bash l'exporte sous forme /c/Users/...).
 // Démarrage Windows : clé HKCU\...\Run + lanceur VBScript sans fenêtre (voir « Windows » plus bas).
 // Tous les processus externes sont lancés avec execFile et un tableau d'arguments (jamais de shell).
 'use strict';
@@ -54,12 +54,11 @@ class SetupError extends Error {}
 const fail = (msg) => { throw new SetupError(msg); };
 
 // ── Chemins (HOME relu à chaque appel) ───────────────────────────────────
-// Sous Windows, Git Bash exporte HOME sous forme /c/Users/... : ignoré, on prend le profil (USERPROFILE).
-const WIN_ABS_RE = /^(?:[A-Za-z]:[\\/]|\\\\)/;
+// Sous Windows, USERPROFILE prime sur HOME (comme install.ps1 et uninstall.ps1 l'annoncent) : Git Bash exporte HOME
+// sous forme /c/Users/..., et un HOME Windows ne doit pas écarter le profil. os.homedir() relit USERPROFILE aussi.
 const home = () => {
-  const h = process.env.HOME;
-  if (h && (!WIN || WIN_ABS_RE.test(h))) return h;
-  return os.homedir();
+  if (WIN) return process.env.USERPROFILE || os.homedir();
+  return process.env.HOME || os.homedir();
 };
 // Dossiers où DojoWallpaper.app peut être installé : ~/Applications (install.sh), puis /Applications (DMG).
 // DOJO_APPS_DIRS (liste séparée par « : ») les remplace : les tests l'utilisent pour ne rien toucher hors du HOME temporaire.
@@ -1239,22 +1238,29 @@ function autostartUninstall(opts = {}) {
 }
 
 // ── DojoWallpaper.exe ────────────────────────────────────────────────────
-// Ordre : DOJO_SKIP_EXE=1 : rien. Exe déjà présent : gardé (pas de mise à jour ici). Sinon le zip de la release GitHub
-// de la version installée (sha256 vérifié si le fichier voisin existe), puis compilation par windows/build.ps1 depuis le
-// dépôt (SDK .NET), sinon un message. Pas d'élévation. L'agent et les hooks fonctionnent sans l'exe.
-async function ensureWallpaperExe() {
+// Ordre : DOJO_SKIP_EXE=1 : rien. Sinon le zip de la release GitHub de la version installée (sha256 obligatoire), puis
+// compilation par windows/build.ps1 depuis le dépôt (SDK .NET). L'exe installé est remplacé à chaque appel (réinstaller =
+// mettre à jour). Si les deux échouent et qu'un exe est déjà là, il est gardé et signalé. Pas d'élévation. L'agent et les
+// hooks fonctionnent sans l'exe. deps.get / deps.build : injectables (tests).
+async function ensureWallpaperExe(deps = {}) {
   if (!WIN) return { ok: true, installed: false, skipped: 'non-windows' };
   if (process.env.DOJO_SKIP_EXE === '1') return { ok: true, installed: false, skipped: 'DOJO_SKIP_EXE=1', path: paths.exe() };
   const exe = paths.exe();
-  if (fs.existsSync(exe)) return wallpaperReady(exe, 'present');
+  const hadExe = fs.existsSync(exe);
   const reasons = [];
   const version = packageVersion(path.join(paths.dojo(), 'package.json'));
   if (parseVersion(version)) {
-    try { await downloadExe(version); return wallpaperReady(exe, 'release'); } catch (e) { reasons.push(`téléchargement : ${e.message}`); }
+    try { await downloadExe(version, deps.get); return wallpaperReady(exe, 'release'); } catch (e) { reasons.push(`téléchargement : ${e.message}`); }
   } else {
     reasons.push('version inconnue (package.json)');
   }
-  try { await buildExe(); return wallpaperReady(exe, 'build'); } catch (e) { reasons.push(`compilation : ${e.message}`); }
+  try { await (deps.build || buildExe)(); return wallpaperReady(exe, 'build'); } catch (e) { reasons.push(`compilation : ${e.message}`); }
+  if (hadExe) {
+    return {
+      ...wallpaperReady(exe, 'kept'),
+      message: `DojoWallpaper.exe non remplacé (${reasons.join(' ; ')}) : la version déjà installée est gardée.`,
+    };
+  }
   return {
     ok: true,
     installed: false,
@@ -1305,27 +1311,30 @@ function httpsBuffer(url, maxBytes, redirects = 5) {
 }
 
 // Copie le contenu d'un dossier extrait (DojoWallpaper.exe et ses dépendances) dans windows/bin de l'installation.
+// Remplacement complet, sauf les fichiers de l'utilisateur (dojo-wallpaper.json : réglages du fond, menu « Open config »).
+const EXE_USER_FILES = ['dojo-wallpaper.json'];
 function installExeFiles(srcDir) {
-  clearDest(paths.exeDir());
+  clearDest(paths.exeDir(), EXE_USER_FILES);
   fs.mkdirSync(paths.exeDir(), { recursive: true });
   fs.cpSync(srcDir, paths.exeDir(), { recursive: true, dereference: false });
 }
 
-// Zip de la release : téléchargé dans un dossier temporaire neuf, sha256 vérifié, extrait par Expand-Archive.
-async function downloadExe(version) {
+// Zip de la release : sha256 demandé d'abord (absent, 404 compris : rien n'est installé, l'appelant passe à la
+// compilation), puis le zip est téléchargé dans un dossier temporaire neuf, sa somme vérifiée, et extrait par Expand-Archive.
+// get : injectable (tests), même contrat que httpsBuffer.
+async function downloadExe(version, get = httpsBuffer) {
   const base = `${RELEASE_URL}/v${version}/${WIN_ZIP}`;
+  let sha;
+  try { sha = (await get(`${base}.sha256`, 4096)).toString('utf8'); } catch (e) {
+    throw new Error(`somme SHA-256 indisponible (${e.message})`);
+  }
+  const want = (sha.trim().split(/\s+/)[0] || '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(want)) throw new Error('fichier SHA-256 illisible');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dojo-exe-'));
   try {
-    const data = await httpsBuffer(base, DOWNLOAD_MAX_BYTES);
-    let sha = null;
-    try { sha = (await httpsBuffer(`${base}.sha256`, 4096)).toString('utf8'); } catch (e) {
-      if (!/^HTTP 404$/.test(e.message)) throw e;
-    }
-    if (sha !== null) {
-      const want = (sha.trim().split(/\s+/)[0] || '').toLowerCase();
-      const got = crypto.createHash('sha256').update(data).digest('hex');
-      if (!/^[0-9a-f]{64}$/.test(want) || want !== got) throw new Error('somme SHA-256 incorrecte');
-    }
+    const data = await get(base, DOWNLOAD_MAX_BYTES);
+    const got = crypto.createHash('sha256').update(data).digest('hex');
+    if (want !== got) throw new Error('somme SHA-256 incorrecte');
     const zip = path.join(tmp, WIN_ZIP);
     fs.writeFileSync(zip, data);
     const staging = path.join(tmp, 'extract');
@@ -1360,12 +1369,115 @@ async function buildExe() {
   installExeFiles(built);
 }
 
-// Désinstallation Windows, symétrique de l'installation : valeurs Run et lanceur, exe, entrées de settings.json
-// (sauvegarde avant), puis dossier d'installation. Sans --purge, seul config.json reste (comme la config macOS).
-// Les options terminal (Ghostty, Terminal.app, zsh) n'existent pas sous Windows.
+// ── Processus Dojo (Windows) ─────────────────────────────────────────────
+// Arrêtés avant toute suppression ou réinstallation : agent (node agent-win.js), ses enfants collector.js et media.ps1,
+// et DojoWallpaper.exe lancé depuis windows\bin. Visés seulement si la ligne de commande (ou le chemin de l'exe) est dans
+// le dossier d'installation. Les enfants ne le sont que si leur parent est un agent visé : l'agent perso
+// (~\.config\claude-dojo\agent.ps1, port 7777) a lui aussi un collector.js et un media.ps1 dans ce dossier, sans agent-win.js.
+const DOJO_PROCS = [
+  { kind: 'agent', name: /^node(\.exe)?$/i, file: 'agent-win.js' },
+  { kind: 'collector', name: /^node(\.exe)?$/i, file: 'collector.js', child: true },
+  { kind: 'media', name: /^(powershell|pwsh)(\.exe)?$/i, file: 'windows\\media.ps1', child: true },
+];
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const errText = (e) => String((e && e.message) || e);
+const taskkillExe = () => winSys(path.join('System32', 'taskkill.exe'));
+
+// Fonction pure (testable partout). procs : [{ pid, ppid, name, commandLine, executablePath }]. Renvoie [{ pid, kind, name }].
+// Le chemin du dossier doit être suivi d'un séparateur puis du nom du fichier, entre guillemets, espaces ou bords :
+// « claude-dojo2\agent-win.js » ne compte pas.
+function dojoProcessTargets(procs, { dojo, exeDir, self = process.pid }) {
+  const norm = (s) => String(s || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+  const base = norm(dojo);
+  const exeBase = norm(exeDir);
+  const matchers = DOJO_PROCS.map((d) => ({
+    ...d,
+    re: new RegExp('(^|["\\s])' + escapeRe(base + '\\' + d.file.toLowerCase()) + '(["\\s]|$)'),
+  }));
+  const kindOf = (p, m) => m.name.test(p.name || '') && m.re.test(norm(p.commandLine));
+  const candidates = procs.filter((p) => p && p.pid !== self);
+  const agentPids = new Set(candidates.filter((p) => kindOf(p, matchers[0])).map((p) => p.pid));
+  const out = [];
+  for (const p of candidates) {
+    if (agentPids.has(p.pid)) { out.push({ pid: p.pid, kind: 'agent', name: p.name }); continue; }
+    const child = matchers.slice(1).find((m) => kindOf(p, m));
+    if (child && agentPids.has(p.ppid)) { out.push({ pid: p.pid, kind: child.kind, name: p.name }); continue; }
+    if (/^dojowallpaper\.exe$/i.test(p.name || '') && exeBase && norm(p.executablePath).startsWith(exeBase + '\\')) {
+      out.push({ pid: p.pid, kind: 'wallpaper', name: p.name });
+    }
+  }
+  return out;
+}
+
+// Processus Windows (lecture seule) via Get-CimInstance. Lève si PowerShell échoue.
+async function listWinProcesses() {
+  const script = '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; '
+    + 'Get-CimInstance -ClassName Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine, ExecutablePath '
+    + '| ConvertTo-Json -Compress';
+  const r = await run(powershellExe(), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    { timeout: 60000, maxBuffer: 32 << 20, windowsHide: true });
+  if (!r.ok) fail(`liste des processus indisponible (${String(r.stderr || '').trim().split(/\r?\n/).pop() || 'PowerShell'})`);
+  const text = r.stdout.trim();
+  const list = text ? JSON.parse(text) : [];
+  return (Array.isArray(list) ? list : [list]).map((p) => ({
+    pid: p.ProcessId, ppid: p.ParentProcessId, name: p.Name, commandLine: p.CommandLine, executablePath: p.ExecutablePath,
+  }));
+}
+
+// Arrête les processus Dojo (taskkill /T /F, arguments en tableau, sans shell). Ne lève jamais : renvoie les cibles,
+// celles arrêtées, celles encore actives après vérification, et des avertissements. dryRun : rien n'est arrêté.
+async function stopDojoProcesses({ dryRun = false } = {}) {
+  const where = { dojo: paths.dojo(), exeDir: paths.exeDir() };
+  let procs;
+  try { procs = await listWinProcesses(); } catch (e) {
+    return { targets: [], stopped: [], remaining: [], warnings: [`processus Dojo non vérifiés (${errText(e)})`] };
+  }
+  const targets = dojoProcessTargets(procs, where).map(({ pid, kind, name }) => ({ pid, kind, name }));
+  if (dryRun || targets.length === 0) return { targets, stopped: [], remaining: [], warnings: [] };
+  for (const t of targets) await run(taskkillExe(), ['/PID', String(t.pid), '/T', '/F'], { timeout: 15000, windowsHide: true });
+  const warnings = [];
+  let remaining = targets;
+  try {
+    const again = dojoProcessTargets(await listWinProcesses(), where);
+    remaining = again.filter((a) => targets.some((t) => t.pid === a.pid));
+  } catch (e) {
+    warnings.push(`arrêt des processus Dojo non vérifié (${errText(e)})`);
+  }
+  if (remaining.length) warnings.push(`processus Dojo encore actifs : ${remaining.map((r) => `${r.kind} (pid ${r.pid})`).join(', ')}`);
+  const stopped = targets.filter((t) => !remaining.some((r) => r.pid === t.pid));
+  return { targets, stopped, remaining, warnings };
+}
+
+// CLI « stop-processes » (install.ps1 l'appelle avant de remplacer les fichiers). macOS : rien.
+async function stopProcesses() {
+  if (!WIN) return { ok: true, skipped: 'non-windows', targets: [], stopped: [], remaining: [], warnings: [] };
+  return { ok: true, ...(await stopDojoProcesses()) };
+}
+
+// Suppression qui ne doit pas interrompre la désinstallation : un échec devient un avertissement et un champ error.
+function attempt(fn, dir, dryRun, warnings, what) {
+  try { return fn(); } catch (e) {
+    warnings.push(`${what} non supprimé (${errText(e)}) : ${dir}`);
+    return { path: dir, existed: fs.existsSync(dir), removed: false, dryRun, error: errText(e) };
+  }
+}
+
+// Désinstallation Windows, symétrique de l'installation. D'abord les processus Dojo (un fichier en cours d'exécution
+// ne se supprime pas), puis valeurs Run et lanceur, exe, entrées de settings.json (sauvegarde avant), puis dossier
+// d'installation. Chaque étape va au bout : un échec est remonté dans warnings. Sans --purge, config.json et
+// backgrounds\ restent. Les options terminal (Ghostty, Terminal.app, zsh) n'existent pas sous Windows.
 async function uninstallWin(opts) {
   const dryRun = opts.dryRun === true;
-  const launchAgents = autostartUninstall({ dryRun, noLaunchd: opts.noLaunchd === true });
+  const warnings = [];
+  const processes = await stopDojoProcesses({ dryRun });
+  warnings.push(...processes.warnings);
+  let launchAgents;
+  try {
+    launchAgents = autostartUninstall({ dryRun, noLaunchd: opts.noLaunchd === true });
+  } catch (e) {
+    warnings.push(`démarrage automatique non retiré (${errText(e)})`);
+    launchAgents = { ok: true, dryRun, skipped: false, removed: [], commands: [], warnings: [] };
+  }
   const exeDir = paths.exeDir();
   const existed = fs.existsSync(exeDir);
   const app = { path: exeDir, existed, removed: existed, dryRun };
@@ -1381,14 +1493,17 @@ async function uninstallWin(opts) {
   // settings.json avant le dossier d'installation : l'état (VITEST_MAX_WORKERS) y est lu.
   let settings;
   try { settings = unmergeSettings({ dryRun }); } catch (e) {
-    settings = { changed: false, backup: null, diff: '', error: e.message || String(e) };
+    settings = { changed: false, backup: null, diff: '', error: errText(e) };
   }
   const dojo = paths.dojo();
-  const config = opts.purge === true ? removeTree(dojo, true, dryRun) : removeInstallKeepConfig(dojo, dryRun);
-  const states = removeTree(paths.stateDir(), opts.states === true, dryRun);
+  const config = attempt(() => (opts.purge === true ? removeTree(dojo, true, dryRun) : removeInstallKeepConfig(dojo, dryRun)),
+    dojo, dryRun, warnings, 'configuration');
+  const stateDir = paths.stateDir();
+  const states = attempt(() => removeTree(stateDir, opts.states === true, dryRun), stateDir, dryRun, warnings, 'états');
   return {
     ok: true,
     dryRun,
+    processes,
     launchAgents,
     app,
     appRemoved,
@@ -1397,17 +1512,20 @@ async function uninstallWin(opts) {
     terminal: { skipped: 'win32' },
     config,
     states,
+    warnings,
   };
 }
 
-// Sans --purge : supprime le contenu du dossier d'installation sauf config.json (réglages réutilisés à la réinstallation).
+// Sans --purge : supprime le contenu du dossier d'installation sauf config.json (réglages réutilisés à la réinstallation)
+// et backgrounds/ (fonds personnels).
+const KEEP_WIN_UNINSTALL = ['config.json', 'backgrounds'];
 function removeInstallKeepConfig(dir, dryRun) {
   const existed = fs.existsSync(dir);
-  const kept = fs.existsSync(path.join(dir, 'config.json')) ? ['config.json'] : [];
+  const kept = KEEP_WIN_UNINSTALL.filter((n) => fs.existsSync(path.join(dir, n)));
   const removed = [];
   if (existed && !dryRun) {
     for (const n of fs.readdirSync(dir)) {
-      if (kept.includes(n)) continue;
+      if (KEEP_WIN_UNINSTALL.includes(n)) continue;
       try { fs.rmSync(path.join(dir, n), { recursive: true, force: true }); removed.push(n); } catch { /* verrouillé : reste en place */ }
     }
   }
@@ -2891,8 +3009,9 @@ const USAGE = [
   'node setup.js merge-settings <json|->',
   'node setup.js unmerge-settings [json|->]',
   'node setup.js launchagents install|uninstall [json|->]   (Windows : valeurs HKCU\\...\\Run et lanceur start-agent.vbs)',
-  'node setup.js ensure-wallpaper-exe   (Windows : DojoWallpaper.exe depuis la release ou compilé ; DOJO_SKIP_EXE=1 : rien)',
-  'node setup.js uninstall [json|->]   (Windows : sans purge, seul config.json reste)',
+  'node setup.js ensure-wallpaper-exe   (Windows : DojoWallpaper.exe de la release (sha256 requis) ou compilé, remplace l\'existant ; DOJO_SKIP_EXE=1 : rien)',
+  'node setup.js stop-processes   (Windows : arrête agent, collector, media.ps1 et DojoWallpaper.exe du dossier d\'installation)',
+  'node setup.js uninstall [json|->]   (Windows : arrête les processus Dojo ; sans purge, config.json et backgrounds\\ restent)',
   'node setup.js status',
 ];
 
@@ -2929,6 +3048,7 @@ async function main(argv, deps = {}) {
       break;
     }
     case 'ensure-wallpaper-exe': return ensureWallpaperExe();
+    case 'stop-processes': return stopProcesses();
     case 'uninstall': return uninstall(parseJsonArg(a1));
     case 'status': return status();
     default: fail(`commande inconnue : ${cmd}`);
@@ -2953,5 +3073,5 @@ module.exports = {
   terminalStatus, terminalApply, terminalRemove,
   // Windows (fonctions pures testables sur toute plateforme, voir test/setup-win.test.js).
   mergeTransform, unmergeTransform, cmdArg, scriptPath, vbsStr, launcherVbs, regArgs,
-  autostartInstall, autostartUninstall, ensureWallpaperExe, RUN_KEY, RUN_AGENT, RUN_WALL,
+  autostartInstall, autostartUninstall, ensureWallpaperExe, dojoProcessTargets, RUN_KEY, RUN_AGENT, RUN_WALL,
 };

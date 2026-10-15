@@ -25,15 +25,19 @@ const WEBP = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('W
 
 let homeDir = null;
 let savedHome;
+let savedProfile;
 let savedGap;
 const outsideDirs = [];
 const noNetwork = async () => { throw new Error('appel réseau réel interdit dans les tests'); };
 
+// HOME et USERPROFILE : sous Windows, setup.js lit USERPROFILE (os.homedir() aussi), jamais HOME seul.
 beforeEach(() => {
   savedHome = process.env.HOME;
+  savedProfile = process.env.USERPROFILE;
   savedGap = process.env.DOJO_WALLHAVEN_MIN_INTERVAL_MS;
   homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dojo-wall-test-'));
   process.env.HOME = homeDir;
+  process.env.USERPROFILE = homeDir;
   process.env.DOJO_WALLHAVEN_MIN_INTERVAL_MS = '0';
   globalThis.fetch = noNetwork;
 });
@@ -41,6 +45,7 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = REAL_FETCH;
   if (savedHome === undefined) delete process.env.HOME; else process.env.HOME = savedHome;
+  if (savedProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = savedProfile;
   if (savedGap === undefined) delete process.env.DOJO_WALLHAVEN_MIN_INTERVAL_MS; else process.env.DOJO_WALLHAVEN_MIN_INTERVAL_MS = savedGap;
   fs.rmSync(homeDir, { recursive: true, force: true });
   for (const d of outsideDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
@@ -624,7 +629,7 @@ test('background : sous-dossier de galerie accepté, lien symbolique refusé', a
 
 // ── CLI : sortie JSON sur stdout ─────────────────────────────────────────
 test('CLI : sortie JSON sur stdout ; erreur en {ok:false,error} avec code 1', () => {
-  const env = { ...process.env, HOME: process.env.HOME, DOJO_DETECT_NO_GH_AUTH: '1' };
+  const env = { ...process.env, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, DOJO_DETECT_NO_GH_AUTH: '1' };
   const ok = spawnSync(process.execPath, [SETUP, 'wallpapers', 'local', 'naruto'], { env, encoding: 'utf8' });
   assert.equal(ok.status, 0, ok.stderr);
   assert.deepEqual(JSON.parse(ok.stdout), {

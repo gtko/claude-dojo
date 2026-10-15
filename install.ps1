@@ -4,7 +4,8 @@
 .DESCRIPTION
     Windows counterpart of install.sh. This script is a thin wrapper: the logic lives in src/setup.js.
     Run it from a clone of the repository (src/ must sit next to this script). No administrator rights needed.
-    Idempotent: running it again updates the installation without duplicating anything.
+    Idempotent: running it again updates the installation without duplicating anything. It stops the running agent and
+    wallpaper first, replaces DojoWallpaper.exe with the release of this version, then starts them again.
 .PARAMETER NoHeavyGate
     Does not register the heavy-gate hook (PreToolUse, matcher Bash|PowerShell).
     Same as DOJO_HEAVY_GATE=n in install.sh.
@@ -137,6 +138,17 @@ function Invoke-Install {
     $dojo = $detect.install.configDir
     $settingsFile = $detect.settings.path
 
+    # Before any file is replaced: a running agent or wallpaper keeps the old code and locks DojoWallpaper.exe.
+    Write-Step 'Stopping the running agent and wallpaper'
+    $stop = Invoke-Setup @('stop-processes')
+    foreach ($item in @($stop.stopped)) { Write-Info "stopped: $($item.kind) (pid $($item.pid))" }
+    foreach ($warning in @($stop.warnings)) { Write-Warning $warning }
+    if (@($stop.remaining).Count -gt 0) {
+        $left = (@($stop.remaining) | ForEach-Object { "$($_.kind) (pid $($_.pid))" }) -join ', '
+        throw "Claude Dojo is still running: $left. Close it, then run this script again."
+    }
+    $wallpaperWasRunning = [bool](@($stop.stopped) | Where-Object { $_ -and $_.kind -eq 'wallpaper' })
+
     Write-Step "Runtime files in $dojo"
     $copy = Invoke-Setup @('install-files', (Join-Path $PSScriptRoot 'src'))
     Write-Info "copied: $(@($copy.copied).Count) entries from src"
@@ -159,9 +171,8 @@ function Invoke-Install {
         Write-Info "ready ($($exe.source)) : $($exe.path)"
     } elseif ($exe.skipped) {
         Write-Info "skipped ($($exe.skipped))"
-    } elseif ($exe.message) {
-        Write-Warning $exe.message
     }
+    if ($exe.message) { Write-Warning $exe.message }
 
     Write-Step 'Autostart (Run values and start-agent.vbs)'
     $auto = Invoke-Setup @('launchagents', 'install', '-') -StdinText (ConvertTo-JsonLine @{ node = $script:NodeExe })
@@ -210,6 +221,14 @@ function Invoke-Install {
             Write-Info 'started in the background: http://localhost:7777'
         } else {
             Write-Warning "start-agent.vbs exited with code $($launch.ExitCode): run it by hand from the folder above."
+        }
+        if ($wallpaperWasRunning -and $exe.installed) {
+            try {
+                Start-Process -FilePath $exe.path -WorkingDirectory (Split-Path -Parent $exe.path) | Out-Null
+                Write-Info 'wallpaper started again (it was running before the update)'
+            } catch {
+                Write-Warning "wallpaper not started again: $($_.Exception.Message)"
+            }
         }
     }
 

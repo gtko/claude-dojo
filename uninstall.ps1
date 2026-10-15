@@ -3,10 +3,11 @@
     Uninstalls Claude Dojo on Windows: autostart, agent launcher, DojoWallpaper.exe, Dojo entries of settings.json.
 .DESCRIPTION
     Windows counterpart of uninstall.sh. This script is a thin wrapper: the logic lives in src/setup.js.
+    The agent (node running agent-win.js, with its collector and media helper) and DojoWallpaper.exe are stopped first.
     Only what install.ps1 added is removed. Other hooks, settings and plugins of Claude Code are left untouched.
-    Without -Purge, config.json is kept so that a reinstall reuses it.
+    Without -Purge, config.json and backgrounds\ are kept, so that a reinstall reuses them.
 .PARAMETER Purge
-    Also deletes the Dojo folder (config.json and cache) and the wallpaper session state (~\.claude\dojo).
+    Also deletes the Dojo folder (config.json, backgrounds and cache) and the wallpaper session state (~\.claude\dojo).
 .EXAMPLE
     pwsh -File uninstall.ps1
 .EXAMPLE
@@ -131,6 +132,15 @@ function Invoke-Uninstall {
     if ($Purge) { $options = '{"purge":true,"states":true}' }
     $out = Invoke-Setup @('uninstall', '-') -StdinText $options
 
+    Write-Step 'Agent and wallpaper'
+    $stopped = @($out.processes.stopped)
+    if ($stopped.Count -gt 0) {
+        foreach ($item in $stopped) { Write-Info "stopped: $($item.kind) (pid $($item.pid))" }
+    } else {
+        Write-Info 'none running'
+    }
+    foreach ($warning in @($out.warnings)) { Write-Warning $warning }
+
     Write-Step 'Autostart'
     $removed = @($out.launchAgents.removed)
     if ($removed.Count -gt 0) {
@@ -162,11 +172,12 @@ function Invoke-Uninstall {
 
     Write-Step 'Configuration'
     if ($Purge) {
-        if ($out.config.removed) { Write-Info "deleted: $dojo" } else { Write-Info "absent: $dojo" }
+        if ($out.config.error) { Write-Warning "not deleted: $dojo" } elseif ($out.config.removed) { Write-Info "deleted: $dojo" } else { Write-Info "absent: $dojo" }
     } elseif (@($out.config.kept).Count -gt 0) {
-        Write-Info "kept: $(Join-Path $dojo 'config.json') (run with -Purge to delete it)"
+        foreach ($name in @($out.config.kept)) { Write-Info "kept: $(Join-Path $dojo $name)" }
+        Write-Info 'run with -Purge to delete them too'
     } else {
-        Write-Info "no config.json in $dojo"
+        Write-Info "nothing to keep in $dojo"
     }
     if ($out.states.existed) {
         if ($out.states.removed) { Write-Info "deleted: $($out.states.path)" } else { Write-Info "kept: $($out.states.path)" }
@@ -174,7 +185,7 @@ function Invoke-Uninstall {
 
     Write-Step 'Claude Dojo is uninstalled'
     Write-Info 'Claude Code: other hooks, settings and plugins were not touched.'
-    Write-Info 'The agent (node.exe running agent-win.js) is not stopped: end it in Task Manager or sign out.'
+    Write-Info 'Processes outside the Dojo folder (for example a personal agent) were not touched.'
 }
 
 try {

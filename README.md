@@ -122,13 +122,13 @@ cd claude-dojo
 pwsh -File install.ps1
 ```
 
-The installer is idempotent: running it again updates the installation without duplicating anything. It:
+The installer is idempotent: running it again updates the installation without duplicating anything. It first stops the running agent and wallpaper, then:
 
 1. copies the Dojo files to `%USERPROFILE%\.config\claude-dojo` and installs their npm dependencies. It creates `config.json` the first time only, and keeps an existing one;
 2. adds the Dojo hooks to `%USERPROFILE%\.claude\settings.json`, after saving a backup of the file. An existing status line is kept. The heavy-gate hook is registered too (matcher `Bash|PowerShell`), unless you run `pwsh -File install.ps1 -NoHeavyGate`;
 3. sets up autostart with the `ClaudeDojoAgent` and `ClaudeDojoWallpaper` values of `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. The agent starts through `start-agent.vbs`, a hidden launcher, so no console window appears;
-4. gets `DojoWallpaper.exe` from the `DojoWallpaper-windows-x64.zip` asset of the release for this version of Dojo, checked against its `.sha256` file. If that fails and the .NET SDK 8 is installed, it compiles the file instead;
-5. starts the agent in the background, at `http://localhost:7777`.
+4. gets `DojoWallpaper.exe` from the `DojoWallpaper-windows-x64.zip` asset of the release for this version of Dojo, checked against its `.sha256` file, and replaces the file already installed. If the release has no `.sha256` file, or the download fails, and the .NET SDK 8 is installed, it compiles the file instead. If that fails too, the installed file is kept and the installer says so;
+5. starts the agent in the background, at `http://localhost:7777`, and the wallpaper again if it was running.
 
 If `DojoWallpaper.exe` cannot be obtained, the installer says so. The agent and the Claude Code hooks still work without the wallpaper.
 
@@ -138,11 +138,11 @@ The wallpaper has a tray icon (**Dojo Wallpaper**). Its menu offers **Interactiv
 
 ```powershell
 cd claude-dojo
-pwsh -File uninstall.ps1          # keeps config.json
-pwsh -File uninstall.ps1 -Purge   # also deletes config.json
+pwsh -File uninstall.ps1          # keeps config.json and your backgrounds
+pwsh -File uninstall.ps1 -Purge   # also deletes config.json and backgrounds
 ```
 
-The uninstaller removes the autostart values and the launcher, `DojoWallpaper.exe`, and the Dojo entries in `%USERPROFILE%\.claude\settings.json` (a backup is saved first).
+The uninstaller stops the agent and the wallpaper, then removes the autostart values and the launcher, `DojoWallpaper.exe`, and the Dojo entries in `%USERPROFILE%\.claude\settings.json` (a backup is saved first). Processes that run from another folder, such as a personal agent, are left alone.
 
 ### Files and logs
 
