@@ -241,6 +241,20 @@ struct LaunchOptions: Encodable {
     let dryRun: Bool
 }
 
+/// Options de `setup.js upgrade-runtime` : chemin de l'app lancée (depuis un DMG ou une copie translocalisée : pas de mise à jour).
+struct UpgradeOptions: Encodable {
+    let appPath: String
+}
+
+/// Réponse de `setup.js upgrade-runtime` : runtime recopié, agent redémarré, et raison (done, up-to-date, downgrade…).
+struct UpgradeRuntimeResult: Decodable {
+    let upgraded: Bool?
+    let from: String?
+    let to: String?
+    let restarted: Bool?
+    let reason: String?
+}
+
 struct UninstallOptions: Encodable {
     let purge: Bool
 }

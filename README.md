@@ -60,6 +60,10 @@ The assistant has eleven steps. Steps 3 to 6 are optional, and nothing is change
 
 *Steps 1, 2, 4, 5 and 7 of the setup assistant, with sample data.*
 
+### Upgrade
+
+To upgrade, replace **DojoWallpaper.app** in Applications with the new version and open it. Replacing the app is enough: on launch, Dojo copies its newer runtime to `~/.config/claude-dojo` and restarts the agent. You do not need to run the setup assistant again, and your `config.json` is kept. The app must be run from Applications, not from the disk image.
+
 ### What the assistant changes
 
 - `~/.config/claude-dojo/`: the Dojo files (including the `themes/` folder with the eight themes), the `config.json` file (mode `0600`, because it can contain private URLs), the cache, once you choose a custom background the `backgrounds/` folder, and, if you enable them, the [terminal parts](#terminal-themes): the `terminal/` folder, plus lines in Ghostty's configuration and `~/.zshrc`.

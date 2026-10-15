@@ -1,6 +1,6 @@
 {
   "name": "claude-dojo",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Fond d'écran macOS animé pour sessions Claude Code",
   "main": "hook.js",
   "private": true,

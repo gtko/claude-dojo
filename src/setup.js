@@ -851,6 +851,52 @@ async function npmInstall(nodePath) {
   return { ok: true, dest, nodeModules: fs.existsSync(path.join(dest, 'node_modules')) };
 }
 
+// ── Mise à jour du runtime (après remplacement de DojoWallpaper.app) ─────
+// Remplacer l'app ne touche pas à ~/.config/claude-dojo : au lancement, l'app appelle cette commande avec son runtime
+// embarqué (srcDir). Si le dojo est configuré et que ce runtime est plus récent que l'installé, il est recopié
+// (installFiles), puis l'agent redémarre (launchctl kickstart, seulement si son LaunchAgent existe et que launchd
+// n'est pas désactivé). Versions comparées en major.minor.patch, sans dépendance. Jamais de rétrogradation.
+// Renvoie { upgraded, from, to, restarted, reason } ; reason : not-configured, invalid-version, up-to-date,
+// downgrade, volume (app lancée depuis un DMG ou une copie translocalisée) ou done.
+const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)$/;
+const parseVersion = (v) => {
+  const m = typeof v === 'string' ? SEMVER_RE.exec(v.trim()) : null;
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+};
+// Négatif si a < b, nul si égales, positif si a > b.
+const compareVersions = (a, b) => {
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return 0;
+};
+// Version lue dans un package.json (null si absent ou illisible).
+function packageVersion(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')).version ?? null; } catch { return null; }
+}
+const isTransientApp = (p) => p.startsWith('/Volumes/') || p.includes('/AppTranslocation/');
+
+async function upgradeRuntime(srcDir, opts = {}) {
+  if (!srcDir || srcDir.trim() === '') fail('dossier source manquant.');
+  const o = isObj(opts) ? opts : {};
+  const dest = paths.dojo();
+  const from = packageVersion(path.join(dest, 'package.json'));
+  const to = packageVersion(path.join(path.resolve(srcDir), 'package.json'));
+  const result = (upgraded, reason, restarted = false) => ({ ok: true, upgraded, from, to, restarted, reason });
+  if (!fs.existsSync(path.join(dest, 'config.json'))) return result(false, 'not-configured');
+  const embedded = parseVersion(to);
+  const installed = parseVersion(from);
+  if (!embedded || !installed) return result(false, 'invalid-version');
+  const cmp = compareVersions(embedded, installed);
+  if (cmp === 0) return result(false, 'up-to-date');
+  if (cmp < 0) return result(false, 'downgrade');
+  if (o.appPath && isTransientApp(path.resolve(String(o.appPath)))) return result(false, 'volume');
+  installFiles(srcDir);
+  let restarted = false;
+  if (o.noLaunchd !== true && fs.existsSync(plistPath(LABEL_AGENT))) {
+    restarted = (await run('launchctl', ['kickstart', '-k', `gui/${uid()}/${LABEL_AGENT}`])).ok;
+  }
+  return result(true, 'done', restarted);
+}
+
 // ── LaunchAgents (launchctl uniquement via execFile ; --dry-run ne fait rien) ──
 const uid = () => process.getuid();
 const plistPath = (label) => path.join(paths.launchAgents(), label + '.plist');
@@ -902,8 +948,7 @@ function checkAppLocation(app) {
   const resolved = path.resolve(app);
   let real = resolved;
   try { real = fs.realpathSync(resolved); } catch { /* absent : chemin tel quel */ }
-  const bad = (p) => p.startsWith('/Volumes/') || p.includes('/AppTranslocation/');
-  if (bad(resolved) || bad(real)) fail(APP_MOVE_MSG);
+  if (isTransientApp(resolved) || isTransientApp(real)) fail(APP_MOVE_MSG);
   if (!appDirs().map((d) => path.resolve(d)).includes(path.dirname(resolved))) fail(APP_MOVE_MSG);
 }
 
@@ -2449,6 +2494,7 @@ const USAGE = [
   'node setup.js terminal remove [{ghostty,terminalApp,welcome}|-]  (sans argument : tout)',
   'node setup.js geocode <ville>',
   'node setup.js install-files <srcdir>',
+  'node setup.js upgrade-runtime <srcdir> [{appPath,noLaunchd}|-]   (runtime plus récent que l\'installé : copie + redémarrage de l\'agent)',
   'node setup.js npm-install [node]',
   'node setup.js merge-settings <json|->',
   'node setup.js unmerge-settings [json|->]',
@@ -2478,6 +2524,7 @@ async function main(argv, deps = {}) {
     }
     case 'geocode': return geocode(readArg(a1));
     case 'install-files': return installFiles(readArg(a1));
+    case 'upgrade-runtime': return upgradeRuntime(readArg(a1), parseJsonArg(a2));
     case 'npm-install': return npmInstall(a1 || null);
     case 'merge-settings': return mergeSettings(parseJsonArg(a1));
     case 'unmerge-settings': return unmergeSettings(parseJsonArg(a1));

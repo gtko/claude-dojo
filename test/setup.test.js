@@ -703,3 +703,160 @@ test('window-zone : config.json corrompu à la main, retombée sur les défauts'
   assert.equal(r.code, 0, r.raw);
   assert.deepEqual(r.out.windowZone, { enabled: false, margin: 8, reserveTop: true, exclude: [] });
 });
+
+// ── upgrade-runtime : runtime embarqué plus récent que l'installé (app remplacée) ──
+// Source embarquée factice dans le HOME temporaire. launchctl factice en tête de PATH : aucun launchctl réel.
+function mkRuntime(dir, version, marker) {
+  fs.mkdirSync(dir, { recursive: true });
+  writeJson(path.join(dir, 'package.json'), { name: 'claude-dojo', version });
+  fs.writeFileSync(path.join(dir, 'agent-mac.js'), `// ${marker}\n`);
+  return dir;
+}
+const dojoDirOf = (home) => path.join(home, '.config', 'claude-dojo');
+const mkInstalled = (home, version, marker = 'old') => {
+  writeJson(configFile(home), { theme: 'naruto' });
+  return mkRuntime(dojoDirOf(home), version, marker);
+};
+const upgradeRuntimeCli = (home, src, opts = {}, env = {}) => cli(home, ['upgrade-runtime', src, JSON.stringify(opts)], { env });
+const agentOf = (home) => fs.readFileSync(path.join(dojoDirOf(home), 'agent-mac.js'), 'utf8');
+function fakeLaunchctl(root) {
+  const bin = path.join(root, 'fake-bin');
+  const log = path.join(root, 'launchctl.log');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'launchctl'), `#!/bin/sh\necho "$@" >> "${log}"\n`, { mode: 0o755 });
+  return { env: { PATH: bin + path.delimiter + process.env.PATH }, log };
+}
+
+test('upgrade-runtime : dojo non configuré (pas de config.json) → rien', () => {
+  const home = tmpHome();
+  const src = mkRuntime(path.join(home, 'embedded'), '0.2.1', 'new');
+  mkRuntime(dojoDirOf(home), '0.2.0', 'old');
+  const r = upgradeRuntimeCli(home, src);
+  assert.equal(r.code, 0, r.raw);
+  assert.deepEqual(r.out, { ok: true, upgraded: false, from: '0.2.0', to: '0.2.1', restarted: false, reason: 'not-configured' });
+  assert.equal(agentOf(home), '// old\n');
+});
+
+test('upgrade-runtime : même version → rien', () => {
+  const home = tmpHome();
+  const src = mkRuntime(path.join(home, 'embedded'), '0.2.1', 'new');
+  mkInstalled(home, '0.2.1');
+  const r = upgradeRuntimeCli(home, src);
+  assert.equal(r.code, 0, r.raw);
+  assert.equal(r.out.upgraded, false);
+  assert.equal(r.out.reason, 'up-to-date');
+  assert.equal(agentOf(home), '// old\n');
+});
+
+test('upgrade-runtime : installée plus récente → rien, jamais de rétrogradation (comparaison numérique)', () => {
+  const home = tmpHome();
+  const src = mkRuntime(path.join(home, 'embedded'), '0.9.9', 'new');
+  mkInstalled(home, '0.10.0');
+  const r = upgradeRuntimeCli(home, src);
+  assert.equal(r.code, 0, r.raw);
+  assert.deepEqual(r.out, { ok: true, upgraded: false, from: '0.10.0', to: '0.9.9', restarted: false, reason: 'downgrade' });
+  assert.equal(agentOf(home), '// old\n');
+  const pkg = readJson(path.join(dojoDirOf(home), 'package.json'));
+  assert.equal(pkg.version, '0.10.0');
+});
+
+test('upgrade-runtime : plus récente → fichiers copiés, version installée mise à jour, config.json intact, idempotent', () => {
+  const home = tmpHome();
+  const src = mkRuntime(path.join(home, 'embedded'), '0.10.0', 'new');
+  mkInstalled(home, '0.9.0');
+  const r = upgradeRuntimeCli(home, src);
+  assert.equal(r.code, 0, r.raw);
+  assert.deepEqual(r.out, { ok: true, upgraded: true, from: '0.9.0', to: '0.10.0', restarted: false, reason: 'done' });
+  assert.equal(agentOf(home), '// new\n');
+  assert.equal(readJson(path.join(dojoDirOf(home), 'package.json')).version, '0.10.0');
+  assert.deepEqual(readJson(configFile(home)), { theme: 'naruto' });
+  const again = upgradeRuntimeCli(home, src);
+  assert.equal(again.out.reason, 'up-to-date');
+  assert.equal(again.out.upgraded, false);
+});
+
+test('upgrade-runtime : version invalide (embarquée ou installée) → pas d\'upgrade, pas de crash', () => {
+  const cases = [
+    ['embarquée 0.2', 'embedded', '0.2', '0.2.0'],
+    ['embarquée bêta', 'embedded', '0.2.1-beta.1', '0.2.0'],
+    ['embarquée absente', 'embedded', undefined, '0.2.0'],
+    ['installée invalide', 'installed', '0.2.1', 'abc'],
+  ];
+  for (const [label, which, embedded, installed] of cases) {
+    const home = tmpHome();
+    const src = path.join(home, 'embedded');
+    if (which === 'embedded') {
+      mkRuntime(src, embedded ?? '0.0.0', 'new');
+      if (embedded === undefined) writeJson(path.join(src, 'package.json'), { name: 'claude-dojo' });
+    } else {
+      mkRuntime(src, '0.2.1', 'new');
+    }
+    mkInstalled(home, installed);
+    const r = upgradeRuntimeCli(home, src);
+    assert.equal(r.code, 0, `${label} : ${r.raw}`);
+    assert.equal(r.out.upgraded, false, label);
+    assert.equal(r.out.reason, 'invalid-version', label);
+    assert.equal(agentOf(home), '// old\n', label);
+  }
+  const home = tmpHome();
+  const src = path.join(home, 'embedded');
+  mkRuntime(src, '0.2.1', 'new');
+  fs.writeFileSync(path.join(src, 'package.json'), '{ pas du json');
+  mkInstalled(home, '0.2.0');
+  const broken = upgradeRuntimeCli(home, src);
+  assert.equal(broken.out.reason, 'invalid-version');
+  assert.equal(agentOf(home), '// old\n');
+});
+
+test('upgrade-runtime : app lancée depuis /Volumes ou AppTranslocation → refus (volume)', () => {
+  for (const appPath of [
+    '/Volumes/DojoWallpaper/DojoWallpaper.app',
+    '/private/var/folders/xx/AppTranslocation/ABC/d/DojoWallpaper.app',
+  ]) {
+    const home = tmpHome();
+    const src = mkRuntime(path.join(home, 'embedded'), '0.2.1', 'new');
+    mkInstalled(home, '0.2.0');
+    const r = upgradeRuntimeCli(home, src, { appPath });
+    assert.equal(r.code, 0, r.raw);
+    assert.deepEqual(r.out, { ok: true, upgraded: false, from: '0.2.0', to: '0.2.1', restarted: false, reason: 'volume' }, appPath);
+    assert.equal(agentOf(home), '// old\n', appPath);
+  }
+  const home = tmpHome();
+  const src = mkRuntime(path.join(home, 'embedded'), '0.2.1', 'new');
+  mkInstalled(home, '0.2.0');
+  const ok = upgradeRuntimeCli(home, src, { appPath: '/Applications/DojoWallpaper.app' });
+  assert.equal(ok.out.reason, 'done', 'app dans /Applications : mise à jour faite');
+});
+
+test('upgrade-runtime : relance l\'agent par launchctl kickstart seulement si son LaunchAgent existe, jamais avec noLaunchd', () => {
+  const home = tmpHome();
+  const fake = fakeLaunchctl(home);
+  const src = mkRuntime(path.join(home, 'embedded'), '0.2.1', 'new');
+  mkInstalled(home, '0.2.0');
+  const plist = path.join(home, 'Library', 'LaunchAgents', 'io.github.claude-dojo.agent.plist');
+  fs.mkdirSync(path.dirname(plist), { recursive: true });
+  fs.writeFileSync(plist, '<plist/>');
+
+  const off = upgradeRuntimeCli(home, src, { noLaunchd: true }, fake.env);
+  assert.equal(off.out.upgraded, true, off.raw);
+  assert.equal(off.out.restarted, false);
+  assert.ok(!fs.existsSync(fake.log), 'noLaunchd : aucun launchctl');
+
+  writeJson(path.join(dojoDirOf(home), 'package.json'), { name: 'claude-dojo', version: '0.2.0' });
+  const on = upgradeRuntimeCli(home, src, {}, fake.env);
+  assert.equal(on.out.upgraded, true, on.raw);
+  assert.equal(on.out.restarted, true);
+  assert.match(fs.readFileSync(fake.log, 'utf8'), new RegExp(`^kickstart -k gui/${process.getuid()}/io\\.github\\.claude-dojo\\.agent$`, 'm'));
+});
+
+test('upgrade-runtime : argument absent ou JSON non objet → erreur propre ou comportement par défaut, sans crash', () => {
+  const home = tmpHome();
+  const none = cli(home, ['upgrade-runtime']);
+  assert.equal(none.code, 1);
+  assert.equal(none.out.ok, false);
+  const src = mkRuntime(path.join(home, 'embedded'), '0.2.1', 'new');
+  mkInstalled(home, '0.2.0');
+  const nul = cli(home, ['upgrade-runtime', src, 'null']);
+  assert.equal(nul.code, 0, nul.raw);
+  assert.equal(nul.out.reason, 'done');
+});
