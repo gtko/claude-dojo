@@ -1,1 +1,50 @@
-<!doctype html><meta charset=utf-8><meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https://dojo-themes.local https://dojo-bg.local https://th.wallhaven.cc https://w.wallhaven.cc data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'"><title>Galerie de fonds</title><link rel=stylesheet href=common.css><body><main id=app></main><script src=bridge.js></script><script src=gallery.js></script>
+<!doctype html>
+<meta charset=utf-8>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https://dojo-themes.local https://dojo-bg.local https://th.wallhaven.cc https://w.wallhaven.cc data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'none'">
+<title>Fonds d'écran</title>
+<link rel=stylesheet href=common.css>
+<link rel=stylesheet href=gallery.css>
+<body>
+<main id=app>
+  <header class="gal-head">
+    <label class="gal-theme">Thème <select id=theme-select></select></label>
+    <div class="tabs gal-tabs" role=tablist aria-label="Sélection de fonds">
+      <button class=tab type=button role=tab data-tab=selection aria-selected=true>Sélection</button>
+      <button class=tab type=button role=tab data-tab=more aria-selected=false>Plus</button>
+      <button class=tab type=button role=tab data-tab=downloaded aria-selected=false>Téléchargés</button>
+    </div>
+  </header>
+
+  <div class="gal-tools">
+    <button class=btn type=button id=btn-next>Fond suivant</button>
+    <button class=btn type=button id=btn-sync>Synchroniser le pack du thème</button>
+    <span class=spacer></span>
+    <button class=btn type=button id=btn-close>Fermer</button>
+  </div>
+
+  <div class="gal-notice notice notice-error hidden" id=notice role=alert>
+    <span id=notice-text></span>
+    <button class="btn btn-ghost" type=button id=notice-close aria-label="Masquer le message">×</button>
+  </div>
+
+  <div class="gal-sync notice hidden" id=sync-box role=status>
+    <span class=gal-sync-text id=sync-text></span>
+    <div class="progress hidden" id=sync-bar><i id=sync-fill></i></div>
+    <button class="btn btn-ghost hidden" type=button id=btn-cancel-sync>Annuler</button>
+  </div>
+
+  <nav class="gal-pager hidden" id=pager aria-label="Pages">
+    <button class=btn type=button id=btn-prev>Précédent</button>
+    <span class=muted id=page-label></span>
+    <button class=btn type=button id=btn-page-next>Suivant</button>
+  </nav>
+
+  <section class=gal-content id=content></section>
+
+  <footer class=gal-foot>
+    <span id=count></span>
+    <span class=credit>Images Wallhaven, propriété de leurs auteurs.</span>
+  </footer>
+</main>
+<script src=bridge.js></script>
+<script src=gallery.js></script>
