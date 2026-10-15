@@ -33,6 +33,20 @@ namespace DojoWallpaper.Tests
                     message + " (attendu : " + expected + ", obtenu : " + actual + ")");
             }
         }
+
+        // Le corps doit lever TException (et pas une autre exception).
+        public static void Throws<TException>(Action body, string message) where TException : Exception
+        {
+            try
+            {
+                body();
+            }
+            catch (TException)
+            {
+                return;
+            }
+            throw new AssertFailedException(message + " (exception attendue : " + typeof(TException).Name + ")");
+        }
     }
 
     internal static class Program
@@ -57,6 +71,10 @@ namespace DojoWallpaper.Tests
             tests.AddRange(SafeAreaTests.Cases());
             tests.AddRange(InputForwarderTests.Cases());
             tests.AddRange(DesktopHostTests.Cases());
+            tests.AddRange(BridgeCommandsTests.Cases());
+            tests.AddRange(NodeRunnerTests.Cases());
+            tests.AddRange(NodeLocatorTests.Cases());
+            tests.AddRange(UiBridgeTests.Cases());
             PauseLogicTests.Register(tests);
 
             int failed = 0;
