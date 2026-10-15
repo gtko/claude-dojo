@@ -57,15 +57,19 @@ function parseMaxNode() {
 
 // Windows : une seule requete CIM (pid, ppid, nom, ligne de commande), memorisee pour countNode et listHeavy.
 // Chemins normalises : `\` -> `/` et guillemets retires, pour que les regex ci-dessous marchent comme sous ps.
+// Environ 1,2 s a chaud, bien plus a froid (runner CI, antivirus) : delai de 7 s, le hook reste sous ses 10 s.
+// Au-dela, execFileSync leve une erreur : fail-open (aucune sortie, la commande passe).
+const WIN_PROCS_TIMEOUT = 7000;
 let winProcs = null;
 function winProcesses() {
   if (winProcs) return winProcs;
   const script =
     '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;' +
-    'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress';
-  const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    'Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId,Name,CommandLine |' +
+    ' Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress';
+  const out = execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
     encoding: 'utf8',
-    timeout: 4000,
+    timeout: WIN_PROCS_TIMEOUT,
     maxBuffer: 64 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'ignore'],
     windowsHide: true,
@@ -189,6 +193,14 @@ function decide(command) {
   if (!HEAVY_CMD.test(command)) return null;
   if (BYPASS_CMD.test(command)) return null;
   const max = parseMax();
+  // Seuil 0 : aucune suite lourde n'est autorisee. Refus sans lire les processus : le resultat ne depend pas
+  // d'eux, et la lecture peut echouer ou depasser son delai (fail-open) sur une machine lente.
+  if (max === 0) {
+    return [
+      'Machine saturée : HEAVY_GATE_MAX=0, aucune suite lourde (tests/typecheck/lint/build) n\'est autorisée.',
+      'Relance avec HEAVY_GATE=off si ce lancement est voulu, ou augmente HEAVY_GATE_MAX.',
+    ].join('\n');
+  }
   const heavy = listHeavy();
   const maxNode = parseMaxNode();
   const nodes = countNode();

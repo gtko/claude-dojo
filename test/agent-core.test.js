@@ -168,3 +168,61 @@ test('startAgent sans échantillonneur : valeurs par défaut servies, aucune err
     }
   });
 });
+
+test('startAgent : carte média gardée si la lecture lève une exception, effacée quand le lecteur renvoie null', async () => {
+  await withTempHome(async () => {
+    const root = makeRoot();
+    let mode = 'media';   // media | throw | null : comportement du lecteur, lu à chaque cycle (toutes les 2 s)
+    const media = { active: true, title: 'Titre test', artist: 'Artiste', updated: 1 };
+    try {
+      const agent = await startAgent({
+        port: 0, root,
+        ...fakeSamplers(),
+        media: {
+          read: async () => { if (mode === 'throw') throw new Error('lecture impossible'); return mode === 'media' ? media : null; },
+          cmd: async () => null,
+          coverFile: () => null,
+        },
+      });
+      try {
+        const title = async () => (JSON.parse((await get(agent.port, '/stats')).body).media || {}).title || null;
+        const cycle = () => new Promise((r) => setTimeout(r, 2500));   // au moins un cycle de lecture média (2 s)
+        assert.equal(await title(), 'Titre test', 'carte lue au démarrage');
+        mode = 'throw';
+        await cycle();
+        assert.equal(await title(), 'Titre test', 'exception de lecture : dernière carte conservée');
+        mode = 'null';
+        await cycle();
+        assert.equal(await title(), null, 'lecteur sans média (null) : carte effacée');
+      } finally {
+        agent.stop();
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('startAgent : onCreated fournit stop() avant la résolution, qui appelle onStop', async () => {
+  await withTempHome(async () => {
+    const root = makeRoot();
+    let stopNow = null, stopped = 0;
+    // startAgent n'est pas attendu : stop() est appelé avant que le serveur n'écoute (cas d'un SIGTERM précoce).
+    const started = startAgent({
+      port: 0, root,
+      ...fakeSamplers(),
+      onStop: () => { stopped++; },
+      onCreated: (fn) => { stopNow = fn; },
+    });
+    started.catch(() => {});
+    try {
+      assert.equal(typeof stopNow, 'function', 'stop disponible dès la création');
+      stopNow();
+      assert.equal(stopped, 1, 'onStop appelé par stop()');
+    } finally {
+      // sans stop précoce (échec ci-dessus), l'agent resterait ouvert et bloquerait le processus de test
+      if (!stopNow) started.then((a) => a.stop(), () => {});
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

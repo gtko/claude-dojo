@@ -424,8 +424,10 @@ async function buildIcons(dir) {
 function onStop() { try { macmon?.kill(); } catch {} }
 
 // ── Démarrage : CLI (node agent-mac.js), port DOJO_PORT pour les tests ─
-let agent = null;
-const stop = () => { try { agent?.stop(); } catch {} process.exit(0); };
+// onCreated fournit stop() dès la création de l'agent, avant la fin du démarrage (≈1 s) : un SIGTERM reçu pendant
+// ce délai arrête aussi collector.js et macmon, au lieu de les laisser orphelins.
+let stopAgent = null;
+const stop = () => { try { stopAgent?.(); } catch {} onStop(); process.exit(0); };
 process.on('SIGTERM', stop); process.on('SIGINT', stop);
 startAgent({
   port: Number(process.env.DOJO_PORT) || 7777,   // DOJO_PORT ne sert qu'aux tests (port libre)
@@ -436,7 +438,8 @@ startAgent({
   media: { read: readMedia, cmd: mediaCmd, coverFile: () => COVER },
   icons: buildIcons,
   onStop,
-}).then((a) => { agent = a; }, (e) => {
+  onCreated: (fn) => { stopAgent = fn; },
+}).catch((e) => {
   if (e.code === 'EADDRINUSE') process.exit(0);   // une seule instance
   throw e;
 });

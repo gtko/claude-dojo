@@ -27,6 +27,8 @@
 //                            duration, positionAt, cover, canNext, canPrev, updated }
 //   icons(dir)            -> Promise<string[]>, une fois au démarrage : écrit dir/<agent>.png, renvoie les agents présents
 //   onStop()              appelé par stop() pour libérer les sous-processus de la plateforme
+//   onCreated(stop)       appelé de façon synchrone, avant tout démarrage : stop() est utilisable dès maintenant, donc un
+//                         signal reçu pendant la première seconde (avant la résolution) tue aussi collector.js et onStop()
 //
 // Retour : Promise<{ server, stop(), port }>, résolue quand le serveur écoute et que le premier échantillon est fait.
 'use strict';
@@ -42,6 +44,12 @@ const readJson = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8'))
 const call = async (fn, dflt, ...args) => {
   if (typeof fn !== 'function') return dflt;
   try { const r = await fn(...args); return r ?? dflt; } catch { return dflt; }
+};
+// Lecture de la carte média : une exception garde la dernière valeur (comportement d'avant le refactor) ;
+// un null renvoyé par le lecteur (rien en lecture, lecteur absent) efface la carte.
+const callMedia = async (fn, last) => {
+  if (typeof fn !== 'function') return null;
+  try { return (await fn()) ?? null; } catch { return last; }
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const CPU_MODEL = (os.cpus()[0]?.model || '').trim() || 'CPU';
@@ -354,7 +362,7 @@ function startAgent(opts = {}) {
     if (now - lastDisk >= 60000) { lastDisk = now; disks = await call(opts.sampleDisks, disks); }
     await sampleNetwork();
     servers = await call(opts.sampleServers, servers, ctx());
-    if (now - lastMedia >= 2000) { lastMedia = now; media = await call(mediaApi.read, null); }
+    if (now - lastMedia >= 2000) { lastMedia = now; media = await callMedia(mediaApi.read, media); }
     if (now - lastBattery >= 10000) { lastBattery = now; battery = await call(opts.sampleBattery, null); }
     if (now - lastCheck >= 60000) { lastCheck = now; ensureCollector(); }
     const sen = await call(opts.sampleSensors, {});
@@ -461,6 +469,7 @@ function startAgent(opts = {}) {
     server.close();
     server.closeAllConnections?.();
   }
+  try { opts.onCreated?.(stop); } catch {}
   return new Promise((resolve, reject) => {
     server.once('error', reject);   // EADDRINUSE etc. : laissé à l'appelant
     server.listen(PORT, '127.0.0.1', async () => {
