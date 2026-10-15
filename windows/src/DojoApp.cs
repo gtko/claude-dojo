@@ -21,10 +21,14 @@ namespace DojoWallpaper
         private TrayController _tray;
         private PauseEngine _engine;
         private bool _quitting;
+        // Page d'interface a ouvrir au demarrage (--open), ou null.
+        private readonly string _openPage;
 
         // exitAfterSeconds > 0 : sortie automatique, par le meme chemin que le menu Quitter (tests automatises).
-        public DojoApp(int exitAfterSeconds)
+        // openPage : nom court d'une page de l'interface (UiLayout.Pages), ouverte une fois le demarrage termine.
+        public DojoApp(int exitAfterSeconds, string openPage)
         {
+            _openPage = openPage;
             _startTimer = new System.Windows.Forms.Timer { Interval = 1 };
             _startTimer.Tick += delegate
             {
@@ -82,6 +86,7 @@ namespace DojoWallpaper
 
                 _manager = new WallpaperManager(cfg);
                 _manager.Start();
+                UiWindow.WallpaperReload = OnReloadRequested;
 
                 _tray = new TrayController(cfg, DojoConfig.DefaultPath);
                 _tray.ModeChanged += OnModeChanged;
@@ -91,6 +96,7 @@ namespace DojoWallpaper
                 _tray.OpenConfigRequested += delegate { DojoLog.Write("ouverture de la config"); };
                 _tray.AutostartToggled += OnAutostartToggled;
                 _tray.QuitRequested += Quit;
+                _tray.UiRequested += OnUiRequested;
                 DojoLog.Write("zone de notification : icone creee");
 
                 _engine = new PauseEngine(() => _watcher.Current);
@@ -100,6 +106,10 @@ namespace DojoWallpaper
                 DojoLog.Write("configuration : url " + DojoLog.Redact(cfg.Url) + ", mode " + cfg.Mode
                     + ", ecrans " + Screen.AllScreens.Length);
                 UpdateStatus();
+                if (_openPage != null)
+                {
+                    OnUiRequested(_openPage);
+                }
             }
             catch (Exception ex)
             {
@@ -174,6 +184,20 @@ namespace DojoWallpaper
             {
                 _manager.Reload();
                 DojoLog.Write("rechargement des pages");
+            });
+        }
+
+        // Page de l'interface (menu ou --open) : fenetre generique, une par page.
+        private void OnUiRequested(string key)
+        {
+            Guard("ouverture de l'interface", delegate
+            {
+                UiPage page = UiLayout.Find(key);
+                if (page == null)
+                {
+                    return;
+                }
+                UiWindow.Open(page.File, page.Title, page.Size, page.MinSize);
             });
         }
 

@@ -20,6 +20,9 @@ namespace DojoWallpaper
         internal const string LabelReload = "Recharger";
         internal const string LabelOpenConfig = "Ouvrir la config";
         internal const string LabelAutostart = "Démarrer avec Windows";
+        internal const string LabelThemes = "Thème et fond…";
+        internal const string LabelGallery = "Galerie de fonds…";
+        internal const string LabelWizard = "Assistant de configuration…";
         internal const string LabelQuit = "Quitter le Dojo";
 
         private const string Tooltip = "Dojo Wallpaper";
@@ -48,6 +51,8 @@ namespace DojoWallpaper
         public event Action ReloadRequested;
         public event Action OpenConfigRequested;
         public event Action<bool> AutostartToggled;
+        // Ouverture d'une page de l'interface : argument = nom court (voir UiLayout.Pages).
+        public event Action<string> UiRequested;
         public event Action QuitRequested;
 
         public TrayController(DojoConfig cfg)
@@ -73,12 +78,16 @@ namespace DojoWallpaper
             var reloadItem = CreateItem(LabelReload, OnReload);
             var openConfigItem = CreateItem(LabelOpenConfig, OnOpenConfig);
             _autostartItem = CreateItem(LabelAutostart, OnToggleAutostart);
+            var themesItem = CreateItem(LabelThemes, () => RequestUi("themes"));
+            var galleryItem = CreateItem(LabelGallery, () => RequestUi("gallery"));
+            var wizardItem = CreateItem(LabelWizard, () => RequestUi("wizard"));
             var quitItem = CreateItem(LabelQuit, OnQuit);
 
             _menu = new ContextMenuStrip();
             _menu.Items.AddRange(new ToolStripItem[]
             {
                 _interactiveItem, _passiveItem, _mirrorItem, _pauseItem, reloadItem, openConfigItem, _autostartItem,
+                themesItem, galleryItem, wizardItem,
                 new ToolStripSeparator(), quitItem
             });
             _menu.Opening += (s, e) => RefreshChecks();
@@ -240,6 +249,15 @@ namespace DojoWallpaper
             if (handler != null)
             {
                 handler(next);
+            }
+        }
+
+        private void RequestUi(string key)
+        {
+            var handler = UiRequested;
+            if (handler != null)
+            {
+                handler(key);
             }
         }
 

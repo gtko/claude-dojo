@@ -26,7 +26,6 @@ namespace DojoWallpaper
         private readonly System.Windows.Forms.Timer safeTimer;
         private readonly System.Windows.Forms.Timer rebuildTimer;
         private readonly System.Windows.Forms.Timer resumeTimer;
-        private Task<CoreWebView2Environment> environment;
         private System.Threading.SynchronizationContext ui;
         private ShellWatcher shellWatcher;
         private string builtUrl;
@@ -94,7 +93,7 @@ namespace DojoWallpaper
             }
             started = true;
             ui = System.Threading.SynchronizationContext.Current;
-            environment = CreateEnvironment();
+            GetSharedEnvironment();
             shellWatcher = new ShellWatcher(delegate { RequestRebuild("Explorateur redemarre", true); });
             SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
             SystemEvents.PowerModeChanged += OnPowerModeChanged;
@@ -381,11 +380,23 @@ namespace DojoWallpaper
         // (reessai de chaque fenetre, voir WallpaperWindow), au lieu de reattendre indefiniment la meme tache en echec.
         private Task<CoreWebView2Environment> GetEnvironment()
         {
-            if (environment == null || environment.IsFaulted || environment.IsCanceled)
+            return GetSharedEnvironment();
+        }
+
+        // Environnement unique du processus, partage avec les fenetres d'interface (UiWindow) : un seul dossier de donnees WebView2.
+        private static readonly object EnvironmentGate = new object();
+        private static Task<CoreWebView2Environment> sharedEnvironment;
+
+        internal static Task<CoreWebView2Environment> GetSharedEnvironment()
+        {
+            lock (EnvironmentGate)
             {
-                environment = CreateEnvironment();
+                if (sharedEnvironment == null || sharedEnvironment.IsFaulted || sharedEnvironment.IsCanceled)
+                {
+                    sharedEnvironment = CreateEnvironment();
+                }
+                return sharedEnvironment;
             }
-            return environment;
         }
 
         private static Task<CoreWebView2Environment> CreateEnvironment()

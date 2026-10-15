@@ -1,0 +1,151 @@
+/* Interface DojoWallpaper : thème sombre « verre », cohérent avec la page du fond (src/wallpaper/index.html). */
+:root {
+  --bg: #1e1f29;
+  --bg-2: #161720;
+  --glass: rgba(24, 25, 36, .72);
+  --glass-2: rgba(255, 255, 255, .05);
+  --line: rgba(189, 147, 249, .22);
+  --text: #f8f8f2;
+  --muted: #a0a8c8;
+  --dim: #6272a4;
+  --accent: #bd93f9;
+  --accent-2: #ff79c6;
+  --danger: #ff5555;
+  --ok: #50fa7b;
+  --warn: #ffb86c;
+  --radius: 14px;
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "CaskaydiaCove Nerd Font", "Cascadia Code", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  -webkit-user-select: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+body {
+  background: radial-gradient(1200px 800px at 10% -10%, rgba(189, 147, 249, .14), transparent 60%),
+              radial-gradient(900px 700px at 110% 110%, rgba(255, 121, 198, .10), transparent 60%),
+              var(--bg);
+}
+
+main#app {
+  height: 100%;
+  overflow: auto;
+  padding: 20px;
+}
+
+h1, h2, h3 { margin: 0 0 8px; font-weight: 600; }
+h1 { font-size: 20px; }
+h2 { font-size: 16px; }
+h3 { font-size: 14px; color: var(--muted); }
+p { margin: 0 0 8px; color: var(--muted); line-height: 1.45; }
+code, .mono { font-family: var(--mono); font-size: 12.5px; }
+
+/* Boutons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 32px; padding: 6px 14px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--glass-2); color: var(--text);
+  font: inherit; cursor: pointer; transition: background .15s, border-color .15s, opacity .15s;
+}
+.btn:hover { background: rgba(255, 255, 255, .09); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border-color: transparent; color: #1e1f29; font-weight: 600; }
+.btn-primary:hover { background: linear-gradient(135deg, #cba6ff, #ff8fd0); }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn-ghost:hover { color: var(--text); background: rgba(255, 255, 255, .06); }
+.btn-danger { color: var(--danger); }
+
+/* Cartes et grilles */
+.card {
+  background: var(--glass); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 16px; box-shadow: 0 10px 40px rgba(0, 0, 0, .3), inset 0 1px 0 rgba(255, 255, 255, .05);
+  backdrop-filter: blur(16px) saturate(140%);
+}
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.spacer { flex: 1; }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+
+/* Messages */
+.notice { border-radius: 10px; padding: 10px 12px; border: 1px solid var(--line); background: var(--glass-2); color: var(--text); }
+.notice-error { border-color: rgba(255, 85, 85, .5); background: rgba(255, 85, 85, .12); color: #ffb3b3; }
+.notice-ok { border-color: rgba(80, 250, 123, .45); background: rgba(80, 250, 123, .10); color: #c6ffd6; }
+.notice-warn { border-color: rgba(255, 184, 108, .45); background: rgba(255, 184, 108, .10); color: #ffe2bf; }
+
+/* Chargement */
+.spinner {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .15); border-top-color: var(--accent);
+  animation: spin .8s linear infinite; display: inline-block; vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Onglets */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+.tab {
+  padding: 8px 14px; border: 0; background: transparent; color: var(--muted); font: inherit; cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+
+/* Badges */
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11.5px;
+  background: rgba(255, 255, 255, .08); color: var(--muted); white-space: nowrap;
+}
+.badge-accent { background: rgba(189, 147, 249, .18); color: var(--accent); }
+.badge-ok { background: rgba(80, 250, 123, .15); color: var(--ok); }
+.badge-danger { background: rgba(255, 85, 85, .15); color: var(--danger); }
+
+/* Barre d'outils */
+.toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 0 14px;
+}
+
+/* Champs */
+input, select, textarea {
+  font: inherit; color: var(--text); background: rgba(0, 0, 0, .25);
+  border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; min-height: 32px;
+  -webkit-user-select: text; user-select: text;
+}
+input[type="search"], input[type="text"] { min-width: 220px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+input::placeholder { color: var(--dim); }
+select option { background: var(--bg-2); color: var(--text); }
+label { color: var(--muted); }
+
+/* Barre de progression */
+.progress { height: 8px; border-radius: 99px; background: rgba(255, 255, 255, .08); overflow: hidden; }
+.progress > i {
+  display: block; height: 100%; width: 0; border-radius: 99px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width .3s ease;
+}
+
+.muted { color: var(--muted); }
+.hidden { display: none !important; }
+
+/* Barres de défilement sombres */
+* { scrollbar-width: thin; scrollbar-color: rgba(189, 147, 249, .35) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(189, 147, 249, .3); border-radius: 99px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(189, 147, 249, .5); background-clip: padding-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* Texte sélectionnable dans les champs et les zones de contenu */
+p, h1, h2, h3, .mono { -webkit-user-select: text; user-select: text; }
