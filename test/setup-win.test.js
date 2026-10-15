@@ -244,6 +244,9 @@ function cli(home, args, { input, env = {} } = {}) {
       USERPROFILE: home,
       HOME: home,
       LOCALAPPDATA: path.join(home, 'AppData', 'Local'), // fragment Windows Terminal : jamais le vrai profil
+      DOJO_DOCUMENTS_DIR: path.join(home, 'Documents'), // profils PowerShell : jamais le vrai Documents (registre)
+      ProgramW6432: path.join(home, 'Program Files'), // pas de PowerShell 7 réel détecté
+      ProgramFiles: path.join(home, 'Program Files'),
       DOJO_SKIP_REGISTRY: '1',
       DOJO_SKIP_EXE: '1',
       DOJO_DETECT_NO_GH_AUTH: '1',
@@ -469,11 +472,16 @@ test('uninstall Windows : fragment Windows Terminal et bloc PowerShell retirés 
     const local = path.join(home, 'AppData', 'Local');
     const frag = path.join(local, 'Microsoft', 'Windows Terminal', 'Fragments', 'claude-dojo', 'claude-dojo.json');
     const ps = path.join(home, 'Documents', 'PowerShell', 'profile.ps1');
-    const applied = cli(home, ['terminal', 'apply', '{"windowsTerminal":true,"welcome":true}'], { env: { LOCALAPPDATA: local } });
+    // PowerShell 7 « installé » : pwsh.exe fictif dans PATH (le profil PowerShell 7 n'est posé que dans ce cas).
+    const bin = path.join(home, 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'pwsh.exe'), '');
+    const env = { LOCALAPPDATA: local, PATH: bin + path.delimiter + path.join(process.env.SystemRoot || 'C:\\Windows', 'System32') };
+    const applied = cli(home, ['terminal', 'apply', '{"windowsTerminal":true,"welcome":true}'], { env });
     assert.equal(applied.code, 0, applied.stderr);
     assert.equal(fs.existsSync(frag), true);
     assert.equal(fs.existsSync(ps), true);
-    const out = cli(home, ['uninstall', '{}'], { env: { LOCALAPPDATA: local } });
+    const out = cli(home, ['uninstall', '{}'], { env });
     assert.equal(out.code, 0, out.stderr);
     assert.deepEqual(out.out.terminal.windowsTerminal.action, 'removed');
     assert.equal(fs.existsSync(frag), false, 'fragment retiré');

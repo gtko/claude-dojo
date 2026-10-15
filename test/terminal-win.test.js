@@ -81,8 +81,11 @@ function makeEnv() {
   write(path.join(themes, 'delta', 'terminal', 'ghostty.theme'), ghosttyTheme(0x30, { skip15: true }));
   write(path.join(home, '.config', 'claude-dojo', 'config.json'), JSON.stringify({ theme: 'alpha' }) + '\n');
   fs.mkdirSync(local, { recursive: true });
+  // PATH et Program Files contrôlés : pwsh.exe fictif dans bin (PowerShell 7 « installé »), rien sous Program Files.
+  const bin = path.join(root, 'bin');
+  write(path.join(bin, 'pwsh.exe'), '');
   const env = {
-    PATH: process.env.PATH || '',
+    PATH: [bin, path.join(process.env.SystemRoot || 'C:\\Windows', 'System32')].join(path.delimiter),
     SystemRoot: process.env.SystemRoot || '',
     TEMP: root,
     TMP: root,
@@ -90,6 +93,9 @@ function makeEnv() {
     USERPROFILE: home,
     HOME: home,
     LOCALAPPDATA: local,
+    ProgramW6432: path.join(root, 'Program Files'),
+    ProgramFiles: path.join(root, 'Program Files'),
+    DOJO_DOCUMENTS_DIR: path.join(home, 'Documents'), // jamais le vrai dossier Documents (registre)
     DOJO_THEMES_DIR: root, // setup.js lit <DOJO_THEMES_DIR>/themes/
 
     DOJO_TERMINAL_DIR: TERM_SRC,
@@ -267,6 +273,118 @@ test('profil PowerShell existant avec retour final CRLF : retrait restitue les o
 });
 function hasBlockOf(f) { return fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('# >>> claude-dojo >>>'); }
 
+// ── Profils non UTF-8 : jamais réécrits, avertissement ───────────────────
+
+test('profil cp1252 (« é » en 0xE9) : skipped à l\'apply et au retrait, fichier octet pour octet identique, pas de sauvegarde', () => {
+  const E = makeEnv();
+  const original = Buffer.from('# été\r\n$x = 1\r\n', 'latin1'); // 0xE9 seul : pas de l'UTF-8 valide
+  fs.mkdirSync(path.dirname(E.ps5), { recursive: true });
+  fs.writeFileSync(E.ps5, original);
+  fs.mkdirSync(path.dirname(E.ps7), { recursive: true });
+  fs.writeFileSync(E.ps7, original);
+  const out = ok(apply(E, { welcome: true }));
+  assert.deepEqual(out.powershell.profiles.map((p) => p.action), ['skipped', 'skipped']);
+  for (const p of out.powershell.profiles) {
+    assert.match(p.warning, /^profil non UTF-8 \(non UTF-8\), ajoutez manuellement dans /);
+    assert.match(p.warning, /# >>> claude-dojo >>>/, 'le bloc à ajouter à la main figure dans l\'avertissement');
+  }
+  assert.ok(fs.readFileSync(E.ps5).equals(original), 'profil Windows PowerShell identique, octet pour octet');
+  assert.ok(fs.readFileSync(E.ps7).equals(original), 'profil PowerShell 7 identique, octet pour octet');
+  assert.deepEqual(fs.readdirSync(path.dirname(E.ps5)).filter((n) => n.includes('.bak-')), [], 'aucune sauvegarde');
+  assert.equal(ok(cli(E, ['terminal', 'status'])).powershell.welcome, false, 'accueil non posé');
+  const rm = ok(cli(E, ['terminal', 'remove']));
+  assert.deepEqual(rm.powershell.profiles.map((p) => p.action), ['skipped', 'skipped']);
+  assert.ok(fs.readFileSync(E.ps5).equals(original), 'retrait : profil identique');
+  assert.ok(fs.readFileSync(E.ps7).equals(original), 'retrait : profil identique');
+});
+
+test('profil UTF-16LE (BOM FF FE) et UTF-16 sans BOM (octets nuls) : skipped, fichiers identiques, retrait aussi skipped', () => {
+  const E = makeEnv();
+  const utf16 = Buffer.from('﻿# profil\r\n$x = 1\r\n', 'utf16le');
+  const noBom = Buffer.from('# profil\r\n', 'utf16le');
+  fs.mkdirSync(path.dirname(E.ps5), { recursive: true });
+  fs.writeFileSync(E.ps5, utf16);
+  fs.mkdirSync(path.dirname(E.ps7), { recursive: true });
+  fs.writeFileSync(E.ps7, noBom);
+  const out = ok(apply(E, { welcome: true }));
+  const byPath = Object.fromEntries(out.powershell.profiles.map((p) => [p.path, p]));
+  assert.equal(byPath[E.ps5].action, 'skipped');
+  assert.match(byPath[E.ps5].warning, /^profil non UTF-8 \(UTF-16\)/);
+  assert.equal(byPath[E.ps7].action, 'skipped');
+  assert.match(byPath[E.ps7].warning, /^profil non UTF-8 \(octets nuls\)/);
+  assert.ok(fs.readFileSync(E.ps5).equals(utf16), 'UTF-16 avec BOM : identique');
+  assert.ok(fs.readFileSync(E.ps7).equals(noBom), 'UTF-16 sans BOM : identique');
+  const rm = ok(cli(E, ['terminal', 'remove']));
+  assert.deepEqual(rm.powershell.profiles.map((p) => p.action), ['skipped', 'skipped']);
+  assert.ok(fs.readFileSync(E.ps5).equals(utf16) && fs.readFileSync(E.ps7).equals(noBom), 'retrait : fichiers identiques');
+});
+
+test('profil UTF-8 avec BOM et CRLF : bloc ajouté puis retiré, BOM et octets d\'origine restitués, aucun avertissement', () => {
+  const E = makeEnv();
+  const original = Buffer.from('﻿# été\r\n$x = 1\r\n', 'utf8');
+  fs.mkdirSync(path.dirname(E.ps5), { recursive: true });
+  fs.writeFileSync(E.ps5, original);
+  const out = ok(apply(E, { welcome: true }));
+  const p5 = out.powershell.profiles.find((p) => p.path === E.ps5);
+  assert.equal(p5.action, 'added', 'bloc ajouté dans le profil existant');
+  assert.equal(p5.warning, undefined);
+  const now = fs.readFileSync(E.ps5);
+  assert.equal(now[0], 0xEF, 'BOM conservée');
+  assert.ok(now.subarray(0, original.length).equals(original), 'contenu d\'origine en tête');
+  ok(cli(E, ['terminal', 'remove']));
+  assert.ok(fs.readFileSync(E.ps5).equals(original), 'retrait : octets d\'origine restitués');
+});
+
+// ── PowerShell 7 : posé seulement si installé ou si son profil existe ─────
+
+test('pwsh absent (ni dans PATH ni sous Program Files\\PowerShell\\7) : profil PowerShell 7 non créé, Windows PowerShell 5.1 seul', () => {
+  const E = makeEnv();
+  E.env.PATH = path.join(E.root, 'vide');
+  const out = ok(apply(E, { welcome: true }));
+  assert.deepEqual(out.powershell.profiles.map((p) => [p.path, p.action]), [[E.ps5, 'created']]);
+  assert.equal(fs.existsSync(E.ps7), false, 'PowerShell\\profile.ps1 non créé');
+  assert.equal(ok(cli(E, ['terminal', 'status'])).powershell.welcome, true, 'statut : accueil posé dans WindowsPowerShell');
+  ok(cli(E, ['terminal', 'remove']));
+  assert.equal(fs.existsSync(E.ps5), false, 'profil créé par Dojo supprimé au retrait');
+});
+
+test('pwsh seulement sous Program Files\\PowerShell\\7 : profil PowerShell 7 créé', () => {
+  const E = makeEnv();
+  E.env.PATH = path.join(E.root, 'vide');
+  fs.mkdirSync(path.join(E.env.ProgramW6432, 'PowerShell', '7'), { recursive: true });
+  const out = ok(apply(E, { welcome: true }));
+  assert.deepEqual(out.powershell.profiles.map((p) => p.action), ['created', 'created']);
+  assert.equal(fs.existsSync(E.ps7), true);
+});
+
+test('profil PowerShell 7 déjà présent sans pwsh installé : bloc posé dedans', () => {
+  const E = makeEnv();
+  E.env.PATH = path.join(E.root, 'vide');
+  fs.mkdirSync(path.dirname(E.ps7), { recursive: true });
+  fs.writeFileSync(E.ps7, '# mon profil 7\r\n');
+  const out = ok(apply(E, { welcome: true }));
+  assert.deepEqual(out.powershell.profiles.map((p) => p.action), ['added', 'created']);
+  assert.equal(hasBlockOf(E.ps7), true);
+});
+
+// ── Dossier Documents : DOJO_DOCUMENTS_DIR ────────────────────────────────
+
+test('DOJO_DOCUMENTS_DIR : profils posés dans ce dossier, rien sous Documents du profil', () => {
+  const E = makeEnv();
+  const docs = path.join(E.root, 'OneDrive', 'Documents');
+  E.env.DOJO_DOCUMENTS_DIR = docs;
+  ok(apply(E, { welcome: true }));
+  const ps5 = path.join(docs, 'WindowsPowerShell', 'profile.ps1');
+  const ps7 = path.join(docs, 'PowerShell', 'profile.ps1');
+  assert.equal(hasBlockOf(ps5), true);
+  assert.equal(hasBlockOf(ps7), true);
+  assert.equal(fs.existsSync(path.join(E.home, 'Documents')), false, 'Documents du profil non créé');
+  assert.equal(ok(cli(E, ['terminal', 'status'])).powershell.profilePath, ps7);
+  ok(cli(E, ['terminal', 'remove']));
+  assert.equal(fs.existsSync(ps5), false);
+  assert.equal(fs.existsSync(ps7), false);
+});
+
 // ── remove ────────────────────────────────────────────────────────────────
 
 test('remove après apply : fragment et dossier claude-dojo retirés, profils créés supprimés, terminal\\ retiré, retour à l\'état initial', () => {
@@ -429,4 +547,35 @@ test('welcome.ps1 sans theme/ : titre seul, sans logo ni erreur, code 0 (le shel
   assert.equal(r.stderr, '');
   assert.doesNotMatch(r.stdout, /LOGO-ALPHA/);
   assert.match(r.stdout.replace(/\x1b\[[0-9;]*m/g, ''), /✦ claude-dojo · alpha/);
+});
+
+test('bloc du profil : accueil ignoré pour -Command, -c, -File, -f, -EncodedCommand, -NonInteractive ; gardé sinon', { skip: IS_WIN ? false : 'Windows PowerShell uniquement' }, () => {
+  const E = makeEnv();
+  ok(apply(E, { welcome: true }));
+  // Ligne lue dans le profil écrit : le test évalue la logique réellement posée, pas une copie.
+  const line = fs.readFileSync(E.ps5, 'utf8').split(/\r?\n/).find((l) => l.startsWith('$dojoBatch = '));
+  assert.ok(line, 'ligne $dojoBatch présente dans le bloc');
+  const cases = [
+    [['powershell.exe', '-NoLogo'], false],
+    [['powershell.exe'], false],
+    [['pwsh.exe', '-NoExit', '-ExecutionPolicy', 'Bypass'], false],
+    [['pwsh.exe', '-NoProfile', '-NoLogo'], false],
+    [['powershell.exe', '-Command', 'ls'], true],
+    [['powershell.exe', '-c', 'ls'], true],
+    [['powershell.exe', '-com', 'ls'], true],
+    [['powershell.exe', '-File', 'x.ps1'], true],
+    [['powershell.exe', '-f', 'x.ps1'], true],
+    [['pwsh.exe', '-EncodedCommand', 'AAAA'], true],
+    [['pwsh.exe', '-e', 'AAAA'], true],
+    [['pwsh.exe', '-ec', 'AAAA'], true],
+    [['powershell.exe', '-NonInteractive'], true],
+    [['powershell.exe', '-noninteractive', '-NoLogo'], true],
+  ];
+  // Premier élément = l'exécutable, comme [Environment]::GetCommandLineArgs().
+  const script = '$res = @(foreach ($c in (ConvertFrom-Json $env:DOJO_CASES)) { $dojoArgs = @($c | Select-Object -Skip 1); '
+    + `${line}; [pscustomobject]@{ batch = $dojoBatch } }); ConvertTo-Json -InputObject $res -Compress`;
+  const r = spawnSync(PS_EXE, ['-NoProfile', '-NonInteractive', '-Command', script],
+    { env: { ...E.env, DOJO_CASES: JSON.stringify(cases.map(([args]) => args)) }, encoding: 'utf8', timeout: 120000 });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual([].concat(JSON.parse(r.stdout)).map((x) => x.batch), cases.map(([, want]) => want));
 });

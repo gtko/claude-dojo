@@ -27,6 +27,7 @@ function cli(home, args, platform = 'win32') {
       USERPROFILE: home,
       HOME: home,
       LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
+      DOJO_DOCUMENTS_DIR: path.join(home, 'Documents'), // profils PowerShell : jamais le vrai Documents (registre)
       DOJO_FORCE_PLATFORM: platform,
       DOJO_SKIP_REGISTRY: '1',
       DOJO_SKIP_EXE: '1',

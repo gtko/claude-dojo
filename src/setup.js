@@ -3060,17 +3060,47 @@ const winWelcomeFile = (T) => path.join(T.dir, WELCOME_PS);
 const localAppData = () => process.env.LOCALAPPDATA || path.join(home(), 'AppData', 'Local');
 const wtFragmentsDir = () => path.join(localAppData(), 'Microsoft', 'Windows Terminal', 'Fragments', 'claude-dojo');
 const wtFragmentFile = () => path.join(wtFragmentsDir(), WT_FRAGMENT);
+// Dossier Documents de l'utilisateur. DOJO_DOCUMENTS_DIR le remplace (tests). Sous Windows : valeur Personal de User Shell
+// Folders (redirection comprise, lue en lecture seule). Repli : <profil>\Documents.
+const PS_SHELL_FOLDERS_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders';
+function regPersonalDir() {
+  let out;
+  try { out = execFileSync(regExe(), ['query', PS_SHELL_FOLDERS_KEY, '/v', 'Personal'], regRunOpts); } catch { return null; }
+  const m = /^\s*Personal\s+REG_(?:EXPAND_SZ|SZ)\s+(.*?)\s*$/m.exec(out);
+  if (!m) return null;
+  const dir = m[1].replace(/%([^%]+)%/g, (all, name) => process.env[name] ?? all);
+  return path.isAbsolute(dir) && !dir.includes('%') ? dir : null;
+}
+const documentsDir = () => {
+  if (process.env.DOJO_DOCUMENTS_DIR) return process.env.DOJO_DOCUMENTS_DIR;
+  return (WIN && regPersonalDir()) || path.join(home(), 'Documents');
+};
 // Profils PowerShell : [PowerShell 7 (Documents\PowerShell), Windows PowerShell 5.1 (Documents\WindowsPowerShell)].
 const psProfiles = () => {
-  const docs = path.join(home(), 'Documents');
+  const docs = documentsDir();
   return [path.join(docs, 'PowerShell', 'profile.ps1'), path.join(docs, 'WindowsPowerShell', 'profile.ps1')];
+};
+// PowerShell 7 installé : pwsh.exe dans PATH, ou dossier Program Files\PowerShell\7.
+const programFiles = () => process.env.ProgramW6432 || process.env.ProgramFiles || path.join('C:\\', 'Program Files');
+function pwshInstalled() {
+  const dirs = (process.env.PATH || '').split(path.delimiter).map((d) => d.replace(/"/g, '')).filter(Boolean);
+  return dirs.some((d) => isFileAt(path.join(d, 'pwsh.exe'))) || isDirAt(path.join(programFiles(), 'PowerShell', '7'));
+}
+// Profils où poser le bloc : Windows PowerShell 5.1 toujours ; PowerShell 7 seulement s'il est installé ou si son profil existe.
+const psTargets = (all = psProfiles()) => {
+  const [ps7, ps5] = all;
+  return pwshInstalled() || fs.existsSync(realFile(ps7)) ? [ps7, ps5] : [ps5];
 };
 // Bloc d'accueil en ASCII seul : Windows PowerShell 5.1 lit un .ps1 sans BOM en ANSI. Le chemin part de USERPROFILE,
 // donc il reste valable même si le nom d'utilisateur contient des caractères non ASCII.
+// Accueil seulement pour une session interactive : pas si la commande porte -Command/-c, -File/-f, -EncodedCommand/-e/-ec
+// ou -NonInteractive (la sortie d'un script ou d'une commande ne doit pas recevoir l'accueil).
 const PS_BLOCK = [
   PS_BEGIN,
   '# Accueil claude-dojo (gere par setup.js : terminal remove le retire). Session interactive seulement.',
-  "if ([Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and $env:DOJO_WELCOME -ne 'off') {",
+  '$dojoArgs = @([Environment]::GetCommandLineArgs() | Select-Object -Skip 1)',
+  "$dojoBatch = @($dojoArgs | Where-Object { $_ -match '^[-/](c|com[a-z]*|f|fi[a-z]*|e|ec|enc[a-z]*|noni[a-z]*)$' }).Count -gt 0",
+  "if ([Environment]::UserInteractive -and -not [Console]::IsOutputRedirected -and -not $dojoBatch -and $env:DOJO_WELCOME -ne 'off') {",
   "  $dojoWelcome = Join-Path $env:USERPROFILE '.config\\claude-dojo\\terminal\\welcome.ps1'",
   '  if (Test-Path -LiteralPath $dojoWelcome) { & $dojoWelcome }',
   '}',
@@ -3213,10 +3243,25 @@ const managedList = (key) => {
   return isObj(v) && Array.isArray(v[key]) ? [...v[key]] : [];
 };
 const setManagedList = (key, list) => setManaged(key, list.length ? list : null);
+// Profil existant qui n'est pas de l'UTF-8 (UTF-16 avec BOM, octets nuls, décodage UTF-8 strict en échec) : Dojo n'y écrit
+// rien. Renvoie la raison, ou null. Un UTF-8 avec ou sans BOM passe.
+function psEncodingProblem(buf) {
+  if (buf.length >= 2 && ((buf[0] === 0xff && buf[1] === 0xfe) || (buf[0] === 0xfe && buf[1] === 0xff))) return 'UTF-16';
+  if (buf.includes(0)) return 'octets nuls';
+  try { new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { return 'non UTF-8'; }
+  return null;
+}
 function applyPsProfiles() {
   const created = new Set(managedList(PS_CREATED));
-  const out = psProfiles().map((file) => {
+  const out = psTargets().map((file) => {
     const existed = fs.existsSync(realFile(file));
+    if (existed) {
+      const why = psEncodingProblem(fs.readFileSync(realFile(file)));
+      if (why) {
+        return { path: file, action: 'skipped', backup: null,
+          warning: `profil non UTF-8 (${why}), ajoutez manuellement dans ${file} :\n${PS_BLOCK.join('\n')}` };
+      }
+    }
     const before = readText(file);
     const r = editConfigFile(file, setPsBlock);
     if (r.changed && !existed) created.add(file);
@@ -3231,6 +3276,11 @@ function removePsProfiles(dryRun) {
   const files = psProfiles();
   const out = files.map((file) => {
     if (!fs.existsSync(realFile(file))) return { path: file, action: 'none', deleted: false, backup: null };
+    const why = psEncodingProblem(fs.readFileSync(realFile(file)));
+    if (why) {
+      return { path: file, action: 'skipped', deleted: false, backup: null,
+        warning: `profil non UTF-8 (${why}), retirez manuellement le bloc « ${PS_BEGIN} » … « ${PS_END} » de ${file}` };
+    }
     const before = readText(file);
     // Fichier créé par Dojo et réduit à rien : supprimé, sans sauvegarde (il n'a jamais eu de contenu utilisateur).
     if (!dryRun && created.includes(file) && stripPsBlocks(before) === '') {
@@ -3246,15 +3296,15 @@ function removePsProfiles(dryRun) {
 
 // Lecture seule : options, fragment et blocs présents, Windows Terminal installé.
 async function terminalStatusWin() {
-  const [ps7, ps5] = psProfiles();
-  const block = (f) => hasPsBlock(readText(f));
+  const all = psProfiles();
+  const [ps7, ps5] = all;
   return {
     ok: true,
     platform: 'win32',
     theme: themesInfo().theme,
     options: terminalOptions(),
     windowsTerminal: { installed: windowsTerminalInstalled(), fragmentsDir: wtFragmentsDir(), applied: wtApplied() },
-    powershell: { profilePath: ps7, windowsPowerShellPath: ps5, welcome: block(ps7) && block(ps5) },
+    powershell: { profilePath: ps7, windowsPowerShellPath: ps5, welcome: psTargets(all).every((f) => hasPsBlock(readText(f))) },
     ghostty: winSkipped(),
     terminalApp: winSkipped(),
   };
