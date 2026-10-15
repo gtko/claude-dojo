@@ -147,7 +147,19 @@ after(async () => {
       if (!(await waitExit(child, 3000))) process.kill(child.pid, 'SIGKILL');
     }
   }
-  if (home) fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  if (!home) return;
+  if (process.platform === 'win32') {
+    // collector.js orphelin (agent déjà sorti) : il garde le dossier de test comme cwd → arrêt par chemin.
+    const ps = `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like '*${home.replace(/'/g, "''")}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
+    require('child_process').spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeout: 15000 });
+  }
+  try {
+    fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  } catch (e) {
+    // Windows : un verrou résiduel sur un dossier temporaire n'est pas un échec du test.
+    if (process.platform !== 'win32') throw e;
+    console.warn(`nettoyage incomplet de ${home} : ${e.code}`);
+  }
 });
 
 // ── Confinement de /themes ───────────────────────────────────────────────
