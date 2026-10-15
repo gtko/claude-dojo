@@ -178,6 +178,14 @@ test('shouldOfferGallery : seulement si la galerie est ouvrable, hasDownloads fa
   assert.equal(chooser.shouldOfferGallery(null, 'naruto', {}, true), false);
 });
 
+test('galerie : action openWindow, charge utile { page, theme } du thème courant, bouton activé', () => {
+  assert.equal(chooser.GALLERY_WINDOW_ACTION, 'openWindow');
+  assert.deepEqual(chooser.galleryPayload('naruto'), { page: 'gallery', theme: 'naruto' });
+  assert.deepEqual(Object.keys(chooser.galleryPayload('naruto')).sort(), ['page', 'theme']);
+  const none = { ok: true, theme: 'naruto', background: null, hasDownloads: false, needsSync: false };
+  assert.equal(chooser.shouldOfferGallery(none, 'naruto', {}, chooser.GALLERY_WINDOW_ACTION !== null), true);
+});
+
 test('errorMessage et messages d application : Error, chaîne ou erreur vide', () => {
   assert.equal(chooser.errorMessage(new Error('fichier introuvable')), 'fichier introuvable');
   assert.equal(chooser.errorMessage('pont indisponible'), 'pont indisponible');

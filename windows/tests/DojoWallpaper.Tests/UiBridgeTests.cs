@@ -21,6 +21,9 @@ namespace DojoWallpaper.Tests
             list.Add(new KeyValuePair<string, Action>("UiBridge : titres, autostart, reloadWallpaper et pickFile routes", OtherNatives));
             list.Add(new KeyValuePair<string, Action>("UiBridge : exception de l'hote devient ok:false", HostException));
             list.Add(new KeyValuePair<string, Action>("UiBridge : IsTrustedUrl n'accepte que https://dojo-ui.local/", TrustedUrl));
+            list.Add(new KeyValuePair<string, Action>("UiBridge : openWindow, page inconnue et theme invalide refusees sans appel a l'hote", OpenWindowRefusals));
+            list.Add(new KeyValuePair<string, Action>("UiBridge : openWindow, page de la liste blanche et theme optionnel routes", OpenWindowDispatch));
+            list.Add(new KeyValuePair<string, Action>("UiBridge : identifiant de theme (regex) et query ?theme= reservee a la galerie", ThemeIdAndQuery));
             list.Add(new KeyValuePair<string, Action>("UiLayout : pages et recherche par nom", LayoutPages));
             list.Add(new KeyValuePair<string, Action>("UiLayout : dossier windows\\ui trouve depuis bin ou build", LayoutUiDir));
             list.Add(new KeyValuePair<string, Action>("UiLayout : dossier d'installation comme setup.js", LayoutInstall));
@@ -95,6 +98,12 @@ namespace DojoWallpaper.Tests
             public IDictionary<string, object> ReloadWallpaper()
             {
                 Events.Add("reloadWallpaper");
+                return Obj("ok", true);
+            }
+
+            public IDictionary<string, object> OpenWindow(string page, string theme)
+            {
+                Events.Add("openWindow:" + page + ":" + (theme ?? "-"));
                 return Obj("ok", true);
             }
         }
@@ -289,6 +298,70 @@ namespace DojoWallpaper.Tests
             Assert.IsFalse(UiBridge.IsTrustedUrl("https://evil.com/dojo-ui.local"), "chemin piege");
             Assert.IsFalse(UiBridge.IsTrustedUrl("https://dojo-themes.local/a/b.png"), "autre hote mappe");
             Assert.IsFalse(UiBridge.IsTrustedUrl(null), "null");
+        }
+
+        private static string OpenWindowMessage(int id, string payload)
+        {
+            return "{\"id\":" + id + ",\"kind\":\"native\",\"action\":\"openWindow\",\"payload\":" + payload + "}";
+        }
+
+        private static void OpenWindowRefusals()
+        {
+            var host = new FakeHost();
+            int posts;
+            string tooLong = "a" + new string('b', 40);
+            string[] refused =
+            {
+                "{\"page\":\"nope\"}",
+                "{\"page\":\"Themes\"}",
+                "{\"page\":\"../themes\"}",
+                "{}",
+                "{\"page\":7}",
+                "{\"page\":\"gallery\",\"theme\":\"Naruto\"}",
+                "{\"page\":\"gallery\",\"theme\":\"../etc\"}",
+                "{\"page\":\"gallery\",\"theme\":\"\"}",
+                "{\"page\":\"gallery\",\"theme\":\"-naruto\"}",
+                "{\"page\":\"gallery\",\"theme\":\"" + tooLong + "\"}",
+                "{\"page\":\"gallery\",\"theme\":7}",
+                "{\"page\":\"themes\",\"theme\":true}",
+            };
+            foreach (string payload in refused)
+            {
+                IDictionary<string, object> result = Result(Send(host, UiSource, OpenWindowMessage(16, payload), out posts));
+                Assert.IsFalse((bool)result["ok"], "refus : " + payload);
+                Assert.IsTrue(((string)result["error"]).Length > 0, "message lisible : " + payload);
+            }
+            Assert.AreEqual(0, host.Events.Count, "l'hote n'ouvre rien");
+        }
+
+        private static void OpenWindowDispatch()
+        {
+            var host = new FakeHost();
+            int posts;
+            IDictionary<string, object> gallery = Result(Send(host, UiSource, OpenWindowMessage(17, "{\"page\":\"gallery\",\"theme\":\"naruto\"}"), out posts));
+            Assert.IsTrue((bool)gallery["ok"], "galerie avec theme");
+            IDictionary<string, object> themes = Result(Send(host, UiSource, OpenWindowMessage(18, "{\"page\":\"themes\"}"), out posts));
+            Assert.IsTrue((bool)themes["ok"], "page themes sans theme");
+            IDictionary<string, object> wizard = Result(Send(host, UiSource, OpenWindowMessage(19, "{\"page\":\"wizard\",\"theme\":null}"), out posts));
+            Assert.IsTrue((bool)wizard["ok"], "assistant, theme nul");
+            IDictionary<string, object> edge = Result(Send(host, UiSource, OpenWindowMessage(20, "{\"page\":\"gallery\",\"theme\":\"a" + new string('0', 39) + "\"}"), out posts));
+            Assert.IsTrue((bool)edge["ok"], "theme de 40 caracteres accepte");
+
+            string expected = "openWindow:gallery:naruto|openWindow:themes:-|openWindow:wizard:-|openWindow:gallery:a" + new string('0', 39);
+            Assert.AreEqual(expected, string.Join("|", host.Events), "pages et themes transmis à l'hôte");
+        }
+
+        private static void ThemeIdAndQuery()
+        {
+            Assert.IsTrue(UiBridge.IsValidThemeId("naruto"), "nom simple");
+            Assert.IsTrue(UiBridge.IsValidThemeId("dojo_2-x"), "tiret et souligné");
+            Assert.IsFalse(UiBridge.IsValidThemeId("naruto\n"), "saut de ligne final refusé");
+            Assert.IsFalse(UiBridge.IsValidThemeId("naruto&x=1"), "caractère de query refusé");
+            Assert.IsFalse(UiBridge.IsValidThemeId(null), "null");
+
+            Assert.AreEqual("?theme=naruto", UiBridge.WindowQuery("gallery", "naruto"), "query de la galerie");
+            Assert.AreEqual(string.Empty, UiBridge.WindowQuery("gallery", null), "galerie sans theme");
+            Assert.AreEqual(string.Empty, UiBridge.WindowQuery("themes", "naruto"), "pas de query hors galerie");
         }
 
         private static void LayoutPages()

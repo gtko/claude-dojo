@@ -26,13 +26,15 @@ namespace DojoWallpaper
         public static Action WallpaperReload;
 
         private readonly string _page;
+        private string _query;
         private readonly WebView2 _web;
         private readonly UiBridge _bridge;
         private readonly bool _debug;
 
-        private UiWindow(string page, string title, Size size, Size minSize)
+        private UiWindow(string page, string title, Size size, Size minSize, string query)
         {
             _page = page;
+            _query = query;
             _debug = Environment.GetEnvironmentVariable("DOJO_UI_DEBUG") == "1";
             Text = title;
             StartPosition = FormStartPosition.CenterScreen;
@@ -59,6 +61,12 @@ namespace DojoWallpaper
         // Ouvre la page (ou la ramene au premier plan si elle est deja ouverte).
         public static void Open(string page, string title, Size size, Size minSize)
         {
+            Open(page, title, size, minSize, string.Empty);
+        }
+
+        // query : « ?theme=<id> » pour la galerie (UiBridge.WindowQuery), vide sinon. Fenetre deja ouverte : rechargee si la query change.
+        public static void Open(string page, string title, Size size, Size minSize, string query)
+        {
             UiWindow existing;
             if (Windows.TryGetValue(page, out existing) && !existing.IsDisposed)
             {
@@ -69,12 +77,33 @@ namespace DojoWallpaper
                 existing.Show();
                 existing.Activate();
                 existing.BringToFront();
+                existing.NavigateTo(query ?? string.Empty);
                 return;
             }
 
-            var window = new UiWindow(page, title, size, minSize);
+            var window = new UiWindow(page, title, size, minSize, query ?? string.Empty);
             Windows[page] = window;
             window.Show();
+        }
+
+        private string PageUrl()
+        {
+            return "https://" + UiBridge.UiHost + "/" + _page + _query;
+        }
+
+        // Autre theme pour une fenetre deja ouverte : navigation vers la nouvelle URL. Sans theme (menu), la page reste en place.
+        private void NavigateTo(string query)
+        {
+            if (query.Length == 0 || string.Equals(_query, query, StringComparison.Ordinal))
+            {
+                return;
+            }
+            _query = query;
+            CoreWebView2 core = _web.CoreWebView2;
+            if (core != null)
+            {
+                core.Navigate(PageUrl());
+            }
         }
 
         private async void InitializeAsync()
@@ -107,7 +136,7 @@ namespace DojoWallpaper
                 core.NavigationStarting += OnNavigationStarting;
                 core.NewWindowRequested += OnNewWindowRequested;
                 core.WebMessageReceived += OnWebMessage;
-                core.Navigate("https://" + UiBridge.UiHost + "/" + _page);
+                core.Navigate(PageUrl());
                 DojoLog.Write("interface : " + _page + " (ouverte)");
             }
             catch (Exception ex)
@@ -301,6 +330,35 @@ namespace DojoWallpaper
                     return Obj("ok", true, "noop", true);
                 }
                 reload();
+                return Obj("ok", true);
+            }
+
+            // Ouverture sur le thread UI : le pont y tourne deja (WebMessageReceived), Invoke couvre le cas contraire.
+            public IDictionary<string, object> OpenWindow(string page, string theme)
+            {
+                try
+                {
+                    if (_owner.InvokeRequired)
+                    {
+                        return (IDictionary<string, object>)_owner.Invoke(new Func<IDictionary<string, object>>(() => OpenPage(page, theme)));
+                    }
+                    return OpenPage(page, theme);
+                }
+                catch (Exception ex)
+                {
+                    return Obj("ok", false, "error", "ouverture impossible : " + ex.Message);
+                }
+            }
+
+            // Meme chemin que le menu (DojoApp.OnUiRequested) : UiLayout.Find puis UiWindow.Open avec titre et tailles.
+            private static IDictionary<string, object> OpenPage(string page, string theme)
+            {
+                UiPage info = UiLayout.Find(page);
+                if (info == null)
+                {
+                    return Obj("ok", false, "error", "page inconnue.");
+                }
+                UiWindow.Open(info.File, info.Title, info.Size, info.MinSize, UiBridge.WindowQuery(info.Key, theme));
                 return Obj("ok", true);
             }
         }

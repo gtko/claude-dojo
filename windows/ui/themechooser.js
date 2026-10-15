@@ -9,8 +9,8 @@
   // Nom d'un fichier de la galerie Wallhaven (setup.js) : son identifiant désigne le fond téléchargé.
   var GALLERY_FILE_RE = /^wallhaven-([a-z0-9]{4,10})\.(jpg|jpeg|png|webp)$/;
   var TERMINAL_KEYS = ['windowsTerminal', 'welcome'];
-  // Action native d'ouverture de la galerie : UiBridge.cs ne la connaît pas encore. Tant qu'elle manque, le bouton reste désactivé.
-  var GALLERY_WINDOW_ACTION = null;
+  // Action native d'ouverture d'une page de l'interface (UiBridge.cs, openWindow) : payload { page, theme }.
+  var GALLERY_WINDOW_ACTION = 'openWindow';
 
   var TEXT = {
     title: 'Thème',
@@ -192,6 +192,11 @@
     return !!available && !!res && res.hasDownloads === false && !(prompted && prompted[themeId]);
   }
 
+  // Charge utile de l'ouverture de la galerie pour un thème (le thème est validé côté UiBridge.cs).
+  function galleryPayload(themeId) {
+    return { page: 'gallery', theme: themeId };
+  }
+
   var api = {
     basename: basename,
     errorMessage: errorMessage,
@@ -209,6 +214,8 @@
     buildSelection: buildSelection,
     buildApplyPlan: buildApplyPlan,
     shouldOfferGallery: shouldOfferGallery,
+    galleryPayload: galleryPayload,
+    GALLERY_WINDOW_ACTION: GALLERY_WINDOW_ACTION,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
@@ -372,7 +379,7 @@
     var galleryBtn = el('button', { type: 'button', className: 'btn' }, [TEXT.gallery]);
     pickBtn.addEventListener('click', chooseFile);
     themeBtn.addEventListener('click', useThemeBackground);
-    galleryBtn.addEventListener('click', openGallery);
+    galleryBtn.addEventListener('click', function () { openGallery(st.theme); });
     var band = el('div', { className: 'tc-band', role: 'radiogroup', 'aria-label': TEXT.bg });
     var bandNote = el('p', { className: 'tc-note hidden' });
     var preview = el('div', { className: 'tc-preview' });
@@ -470,7 +477,7 @@
       var bg = st.background;
       pickBtn.disabled = st.busy;
       themeBtn.disabled = st.busy || bg.kind === 'theme';
-      galleryBtn.disabled = st.busy || GALLERY_WINDOW_ACTION === null;
+      galleryBtn.disabled = st.busy || GALLERY_WINDOW_ACTION === null || !st.theme;
       galleryBtn.title = GALLERY_WINDOW_ACTION === null ? TEXT.galleryHint : '';
       markRadios(st.bandCards, bg.kind === 'wallhaven' ? bg.id : null);
       var msg = st.downloadsError ? TEXT.downloadsFailed + st.downloadsError
@@ -513,11 +520,11 @@
       notice.textContent = text || '';
     }
 
-    function showGalleryPrompt() {
+    function showGalleryPrompt(themeId) {
       var later = el('button', { type: 'button', className: 'btn' }, [TEXT.later]);
       var open = el('button', { type: 'button', className: 'btn btn-primary' }, [TEXT.open]);
       later.addEventListener('click', hidePrompt);
-      open.addEventListener('click', function () { hidePrompt(); openGallery(); });
+      open.addEventListener('click', function () { hidePrompt(); openGallery(themeId); });
       prompt.replaceChildren(el('div', { className: 'notice tc-prompt-row' }, [
         el('span', {}, [TEXT.galleryAsk]),
         el('span', { className: 'spacer' }),
@@ -737,10 +744,10 @@
         });
     }
 
-    function openGallery() {
-      if (st.busy || GALLERY_WINDOW_ACTION === null) return;
+    function openGallery(themeId) {
+      if (st.busy || GALLERY_WINDOW_ACTION === null || !themeId) return;
       Promise.resolve()
-        .then(function () { return bridge().native(GALLERY_WINDOW_ACTION, { page: 'gallery' }); })
+        .then(function () { return bridge().native(GALLERY_WINDOW_ACTION, galleryPayload(themeId)); })
         .catch(function (err) { setNotice('error', 'Galerie indisponible : ' + errorMessage(err)); });
     }
 
@@ -784,7 +791,7 @@
         setNotice('ok', TEXT.applied);
         if (shouldOfferGallery(setThemeRes, selection.theme, st.prompted, GALLERY_WINDOW_ACTION !== null)) {
           st.prompted[selection.theme] = true;
-          showGalleryPrompt();
+          showGalleryPrompt(selection.theme);
         }
       } catch (err) {
         if (!st.destroyed) setNotice('error', applyFailureText(err));

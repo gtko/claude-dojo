@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace DojoWallpaper
@@ -19,6 +20,8 @@ namespace DojoWallpaper
         IDictionary<string, object> GetAutostart();
         IDictionary<string, object> SetAutostart(bool enabled);
         IDictionary<string, object> ReloadWallpaper();
+        // Ouvre une page de l'interface (memes tailles et titres que le menu). theme : null ou identifiant valide.
+        IDictionary<string, object> OpenWindow(string page, string theme);
     }
 
     // Pont JS <-> C# : routage des messages { id, kind:'cmd' | 'native', ... } et reponses { id, result }.
@@ -30,6 +33,9 @@ namespace DojoWallpaper
         public const string BackgroundHost = "dojo-bg.local";
         public const int MaxTitleLength = 200;
         public const int MaxUrlLength = 2048;
+
+        // Identifiant de thème (openWindow) : \z et non $, pour refuser un saut de ligne final.
+        private static readonly Regex ThemeIdPattern = new Regex(@"^[a-z0-9][a-z0-9_-]{0,39}\z", RegexOptions.CultureInvariant);
 
         // Hotes externes ouvrables (openUrl), en https uniquement.
         public static readonly string[] AllowedUrlHosts =
@@ -54,6 +60,20 @@ namespace DojoWallpaper
             }
             _host = host;
             _post = post;
+        }
+
+        // Identifiant de thème valide (forme du dossier de thème, 1 à 40 caractères).
+        public static bool IsValidThemeId(string theme)
+        {
+            return theme != null && ThemeIdPattern.IsMatch(theme);
+        }
+
+        // Query de l'URL d'une page : seule la galerie reçoit le thème (?theme=<id>). Le thème doit déjà être validé.
+        public static string WindowQuery(string page, string theme)
+        {
+            return string.Equals(page, "gallery", StringComparison.Ordinal) && !string.IsNullOrEmpty(theme)
+                ? "?theme=" + theme
+                : string.Empty;
         }
 
         // Vrai pour une URL https://dojo-ui.local/... (pages de l'interface uniquement).
@@ -191,6 +211,8 @@ namespace DojoWallpaper
                         return _host.SetAutostart((bool)enabled);
                     case "reloadWallpaper":
                         return _host.ReloadWallpaper();
+                    case "openWindow":
+                        return OpenWindow(payload);
                     default:
                         return Fail("action native inconnue : " + action + ".");
                 }
@@ -203,6 +225,27 @@ namespace DojoWallpaper
             {
                 return Fail("erreur interne : " + ex.Message);
             }
+        }
+
+        // openWindow : page de la liste blanche (UiLayout.Pages), theme optionnel valide. Refus avant tout appel a l'hote.
+        private IDictionary<string, object> OpenWindow(IDictionary<string, object> payload)
+        {
+            string page = Get(payload, "page") as string;
+            if (UiLayout.Find(page) == null)
+            {
+                return Fail("page inconnue.");
+            }
+            object themeValue = Get(payload, "theme");
+            string theme = null;
+            if (themeValue != null)
+            {
+                theme = themeValue as string;
+                if (!IsValidThemeId(theme))
+                {
+                    return Fail("identifiant de thème invalide.");
+                }
+            }
+            return _host.OpenWindow(page, theme);
         }
 
         // Arguments JS : chaines, ou entiers (ex. page) convertis en texte. Autres types refuses.
