@@ -46,3 +46,58 @@ jobs:
             dist/ClaudeDojo-${{ steps.version.outputs.value }}.dmg
             dist/ClaudeDojo-${{ steps.version.outputs.value }}.dmg.sha256
           generate_release_notes: true
+
+  windows:
+    name: Build the Windows zip and publish it to the GitHub Release
+    runs-on: windows-latest
+    # Waits for the macOS job, which creates the release. Two jobs creating the
+    # same release in parallel could race.
+    needs: release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Build DojoWallpaper.exe
+        shell: pwsh
+        run: pwsh -File windows/build.ps1
+
+      - name: Package windows\bin as a zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bin = Join-Path $env:GITHUB_WORKSPACE 'windows\bin'
+          $zip = Join-Path $env:GITHUB_WORKSPACE 'dist\DojoWallpaper-windows-x64.zip'
+          if (-not (Test-Path -LiteralPath (Join-Path $bin 'DojoWallpaper.exe'))) { throw "DojoWallpaper.exe absent de $bin" }
+          New-Item -ItemType Directory -Force -Path (Split-Path -Parent $zip) | Out-Null
+          Compress-Archive -Path (Join-Path $bin '*') -DestinationPath $zip -Force
+
+          # Check that the archive holds the exe and its WebView2 dependencies.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+            $entries = @($archive.Entries | ForEach-Object { $_.FullName })
+          }
+          finally {
+            $archive.Dispose()
+          }
+          foreach ($want in 'DojoWallpaper.exe', 'Microsoft.Web.WebView2.Core.dll', 'runtimes/win-x64/native/WebView2Loader.dll') {
+            if ($entries -notcontains $want) { throw "Entree absente du zip : $want" }
+          }
+          Write-Host "Archive OK ($($entries.Count) entrees)"
+
+      - name: Write SHA-256 checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip="DojoWallpaper-windows-x64.zip"
+          cd dist
+          sha256sum "$zip" > "$zip.sha256"
+          sha256sum -c "$zip.sha256"
+
+      - name: Publish zip and its checksum to the GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          files: |
+            dist/DojoWallpaper-windows-x64.zip
+            dist/DojoWallpaper-windows-x64.zip.sha256
+          fail_on_unmatched_files: true

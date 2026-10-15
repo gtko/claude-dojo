@@ -88,6 +88,7 @@ before(async () => {
   bgDir = path.join(runtime, 'backgrounds');
   fs.mkdirSync(bgDir, { recursive: true });
   fs.copyFileSync(path.join(SRC, 'agent-mac.js'), path.join(runtime, 'agent-mac.js'));
+  fs.copyFileSync(path.join(SRC, 'agent-core.js'), path.join(runtime, 'agent-core.js'));
   fs.copyFileSync(path.join(SRC, 'collector.js'), path.join(runtime, 'collector.js'));
   fs.cpSync(path.join(SRC, 'wallpaper'), path.join(runtime, 'wallpaper'), { recursive: true });
   fs.cpSync(path.join(SRC, 'themes'), path.join(runtime, 'themes'), { recursive: true });
@@ -126,7 +127,8 @@ before(async () => {
 
   PORT = await freePort();
   child = spawn(process.execPath, [path.join(runtime, 'agent-mac.js')], {
-    env: { ...process.env, HOME: home, DOJO_PORT: String(PORT) },
+    // USERPROFILE aussi : sous Windows, os.homedir() (lu par l'agent) ne regarde que USERPROFILE.
+    env: { ...process.env, HOME: home, USERPROFILE: home, DOJO_PORT: String(PORT) },
     stdio: 'ignore',
   });
   await waitReady(child);
@@ -135,10 +137,17 @@ before(async () => {
 // Arrêt par PID : SIGTERM (l'agent arrête ses enfants), SIGKILL en filet de sécurité.
 after(async () => {
   if (child && child.exitCode === null && child.signalCode === null) {
-    process.kill(child.pid, 'SIGTERM');
-    if (!(await waitExit(child, 3000))) process.kill(child.pid, 'SIGKILL');
+    if (process.platform === 'win32') {
+      // Windows : pas de SIGTERM transmis, l'agent ne peut pas arrêter ses enfants (collector.js
+      // garde le dossier ouvert) → arrêt de l'arbre par PID.
+      require('child_process').spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F']);
+      await waitExit(child, 3000);
+    } else {
+      process.kill(child.pid, 'SIGTERM');
+      if (!(await waitExit(child, 3000))) process.kill(child.pid, 'SIGKILL');
+    }
   }
-  if (home) fs.rmSync(home, { recursive: true, force: true });
+  if (home) fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 // ── Confinement de /themes ───────────────────────────────────────────────

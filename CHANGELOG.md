@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Windows: a desktop wallpaper, `DojoWallpaper.exe` (WinForms and WebView2), that shows the same page as on macOS, fed by the same local agent. It is installed from the command line with `install.ps1` and removed with `uninstall.ps1`, without administrator rights. Autostart uses the `HKCU` Run key.
+- Windows agent (`src/agent-win.js`): processes, network, disks, local servers, CPU and memory, battery, and temperatures from the optional LibreHardwareMonitor web server on port 8085.
+- Windows: the current track comes from the Windows media session (`src/win-media.js` and `src/windows/media.ps1`).
+- Windows: the wallpaper pauses when a window covers the screen (full screen or maximized), on battery and in battery saver mode. The tray menu has a manual pause.
+- Windows: the window zone, the terminal themes and the wallpaper gallery are macOS only.
+- heavy-gate: on Windows, the hook also checks `PowerShell` commands (matcher `Bash|PowerShell`).
+- Release: each `v*` tag publishes `DojoWallpaper-windows-x64.zip` with its `.sha256` file, next to the DMG.
+- CI: a Windows job runs the Node.js tests, builds and tests `DojoWallpaper.exe`, and installs and uninstalls in a temporary profile.
+
+### Changed
+
+- The portable core of the agent is in `src/agent-core.js`. The macOS and Windows samplers are in `src/agent-mac.js` and `src/agent-win.js`.
+- `setup.js` installs and uninstalls the Windows parts (autostart values, launcher, Claude Code settings and `DojoWallpaper.exe`), and skips the macOS-only terminal parts on Windows.
+- The unit tests run on Windows as well as macOS.
+
 ## [0.2.1] - 2026-10-15
 
 ### Fixed

@@ -165,9 +165,11 @@
   body.mirror #dock { left: calc(418px + var(--safe-left)); right: calc(530px + var(--safe-right)); }
   /* musique en cours dans l'encoche (remplace le lecteur du bas) */
   #hm { display: none; }
-  body.notch #hero { grid-template-columns: auto auto 1fr; width: 720px; }
-  body.notch #musicCard { display: none !important; }
-  body.notch #hm { display: flex; gap: 11px; align-items: center; min-width: 0; border-left: 1px solid rgba(255, 255, 255, .08); padding-left: 18px; }
+  /* « topmusic » : Mac à encoche et Windows (pas d'encoche, bandeau vitré standard) */
+  body.topmusic #hero { grid-template-columns: auto auto 1fr; width: 820px; }
+  body.notch #hero { width: 720px; }
+  body.topmusic #musicCard { display: none !important; }
+  body.topmusic #hm { display: flex; gap: 11px; align-items: center; min-width: 0; border-left: 1px solid rgba(255, 255, 255, .08); padding-left: 18px; }
   #hm .cv { width: 56px; height: 56px; flex: none; border-radius: 10px; background: #1b1c24 center / cover no-repeat; display: grid; place-items: center; color: var(--dim); font-size: 22px; }
   #hm .tx { min-width: 0; flex: 1; }
   #hm .ti { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -490,6 +492,7 @@ const DEMO_THEME = (/^#demo:([a-z0-9-]+)$/.exec(location.hash) || [])[1] || null
 // Même page sur les deux OS : Windows (Lively + agent.ps1) et macOS (DojoWallpaper.app + agent-mac.js).
 // Les réglages propres au Mac (encoche, miroir, Stage Manager) n'arrivent que via setSafe(), appelé par l'app Mac.
 const OS = /Mac/i.test(navigator.platform || navigator.userAgent) ? 'mac' : 'win';
+document.body.classList.toggle('topmusic', OS === 'win');   // Windows : lecteur dans le bandeau météo, même sans setSafe
 document.documentElement.classList.add('os-' + OS);
 const $ = (id) => document.getElementById(id);
 const nf1 = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1, minimumFractionDigits: 1 });
@@ -1638,6 +1641,7 @@ function setSafe(o) {
   safeBottom = o.bottom || 0;
   r.setProperty('--notch-h', (o.notchH || 0) + 'px');
   document.body.classList.toggle('notch', !!o.notchW);
+  document.body.classList.toggle('topmusic', !!o.notchW || OS === 'win');
   document.body.classList.toggle('mirror', !!o.mirror);
   fit();
 }

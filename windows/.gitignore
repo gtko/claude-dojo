@@ -1,0 +1,12 @@
+# Intermediaires de build (regenerables par build.ps1)
+obj/
+build/
+.vs/
+*.user
+TestResults/
+
+# bin/ : sortie de build.ps1 (exe + dependances), regenerable, non versionnee.
+bin/
+
+# Config runtime : creee a cote de l'exe au premier lancement (ne pas versionner).
+bin/dojo-wallpaper.json*

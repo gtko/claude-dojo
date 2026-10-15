@@ -8,3 +8,7 @@ config.json
 dist/
 build/
 __pycache__/
+
+# windows/ (DojoWallpaper) : sorties de build.ps1, regenerables (build/ est deja couvert plus haut).
+windows/**/bin/
+windows/**/obj/

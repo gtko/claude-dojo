@@ -10,6 +10,7 @@ const { spawnSync } = require('child_process');
 
 const REPO = path.resolve(__dirname, '..');
 const SETUP = path.join(REPO, 'src', 'setup.js');
+const IS_WIN = process.platform === 'win32';
 
 function tmpHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'dojo-test-'));
@@ -19,9 +20,10 @@ function tmpHome() {
 const appDirsOf = (home) => [path.join(home, 'Applications'), path.join(home, 'SysApplications')].join(path.delimiter);
 
 // Lance le CLI avec HOME temporaire. Renvoie { code, out (JSON parsé), raw }.
+// USERPROFILE suit HOME : sous Windows, os.homedir() ne lit que USERPROFILE.
 function cli(home, args, { input, env = {} } = {}) {
   const r = spawnSync(process.execPath, [SETUP, ...args], {
-    env: { ...process.env, HOME: home, DOJO_DETECT_NO_GH_AUTH: '1', DOJO_APPS_DIRS: appDirsOf(home), ...env },
+    env: { ...process.env, HOME: home, USERPROFILE: home, DOJO_DETECT_NO_GH_AUTH: '1', DOJO_APPS_DIRS: appDirsOf(home), ...env },
     input,
     encoding: 'utf8',
     timeout: 60000,
@@ -92,9 +94,10 @@ test('merge-settings garde les clés utilisateur et ajoute les hooks dojo', () =
   assert.ok(s.hooks.PreToolUse.some((g) => g.hooks.some((h) => h.command === '/tools/guard.sh')));
   assert.ok(s.hooks.PreToolUse.some((g) => g.hooks.some((h) => h.command === 'node /perso/heavy-gate.js')), 'heavy-gate perso intact');
   for (const ev of ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Notification', 'Stop', 'SessionEnd']) {
-    assert.ok(s.hooks[ev].some((g) => g.hooks.some((h) => h.command.includes('claude-dojo/hook.js'))), `hook dojo sous ${ev}`);
+    assert.ok(s.hooks[ev].some((g) => g.hooks.some((h) => h.command.includes(path.join('claude-dojo', 'hook.js')))), `hook dojo sous ${ev}`);
   }
-  assert.ok(s.hooks.PreToolUse.some((g) => g.hooks.some((h) => h.command.includes('claude-dojo/heavy-gate.js'))));
+  // path.join : sous Windows, les commandes portent des antislashes (séparateur natif).
+  assert.ok(s.hooks.PreToolUse.some((g) => g.hooks.some((h) => h.command.includes(path.join('claude-dojo', 'heavy-gate.js')))));
   assert.equal(s.statusLine.command, '/usr/bin/other-statusline --compact');
 });
 
@@ -121,7 +124,7 @@ test('merge-settings est idempotent : deux passes = même fichier, pas de doublo
   }
 });
 
-test('chemin ordinaire : commandes identiques à celles d avant le correctif, settings déjà installé inchangé', () => {
+test('chemin ordinaire : commandes identiques à celles d avant le correctif, settings déjà installé inchangé', { skip: IS_WIN && 'commandes au format POSIX (chemins avec /, échappement sh) : format Windows différent' }, () => {
   const home = tmpHome();
   const node = path.join(fs.realpathSync(path.dirname(process.execPath)), path.basename(process.execPath));
   const dojo = path.join(home, '.config', 'claude-dojo');
@@ -135,7 +138,7 @@ test('chemin ordinaire : commandes identiques à celles d avant le correctif, se
   assert.equal(r.out.backup, null);
 });
 
-test('commandes dojo évaluées par sh -c : HOME avec espace, guillemets, $ et apostrophe, arguments reçus intacts', () => {
+test('commandes dojo évaluées par sh -c : HOME avec espace, guillemets, $ et apostrophe, arguments reçus intacts', { skip: IS_WIN && 'sh -c et shebang POSIX ; le guillemet est interdit dans un nom de dossier Windows' }, () => {
   const base = tmpHome();
   const home = path.join(base, `mon "dossier" $HOME 'perso'`);
   fs.mkdirSync(home, { recursive: true });
@@ -239,14 +242,17 @@ test('write-config : mode 0600 (dossier 0700), fusion profonde, clés inconnues 
     sentry: { token: 'tok-123', org: 'acme' },
   })]);
   assert.equal(first.code, 0, first.raw);
-  assert.equal(first.out.mode, '0600');
+  if (!IS_WIN) assert.equal(first.out.mode, '0600'); // sous Windows, src/setup.js rend mode: null (pas de bits POSIX)
   assert.ok(!first.raw.includes('tok-123'), 'le jeton n est jamais renvoyé');
   const file = configFile(home);
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
-  assert.equal(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
+  if (!IS_WIN) { // Windows n'a pas de bits POSIX : fs.statSync rend toujours 0666/0777
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(path.dirname(file)).mode & 0o777, 0o700);
+  }
   let cfg = readJson(file);
   assert.equal(cfg.weather.lat, 48.8566, 'lat convertie en nombre');
-  assert.equal(cfg.projects.roots[0], path.join(home, 'Projects'), '~ développé');
+  // path.normalize : sous Windows, ~ est remplacé par concaténation (séparateurs mélangés), même dossier.
+  assert.equal(path.normalize(cfg.projects.roots[0]), path.join(home, 'Projects'), '~ développé');
 
   // Clé inconnue ajoutée à la main : doit survivre à write-config
   cfg.custom = { keep: true };
@@ -258,7 +264,7 @@ test('write-config : mode 0600 (dossier 0700), fusion profonde, clés inconnues 
   assert.equal(cfg.sentry.org, 'other');
   assert.equal(cfg.sentry.token, 'tok-123', 'fusion profonde : token conservé');
   assert.equal(cfg.calendars, undefined, 'null retire la section');
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  if (!IS_WIN) assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 });
 
 test('write-config : weather remplacée en entier (pas de fuseau d une ancienne ville), null la retire', () => {
@@ -293,7 +299,7 @@ test('write-config lit le JSON sur stdin avec -', () => {
   assert.deepEqual(readJson(configFile(home)).github, { owners: ['bob'] });
 });
 
-test('launchagents --dry-run : plists corrects, chemin node, XML échappé, aucun fichier écrit', () => {
+test('launchagents --dry-run : plists corrects, chemin node, XML échappé, aucun fichier écrit', { skip: IS_WIN && 'launchd : macOS uniquement' }, () => {
   const home = tmpHome();
   const node = '/opt/a&b/<node>/bin/node';
   const r = cli(home, ['launchagents', 'install', JSON.stringify({ dryRun: true, node })]);
@@ -318,7 +324,7 @@ test('launchagents install refuse une commande inconnue', () => {
   assert.equal(r.out.ok, false);
 });
 
-test('launchagents --dry-run : migrated liste les anciens labels qui seraient retirés, sans rien supprimer', () => {
+test('launchagents --dry-run : migrated liste les anciens labels qui seraient retirés, sans rien supprimer', { skip: IS_WIN && 'launchd : macOS uniquement' }, () => {
   const home = tmpHome();
   const dir = path.join(home, 'Library', 'LaunchAgents');
   const old = ['com.old.claude-dojo.agent', 'com.old.claude-dojo.wallpaper'];
@@ -429,7 +435,8 @@ test('install-files ne suit pas les liens internes : recopiés comme liens, cibl
   assert.equal(r.code, 0, r.raw);
   const copy = path.join(home, '.config', 'claude-dojo', 'node_modules', '.bin', 'tool');
   assert.ok(fs.lstatSync(copy).isSymbolicLink(), 'lien conservé tel quel');
-  assert.equal(fs.readlinkSync(copy), '../pkg/index.js');
+  // path.normalize : Windows rend la cible avec des antislashes (même lien, séparateur natif).
+  assert.equal(path.normalize(fs.readlinkSync(copy)), path.normalize('../pkg/index.js'));
   assert.equal(fs.readFileSync(copy, 'utf8'), 'module.exports = 1;');
 });
 
@@ -456,7 +463,7 @@ function fakeApp(dir) {
   return bundle;
 }
 
-test('uninstall retire aussi le bundle du dossier système quand il est inscriptible', () => {
+test('uninstall retire aussi le bundle du dossier système quand il est inscriptible', { skip: IS_WIN && 'bundles .app macOS : uninstall Windows supprime le dossier de l exe' }, () => {
   const home = tmpHome();
   const mainApp = fakeApp(path.join(home, 'Applications'));
   const sysApp = fakeApp(path.join(home, 'SysApplications'));
@@ -468,7 +475,7 @@ test('uninstall retire aussi le bundle du dossier système quand il est inscript
   assert.equal(fs.existsSync(sysApp), false);
 });
 
-test('uninstall : bundle dans un dossier non inscriptible laissé en place, signalé dans appRemaining', (t) => {
+test('uninstall : bundle dans un dossier non inscriptible laissé en place, signalé dans appRemaining', { skip: IS_WIN && 'chmod 0555 sans effet sous Windows : dossier toujours inscriptible' }, (t) => {
   if (process.getuid && process.getuid() === 0) return t.skip('root peut écrire partout');
   const home = tmpHome();
   const sys = path.join(home, 'SysApplications');
@@ -515,7 +522,7 @@ test('commande inconnue et sans argument : erreur propre en JSON', () => {
 
 test('setup.js n utilise que des modules natifs (zéro dépendance)', () => {
   const src = fs.readFileSync(SETUP, 'utf8');
-  const allowed = new Set(['fs', 'os', 'path', 'http', 'child_process', 'crypto']);
+  const allowed = new Set(['fs', 'os', 'path', 'http', 'https', 'child_process', 'crypto']);
   const requires = [...src.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]);
   for (const r of requires) assert.ok(allowed.has(r), `module inattendu : ${r}`);
   assert.ok(!/exec\(\s*['"`]/.test(src), 'jamais exec avec une chaîne (shell)');
@@ -530,7 +537,7 @@ test('écriture atomique : aucun fichier tmp résiduel, mode d origine conservé
   assert.equal(r.code, 0, r.raw);
   assert.equal(r.out.changed, true);
   assert.notEqual(fs.statSync(settingsFile(home)).ino, inode, 'remplacé par renommage (nouvel inode), pas écrit en place');
-  assert.equal(fs.statSync(settingsFile(home)).mode & 0o777, 0o600, 'mode conservé');
+  if (!IS_WIN) assert.equal(fs.statSync(settingsFile(home)).mode & 0o777, 0o600, 'mode conservé');
   assert.deepEqual(fs.readdirSync(path.dirname(settingsFile(home))).filter((n) => n.includes('.tmp-')), []);
   assert.equal(backups(settingsFile(home)).length, 1, 'sauvegarde horodatée toujours créée');
 });
@@ -562,7 +569,7 @@ test('settings.json lien cassé : la cible est créée, le lien conservé', () =
   assert.ok(readJson(target).hooks.Stop, 'cible créée avec les hooks');
 });
 
-test('launchagents install refuse un bundle sur un volume monté, en AppTranslocation ou hors des dossiers d application', () => {
+test('launchagents install refuse un bundle sur un volume monté, en AppTranslocation ou hors des dossiers d application', { skip: IS_WIN && 'launchd : macOS uniquement' }, () => {
   const home = tmpHome();
   const msg = 'Déplace DojoWallpaper.app dans /Applications puis relance-la.';
   const bad = [
@@ -808,7 +815,7 @@ test('upgrade-runtime : version invalide (embarquée ou installée) → pas d\'u
   assert.equal(agentOf(home), '// old\n');
 });
 
-test('upgrade-runtime : app lancée depuis /Volumes ou AppTranslocation → refus (volume)', () => {
+test('upgrade-runtime : app lancée depuis /Volumes ou AppTranslocation → refus (volume)', { skip: IS_WIN && 'chemins macOS (/Volumes, AppTranslocation)' }, () => {
   for (const appPath of [
     '/Volumes/DojoWallpaper/DojoWallpaper.app',
     '/private/var/folders/xx/AppTranslocation/ABC/d/DojoWallpaper.app',
@@ -828,7 +835,7 @@ test('upgrade-runtime : app lancée depuis /Volumes ou AppTranslocation → refu
   assert.equal(ok.out.reason, 'done', 'app dans /Applications : mise à jour faite');
 });
 
-test('upgrade-runtime : relance l\'agent par launchctl kickstart seulement si son LaunchAgent existe, jamais avec noLaunchd', () => {
+test('upgrade-runtime : relance l\'agent par launchctl kickstart seulement si son LaunchAgent existe, jamais avec noLaunchd', { skip: IS_WIN && 'launchctl : macOS uniquement' }, () => {
   const home = tmpHome();
   const fake = fakeLaunchctl(home);
   const src = mkRuntime(path.join(home, 'embedded'), '0.2.1', 'new');
