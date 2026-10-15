@@ -522,7 +522,7 @@ test('commande inconnue et sans argument : erreur propre en JSON', () => {
 
 test('setup.js n utilise que des modules natifs (zéro dépendance)', () => {
   const src = fs.readFileSync(SETUP, 'utf8');
-  const allowed = new Set(['fs', 'os', 'path', 'http', 'child_process', 'crypto']);
+  const allowed = new Set(['fs', 'os', 'path', 'http', 'https', 'child_process', 'crypto']);
   const requires = [...src.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]);
   for (const r of requires) assert.ok(allowed.has(r), `module inattendu : ${r}`);
   assert.ok(!/exec\(\s*['"`]/.test(src), 'jamais exec avec une chaîne (shell)');

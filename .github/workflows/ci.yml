@@ -189,6 +189,7 @@ jobs:
         env:
           DOJO_SKIP_REGISTRY: "1"
           DOJO_SKIP_EXE: "1"
+          DOJO_SKIP_START: "1"
         run: |
           $ErrorActionPreference = 'Stop'
           $profileDir = Join-Path $env:RUNNER_TEMP 'dojo-profile'
