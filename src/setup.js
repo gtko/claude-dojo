@@ -3069,7 +3069,10 @@ function regPersonalDir() {
   const m = /^\s*Personal\s+REG_(?:EXPAND_SZ|SZ)\s+(.*?)\s*$/m.exec(out);
   if (!m) return null;
   const dir = m[1].replace(/%([^%]+)%/g, (all, name) => process.env[name] ?? all);
-  return path.isAbsolute(dir) && !dir.includes('%') ? dir : null;
+  // reg.exe écrit en page de code OEM : un chemin non ASCII mal décodé contient U+FFFD. On n'accepte qu'un dossier
+  // existant, pour ne jamais créer de dossier parasite (repli sur <profil>\Documents).
+  if (!path.isAbsolute(dir) || dir.includes('%') || dir.includes('�')) return null;
+  try { return fs.statSync(dir).isDirectory() ? dir : null; } catch { return null; }
 }
 const documentsDir = () => {
   if (process.env.DOJO_DOCUMENTS_DIR) return process.env.DOJO_DOCUMENTS_DIR;
