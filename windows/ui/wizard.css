@@ -1,0 +1,99 @@
+/* Assistant de configuration (wizard.html) : mise en page 760x640, étapes, champs, aperçu. Les classes de base sont dans common.css. */
+
+main#app.wiz-app { padding: 0; }
+
+.wiz { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+
+.wiz-head { padding: 14px 20px 0; }
+.wiz-label { color: var(--muted); font-size: 12px; }
+.wiz-head .progress { margin-top: 8px; }
+
+.wiz-body {
+  flex: 1; min-height: 0; overflow: auto;
+  padding: 18px 20px 12px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.wiz-body > * { flex: none; }
+
+.wiz-notice { padding: 0 20px; display: flex; flex-direction: column; gap: 8px; }
+.wiz-notice:empty { display: none; }
+.wiz-notice:not(:empty) { padding-bottom: 10px; }
+
+.wiz-foot {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 20px; border-top: 1px solid var(--line);
+}
+.wiz-foot .spacer { flex: 1; }
+
+.wiz .step-title h2 { font-size: 20px; margin-bottom: 4px; outline: none; }
+.wiz .step-title p { font-size: 13px; }
+
+.wiz h3 { margin-top: 4px; }
+.wiz hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+
+.wiz .fill { flex: 1 1 auto; min-width: 0; }
+.wiz input[type="text"] { min-width: 0; width: 100%; }
+.wiz .btn-icon { min-width: 32px; padding: 6px 10px; font-size: 16px; line-height: 1; }
+
+.row { row-gap: 8px; }
+.row .muted { font-size: 13px; }
+.hint { font-size: 12.5px; color: var(--muted); margin: 0; }
+.wiz code { color: var(--text); background: rgba(255, 255, 255, .06); border-radius: 6px; padding: 1px 5px; }
+
+.stack-sm { display: flex; flex-direction: column; gap: 4px; }
+.list-row { flex-wrap: nowrap; }
+.field-error { color: #ffb3b3; font-size: 12px; padding-left: 2px; }
+
+.checklist { margin: 0; padding-left: 18px; color: var(--muted); line-height: 1.9; }
+
+/* Cases et boutons radio */
+.check, .radio {
+  display: flex; align-items: center; gap: 10px;
+  color: var(--text); cursor: pointer; padding: 3px 0;
+  -webkit-user-select: none; user-select: none;
+}
+.check input, .radio input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); flex: none; }
+.radios { display: flex; flex-direction: column; gap: 4px; padding-left: 2px; }
+
+/* Pastilles d'état */
+.status-row { display: flex; align-items: flex-start; gap: 10px; padding: 4px 0; }
+.status-row strong { display: block; font-weight: 600; }
+.status-row small { display: block; color: var(--muted); font-size: 12px; margin-top: 1px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; flex: none; background: var(--dim); }
+.dot.ok { background: var(--ok); box-shadow: 0 0 8px rgba(80, 250, 123, .45); }
+.dot.ko { background: var(--danger); }
+.dot.opt { background: transparent; border: 1.5px solid var(--dim); }
+
+/* Résultats de recherche (géocodage) */
+.choice {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  justify-content: flex-start; text-align: left; padding: 8px 12px;
+}
+.choice-text { display: flex; flex-direction: column; min-width: 0; }
+.choice-text small { color: var(--muted); font-size: 12px; }
+.choice[aria-pressed="true"] { border-color: var(--accent); background: rgba(189, 147, 249, .14); }
+
+/* Aperçu settings.json : cadre à hauteur fixe, défilement interne */
+.preview {
+  height: 170px; overflow: auto; padding: 8px 10px; border-radius: 10px;
+  background: rgba(0, 0, 0, .25); border: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11px; line-height: 1.45; color: var(--text);
+  -webkit-user-select: text; user-select: text;
+}
+.preview .change { color: var(--muted); }
+.preview pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; color: inherit; }
+
+/* Résumé et journal de l'étape Terminé */
+.summary { display: flex; flex-direction: column; gap: 3px; }
+.summary-line { color: var(--muted); font-size: 13px; }
+.log {
+  max-height: 110px; overflow: auto; padding: 8px 10px; border-radius: 10px;
+  background: rgba(0, 0, 0, .25); border: 1px solid var(--line);
+  font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--muted);
+  -webkit-user-select: text; user-select: text;
+}
+
+/* Zone du sélecteur de thème (themechooser.js) */
+.theme-host { min-height: 300px; }
+
+.spinner { vertical-align: -4px; margin-right: 8px; }
