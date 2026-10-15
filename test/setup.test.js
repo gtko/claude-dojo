@@ -20,11 +20,8 @@ function tmpHome() {
 const appDirsOf = (home) => [path.join(home, 'Applications'), path.join(home, 'SysApplications')].join(path.delimiter);
 
 // Lance le CLI avec HOME temporaire. Renvoie { code, out (JSON parsé), raw }.
-// Sous Windows : USERPROFILE suit HOME (os.homedir() ne lit que USERPROFILE). La détection de node de src/setup.js
-// (findNode) ne trouve pas node.exe (candidats sans suffixe .exe) : merge-settings reçoit donc node en option
-// (champ documenté de l'API) pour tester la fusion elle-même. La détection reste à corriger côté src.
+// USERPROFILE suit HOME : sous Windows, os.homedir() ne lit que USERPROFILE.
 function cli(home, args, { input, env = {} } = {}) {
-  if (IS_WIN && args[0] === 'merge-settings') args = ['merge-settings', JSON.stringify({ node: process.execPath, ...JSON.parse(args[1]) })];
   const r = spawnSync(process.execPath, [SETUP, ...args], {
     env: { ...process.env, HOME: home, USERPROFILE: home, DOJO_DETECT_NO_GH_AUTH: '1', DOJO_APPS_DIRS: appDirsOf(home), ...env },
     input,
@@ -97,9 +94,10 @@ test('merge-settings garde les clés utilisateur et ajoute les hooks dojo', () =
   assert.ok(s.hooks.PreToolUse.some((g) => g.hooks.some((h) => h.command === '/tools/guard.sh')));
   assert.ok(s.hooks.PreToolUse.some((g) => g.hooks.some((h) => h.command === 'node /perso/heavy-gate.js')), 'heavy-gate perso intact');
   for (const ev of ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Notification', 'Stop', 'SessionEnd']) {
-    assert.ok(s.hooks[ev].some((g) => g.hooks.some((h) => h.command.includes('claude-dojo/hook.js'))), `hook dojo sous ${ev}`);
+    assert.ok(s.hooks[ev].some((g) => g.hooks.some((h) => h.command.includes(path.join('claude-dojo', 'hook.js')))), `hook dojo sous ${ev}`);
   }
-  assert.ok(s.hooks.PreToolUse.some((g) => g.hooks.some((h) => h.command.includes('claude-dojo/heavy-gate.js'))));
+  // path.join : sous Windows, les commandes portent des antislashes (séparateur natif).
+  assert.ok(s.hooks.PreToolUse.some((g) => g.hooks.some((h) => h.command.includes(path.join('claude-dojo', 'heavy-gate.js')))));
   assert.equal(s.statusLine.command, '/usr/bin/other-statusline --compact');
 });
 
@@ -244,7 +242,7 @@ test('write-config : mode 0600 (dossier 0700), fusion profonde, clés inconnues 
     sentry: { token: 'tok-123', org: 'acme' },
   })]);
   assert.equal(first.code, 0, first.raw);
-  assert.equal(first.out.mode, '0600');
+  if (!IS_WIN) assert.equal(first.out.mode, '0600'); // sous Windows, src/setup.js rend mode: null (pas de bits POSIX)
   assert.ok(!first.raw.includes('tok-123'), 'le jeton n est jamais renvoyé');
   const file = configFile(home);
   if (!IS_WIN) { // Windows n'a pas de bits POSIX : fs.statSync rend toujours 0666/0777
