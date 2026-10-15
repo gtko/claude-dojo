@@ -137,10 +137,17 @@ before(async () => {
 // Arrêt par PID : SIGTERM (l'agent arrête ses enfants), SIGKILL en filet de sécurité.
 after(async () => {
   if (child && child.exitCode === null && child.signalCode === null) {
-    process.kill(child.pid, 'SIGTERM');
-    if (!(await waitExit(child, 3000))) process.kill(child.pid, 'SIGKILL');
+    if (process.platform === 'win32') {
+      // Windows : pas de SIGTERM transmis, l'agent ne peut pas arrêter ses enfants (collector.js
+      // garde le dossier ouvert) → arrêt de l'arbre par PID.
+      require('child_process').spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F']);
+      await waitExit(child, 3000);
+    } else {
+      process.kill(child.pid, 'SIGTERM');
+      if (!(await waitExit(child, 3000))) process.kill(child.pid, 'SIGKILL');
+    }
   }
-  if (home) fs.rmSync(home, { recursive: true, force: true });
+  if (home) fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 // ── Confinement de /themes ───────────────────────────────────────────────
