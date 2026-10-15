@@ -88,6 +88,7 @@ before(async () => {
   bgDir = path.join(runtime, 'backgrounds');
   fs.mkdirSync(bgDir, { recursive: true });
   fs.copyFileSync(path.join(SRC, 'agent-mac.js'), path.join(runtime, 'agent-mac.js'));
+  fs.copyFileSync(path.join(SRC, 'agent-core.js'), path.join(runtime, 'agent-core.js'));
   fs.copyFileSync(path.join(SRC, 'collector.js'), path.join(runtime, 'collector.js'));
   fs.cpSync(path.join(SRC, 'wallpaper'), path.join(runtime, 'wallpaper'), { recursive: true });
   fs.cpSync(path.join(SRC, 'themes'), path.join(runtime, 'themes'), { recursive: true });
