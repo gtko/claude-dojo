@@ -145,3 +145,63 @@ jobs:
           echo "Reinstall kept $second claude-dojo hook(s), no duplicates."
 
           ./uninstall.sh --yes --no-launchd --purge
+
+  windows:
+    name: Windows checks and install smoke test
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+
+      - name: Scan for personal terms
+        # Same pattern and rules as the macOS job. Runs before the build steps so
+        # that windows\bin and windows\build are not scanned. The recursive grep
+        # covers windows/, *.ps1 and src/**.
+        shell: bash
+        run: |
+          pattern='gtko|grego|mus-inn|Minzac|CascadeProjects|dotworld|mediamodifier|hermes'
+          # The repository URL is allowed: remove it before matching.
+          hits="$(grep -rniaE "$pattern" --exclude-dir=.git --exclude=ci.yml . \
+            | sed -E 's#gtko/claude-dojo##g' \
+            | grep -iaE "$pattern" || true)"
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "Personal terms found outside the repository URL." >&2
+            exit 1
+          fi
+          echo "No personal terms found."
+
+      - name: Unit tests (Node.js)
+        shell: pwsh
+        run: node --test test/
+
+      - name: Build and unit tests (DojoWallpaper.exe)
+        shell: pwsh
+        run: pwsh -File windows/build.ps1 -Test
+
+      - name: Install and uninstall in a temporary profile
+        shell: pwsh
+        env:
+          DOJO_SKIP_REGISTRY: "1"
+          DOJO_SKIP_EXE: "1"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $profileDir = Join-Path $env:RUNNER_TEMP 'dojo-profile'
+          New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
+          $env:USERPROFILE = $profileDir
+          Write-Host "Temporary USERPROFILE: $profileDir"
+
+          pwsh -NoProfile -File install.ps1
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 a echoue (code $LASTEXITCODE)" }
+          $settings = Join-Path $profileDir '.claude\settings.json'
+          if (-not (Test-Path -LiteralPath $settings)) { throw "settings.json absent apres install : $settings" }
+          Write-Host "ok $settings"
+
+          pwsh -NoProfile -File uninstall.ps1
+          if ($LASTEXITCODE -ne 0) { throw "uninstall.ps1 a echoue (code $LASTEXITCODE)" }
+          Write-Host "Install and uninstall OK"
