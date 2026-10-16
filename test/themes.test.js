@@ -33,7 +33,7 @@ const appDirsOf = (home) => [path.join(home, 'Applications'), path.join(home, 'S
 // DOJO_THEMES_DIR n'est transmis que si env le fournit : sinon les thèmes réels de src/ sont lus.
 function cli(home, args, { input, env = {}, script = SETUP } = {}) {
   // USERPROFILE aussi : sous Windows, setup.js lit USERPROFILE (et non HOME).
-  const childEnv = { ...process.env, HOME: home, USERPROFILE: home, DOJO_DETECT_NO_GH_AUTH: '1', DOJO_APPS_DIRS: appDirsOf(home), ...env };
+  const childEnv = { ...process.env, HOME: home, USERPROFILE: home, LOCALAPPDATA: path.join(home, 'AppData', 'Local'), DOJO_DETECT_NO_GH_AUTH: '1', DOJO_APPS_DIRS: appDirsOf(home), ...env };
   if (!('DOJO_THEMES_DIR' in env)) delete childEnv.DOJO_THEMES_DIR;
   const r = spawnSync(process.execPath, [script, ...args], { env: childEnv, input, encoding: 'utf8', timeout: 60000 });
   const raw = r.stdout.trim();

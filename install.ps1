@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Installs Claude Dojo on Windows: agent, Claude Code hooks and statusline, autostart, wallpaper.
 .DESCRIPTION
@@ -9,19 +9,27 @@
 .PARAMETER NoHeavyGate
     Does not register the heavy-gate hook (PreToolUse, matcher Bash|PowerShell).
     Same as DOJO_HEAVY_GATE=n in install.sh.
+.PARAMETER NoWizard
+    Does not open the setup assistant at the end of a first installation. Same as DOJO_NO_WIZARD=1.
+    The assistant is also skipped in CI, in a non-interactive session, with redirected input, and when
+    DOJO_SKIP_START or DOJO_SKIP_EXE is set.
 .EXAMPLE
     pwsh -File install.ps1
 .EXAMPLE
     pwsh -File install.ps1 -NoHeavyGate
+.EXAMPLE
+    pwsh -File install.ps1 -NoWizard
 .NOTES
     Environment variables:
       DOJO_SKIP_REGISTRY=1   do not write the HKCU Run values (the launcher is still written)
       DOJO_SKIP_EXE=1        do not download or build DojoWallpaper.exe
       DOJO_SKIP_START=1      do not start the agent at the end (tests and CI)
+      DOJO_NO_WIZARD=1       do not open the setup assistant at the end of a first installation
     USERPROFILE selects the profile, as it does for setup.js.
 #>
 param(
-    [switch]$NoHeavyGate
+    [switch]$NoHeavyGate,
+    [switch]$NoWizard
 )
 
 $ErrorActionPreference = 'Stop'
@@ -113,6 +121,27 @@ function Find-Node {
     return $null
 }
 
+# Raison pour laquelle l'assistant de configuration ne s'ouvre pas à la fin de l'installation, ou $null s'il doit
+# s'ouvrir. Il ne s'ouvre qu'à la première installation (pas de config.json au départ) dans une session interactive.
+function Get-WizardSkip {
+    param(
+        [bool]$NoWizardSwitch,
+        [bool]$FirstInstall
+    )
+    if ($NoWizardSwitch) { return '-NoWizard' }
+    if ($env:DOJO_NO_WIZARD -eq '1') { return 'DOJO_NO_WIZARD=1' }
+    if (-not $FirstInstall) { return 'configuration existante' }
+    if ($env:CI -or $env:GITHUB_ACTIONS) { return 'CI' }
+    if ($env:DOJO_SKIP_START -or $env:DOJO_SKIP_EXE) { return 'DOJO_SKIP_START ou DOJO_SKIP_EXE' }
+    if (-not [Environment]::UserInteractive) { return 'session non interactive' }
+    try {
+        if ([Console]::IsInputRedirected) { return 'entrée redirigée' }
+    } catch {
+        return 'console indisponible'
+    }
+    return $null
+}
+
 function Invoke-Install {
     if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
         throw 'this script runs on Windows only (use install.sh on macOS).'
@@ -137,6 +166,8 @@ function Invoke-Install {
     }
     $dojo = $detect.install.configDir
     $settingsFile = $detect.settings.path
+    # Mémorisé avant toute écriture : sans config.json, c'est une première installation (assistant de configuration).
+    $firstInstall = -not [bool]$detect.install.configExists
 
     # Before any file is replaced: a running agent or wallpaper keeps the old code and locks DojoWallpaper.exe.
     Write-Step 'Stopping the running agent and wallpaper'
@@ -152,6 +183,8 @@ function Invoke-Install {
     Write-Step "Runtime files in $dojo"
     $copy = Invoke-Setup @('install-files', (Join-Path $PSScriptRoot 'src'))
     Write-Info "copied: $(@($copy.copied).Count) entries from src"
+    if (@($copy.copied) -contains 'windows/ui/') { Write-Info 'interface copied: windows\ui (without tests)' }
+    foreach ($warning in @($copy.warnings)) { Write-Warning $warning }
 
     Write-Step 'config.json'
     if ([bool]$detect.install.configExists) {
@@ -173,6 +206,11 @@ function Invoke-Install {
         Write-Info "skipped ($($exe.skipped))"
     }
     if ($exe.message) { Write-Warning $exe.message }
+
+    # Assistant de configuration : première installation, session interactive, exe présent. Son lancement remplace le
+    # redémarrage du fond (plus bas) : une seule instance, et c'est la première (--open n'agit qu'au démarrage).
+    $wizardSkip = Get-WizardSkip -NoWizardSwitch ([bool]$NoWizard) -FirstInstall $firstInstall
+    $openWizard = ($null -eq $wizardSkip) -and [bool]$exe.installed
 
     Write-Step 'Autostart (Run values and start-agent.vbs)'
     $auto = Invoke-Setup @('launchagents', 'install', '-') -StdinText (ConvertTo-JsonLine @{ node = $script:NodeExe })
@@ -222,13 +260,29 @@ function Invoke-Install {
         } else {
             Write-Warning "start-agent.vbs exited with code $($launch.ExitCode): run it by hand from the folder above."
         }
-        if ($wallpaperWasRunning -and $exe.installed) {
+        if ($wallpaperWasRunning -and $exe.installed -and -not $openWizard) {
             try {
                 Start-Process -FilePath $exe.path -WorkingDirectory (Split-Path -Parent $exe.path) | Out-Null
                 Write-Info 'wallpaper started again (it was running before the update)'
             } catch {
                 Write-Warning "wallpaper not started again: $($_.Exception.Message)"
             }
+        }
+    }
+
+    # Fin de l'installation, première installation seulement : le fond démarre avec l'assistant ouvert.
+    if ($null -eq $wizardSkip) {
+        Write-Step 'Setup assistant'
+        if ($exe.installed) {
+            try {
+                Start-Process -FilePath $exe.path -ArgumentList '--open', 'wizard' -WorkingDirectory (Split-Path -Parent $exe.path) | Out-Null
+                Write-Info 'Assistant de configuration ouvert : choisissez votre thème et votre fond d''écran.'
+                Write-Info "Il se rouvre depuis le menu de l'icône Dojo Wallpaper (zone de notification)."
+            } catch {
+                Write-Warning "Assistant non ouvert : $($_.Exception.Message)"
+            }
+        } else {
+            Write-Warning "Assistant non ouvert : DojoWallpaper.exe est absent (voir le message ci-dessus). Une fois le fond installé, il s'ouvre depuis le menu de l'icône Dojo Wallpaper."
         }
     }
 

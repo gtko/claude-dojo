@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Uninstalls Claude Dojo on Windows: autostart, agent launcher, DojoWallpaper.exe, Dojo entries of settings.json.
+    Uninstalls Claude Dojo on Windows: autostart, agent launcher, DojoWallpaper.exe, terminal options, Dojo entries of settings.json.
 .DESCRIPTION
     Windows counterpart of uninstall.sh. This script is a thin wrapper: the logic lives in src/setup.js.
     The agent (node running agent-win.js, with its collector and media helper) and DojoWallpaper.exe are stopped first.
@@ -159,6 +159,14 @@ function Invoke-Uninstall {
     } else {
         Write-Info "absent: $($out.app.path)"
     }
+
+    Write-Step 'Terminal options'
+    $wt = $out.terminal.windowsTerminal
+    $psh = $out.terminal.powershell
+    $removedAny = $false
+    if ($wt -and $wt.action -eq 'removed') { Write-Info "removed: $($wt.path)"; $removedAny = $true }
+    if ($psh -and $psh.action -eq 'removed') { Write-Info 'PowerShell header removed from the profiles (claude-dojo block)'; $removedAny = $true }
+    if (-not $removedAny) { Write-Info 'none installed' }
 
     Write-Step 'Claude Code settings'
     if ($out.settings.error) {

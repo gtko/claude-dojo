@@ -14,6 +14,7 @@ namespace DojoWallpaper.Tests
         {
             var list = new List<KeyValuePair<string, Action>>();
             list.Add(new KeyValuePair<string, Action>("TrayController : menu, libelles et ordre", MenuLabels));
+            list.Add(new KeyValuePair<string, Action>("TrayController : entrees d'interface -> UiRequested (nom court)", UiEntries));
             list.Add(new KeyValuePair<string, Action>("TrayController : choix du mode exclusif -> ModeChanged", ModeChoice));
             list.Add(new KeyValuePair<string, Action>("TrayController : Inverser gauche / droite reflete cfg.Mirror (constructeur, UpdateConfig)", MirrorChecks));
             list.Add(new KeyValuePair<string, Action>("TrayController : Inverser gauche / droite -> MirrorToggled", MirrorToggle));
@@ -46,6 +47,22 @@ namespace DojoWallpaper.Tests
             {
                 throw error;
             }
+        }
+
+        private static void UiEntries()
+        {
+            RunSta(() =>
+            {
+                using (TrayController tray = NewTray("interactive"))
+                {
+                    var pages = new List<string>();
+                    tray.UiRequested += pages.Add;
+                    Item(tray, TrayController.LabelThemes).PerformClick();
+                    Item(tray, TrayController.LabelGallery).PerformClick();
+                    Item(tray, TrayController.LabelWizard).PerformClick();
+                    Assert.AreEqual("themes|gallery|wizard", string.Join("|", pages), "pages demandees");
+                }
+            });
         }
 
         private static TrayController NewTray(string mode)
@@ -85,6 +102,7 @@ namespace DojoWallpaper.Tests
                         TrayController.LabelInteractive, TrayController.LabelPassive, TrayController.LabelMirror,
                         TrayController.LabelPause, TrayController.LabelReload, TrayController.LabelOpenConfig,
                         TrayController.LabelAutostart,
+                        TrayController.LabelThemes, TrayController.LabelGallery, TrayController.LabelWizard,
                         "-", TrayController.LabelQuit
                     });
                     Assert.AreEqual(expected, string.Join("|", labels), "libelles et ordre du menu");

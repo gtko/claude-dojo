@@ -1,0 +1,8 @@
+/* Page « Thème et fond » (themes.html) : mise en page de la fenêtre 980x720. Le sélecteur est stylé dans themechooser.css. */
+main#app { display: flex; flex-direction: column; }
+main#app > .tc { flex: 1 0 auto; }
+
+@media (max-width: 600px) {
+  main#app { padding: 16px; }
+  .tc-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

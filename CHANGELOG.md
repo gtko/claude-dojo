@@ -13,10 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Windows agent (`src/agent-win.js`): processes, network, disks, local servers, CPU and memory, battery, and temperatures from the optional LibreHardwareMonitor web server on port 8085.
 - Windows: the current track comes from the Windows media session (`src/win-media.js` and `src/windows/media.ps1`).
 - Windows: the wallpaper pauses when a window covers the screen (full screen or maximized), on battery and in battery saver mode. The tray menu has a manual pause.
-- Windows: the window zone, the terminal themes and the wallpaper gallery are macOS only.
+- Windows: the window zone is macOS only.
+- Windows: the interface (theme and background, wallpaper gallery and setup assistant windows, in `windows\ui`) is installed with the runtime, without its `tests` folder, and removed by `uninstall.ps1`.
+- Windows: the setup assistant opens at the end of a first installation. `install.ps1 -NoWizard` or `DOJO_NO_WIZARD=1` turn it off, and it never opens in CI or in a non-interactive session.
+- Windows: terminal themes, a Windows Terminal profile and a PowerShell welcome header (`setup.js terminal apply` with `windowsTerminal` and `welcome`). `uninstall.ps1` removes them.
 - heavy-gate: on Windows, the hook also checks `PowerShell` commands (matcher `Bash|PowerShell`).
 - Release: each `v*` tag publishes `DojoWallpaper-windows-x64.zip` with its `.sha256` file, next to the DMG.
-- CI: a Windows job runs the Node.js tests, builds and tests `DojoWallpaper.exe`, and installs and uninstalls in a temporary profile.
+- CI: a Windows job runs the Node.js tests, builds and tests `DojoWallpaper.exe`, and installs and uninstalls in a temporary profile. It also checks that `windows\ui` is installed without `tests`, and runs `windows/ui/tests/` when that folder exists.
 
 ### Changed
 

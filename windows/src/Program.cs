@@ -8,7 +8,7 @@ namespace DojoWallpaper
     internal static class Program
     {
         // Global\ : une seule instance pour toute la machine (toutes sessions confondues).
-        private const string MutexName = @"Global\DojoWallpaper";
+        // DOJO_INSTANCE (valeur valide) ajoute un suffixe au nom : voir MutexNames.
         private const int MaxExitAfterSeconds = 86400;
 
         [STAThread]
@@ -16,7 +16,7 @@ namespace DojoWallpaper
         {
             bool core = HasArg(args, "--core");
             bool createdNew;
-            using (var mutex = new Mutex(true, MutexName, out createdNew))
+            using (var mutex = new Mutex(true, MutexNames.FromEnvironment(), out createdNew))
             {
                 if (!createdNew)
                 {
@@ -41,7 +41,8 @@ namespace DojoWallpaper
         }
 
         // Mode normal : configuration, fond, zone de notification, pauses.
-        // Options : --log-console (recopie sur la console parente), --exit-after N (sortie propre apres N secondes).
+        // Options : --log-console (recopie sur la console parente), --exit-after N (sortie propre apres N secondes),
+        // --open themes|gallery|wizard (ouvre une page de l'interface au demarrage).
         // Journal : %LOCALAPPDATA%\DojoWallpaper\dojo.log
         private static int RunApp(string[] args)
         {
@@ -60,7 +61,7 @@ namespace DojoWallpaper
                 DojoLog.Error("exception non geree", e.ExceptionObject as Exception);
             };
 
-            var app = new DojoApp(ReadExitAfter(args));
+            var app = new DojoApp(ReadExitAfter(args), ReadOpenPage(args));
             Application.Run(app);
             DojoLog.Write("processus termine (code " + app.ExitCode + ")");
             return app.ExitCode;
@@ -164,6 +165,25 @@ namespace DojoWallpaper
         private static bool HasArg(string[] args, string name)
         {
             return Array.IndexOf(args, name) >= 0;
+        }
+
+        // --open themes|gallery|wizard : page de l'interface ouverte au demarrage (demonstration). Inconnue : ignoree.
+        private static string ReadOpenPage(string[] args)
+        {
+            for (int i = 0; i < args.Length - 1; i++)
+            {
+                if (args[i] != "--open")
+                {
+                    continue;
+                }
+                if (UiLayout.Find(args[i + 1]) != null)
+                {
+                    return args[i + 1];
+                }
+                DojoLog.Write("--open : page inconnue, ignoree");
+                return null;
+            }
+            return null;
         }
 
         // --exit-after N : N entre 1 et MaxExitAfterSeconds, sinon 0 (pas de sortie automatique).

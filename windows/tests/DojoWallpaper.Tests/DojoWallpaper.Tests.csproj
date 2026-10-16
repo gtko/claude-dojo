@@ -53,6 +53,25 @@
     <Compile Include="..\..\src\InputForwarder.cs">
       <Link>src\InputForwarder.cs</Link>
     </Compile>
+    <!-- Pont WebView2 : logique pure (liste blanche, lancement de node, dispatch). La fenetre (UiWindow.cs) n'est pas testee ici. -->
+    <Compile Include="..\..\src\BridgeCommands.cs">
+      <Link>src\BridgeCommands.cs</Link>
+    </Compile>
+    <Compile Include="..\..\src\NodeLocator.cs">
+      <Link>src\NodeLocator.cs</Link>
+    </Compile>
+    <Compile Include="..\..\src\NodeRunner.cs">
+      <Link>src\NodeRunner.cs</Link>
+    </Compile>
+    <Compile Include="..\..\src\UiLayout.cs">
+      <Link>src\UiLayout.cs</Link>
+    </Compile>
+    <Compile Include="..\..\src\UiBridge.cs">
+      <Link>src\UiBridge.cs</Link>
+    </Compile>
+    <Compile Include="..\..\src\MutexNames.cs">
+      <Link>src\MutexNames.cs</Link>
+    </Compile>
   </ItemGroup>
 
 </Project>
