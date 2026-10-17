@@ -21,14 +21,22 @@ namespace DojoWallpaper
         private const int InitRetryMs = 10000;
         // Delai maximal de la capture de la derniere image avant la mise en pause (la pause ne doit jamais attendre).
         private const int CaptureTimeoutMs = 3000;
+        // Periode du chien de garde : page muette (PageWatchdog.SilenceMs) ou navigateur mort.
+        private const int WatchdogTickMs = 5000;
+        // Delai de la sonde de page (ExecuteScriptAsync) : au-dela, la page est jugee figee.
+        private const int ProbeTimeoutMs = 5000;
 
         private readonly Func<Task<CoreWebView2Environment>> environment;
-        private readonly WebView2 web;
+        // Non readonly : recree si le navigateur WebView2 meurt (RecreateWeb).
+        private WebView2 web;
         private readonly InputForwarder input;
         private readonly System.Windows.Forms.Timer retryTimer;
         private readonly System.Windows.Forms.Timer probeTimer;
         private readonly System.Windows.Forms.Timer embedTimer;
         private readonly System.Windows.Forms.Timer initRetryTimer;
+        private readonly System.Windows.Forms.Timer watchdogTimer;
+        private readonly PageWatchdog watchdog;
+        private readonly Stopwatch watchClock = Stopwatch.StartNew();
         private readonly double scale;
 
         private string url;
@@ -43,6 +51,14 @@ namespace DojoWallpaper
         private int pauseSeq;
         private bool pendingNavigate;
         private bool shutdown;
+        // Navigateur WebView2 mort (ProcessFailed BrowserProcessExited) : recreation par le chien de garde, hors pause.
+        private bool browserDead;
+        // Navigation lancee sans NavigationCompleted encore : un renderer fige ne la termine pas (escalade, WatchdogTick).
+        private bool reloading;
+        // Environnement servant au controle courant (oublie si le navigateur meurt : WallpaperManager.ResetSharedEnvironment).
+        private Task<CoreWebView2Environment> environmentUsed;
+        // Sonde de page en vol : une seule a la fois (ProbeSilentPage).
+        private bool probing;
         private string lastSafe;
         private DateTime embedSince;
         // Derniere image de la page, affichee sur le fond du formulaire pendant la pause (WebView masquee).
@@ -100,6 +116,11 @@ namespace DojoWallpaper
                 initRetryTimer.Stop();
                 InitializeAsync();
             };
+
+            // Chien de garde : verifie la page (battements) et le navigateur toutes les 5 s (WatchdogTick).
+            watchdog = new PageWatchdog(() => watchClock.ElapsedMilliseconds);
+            watchdogTimer = new System.Windows.Forms.Timer { Interval = WatchdogTickMs };
+            watchdogTimer.Tick += delegate { WatchdogTick(); };
         }
 
         public int Index { get; private set; }
@@ -150,6 +171,7 @@ namespace DojoWallpaper
             {
                 StartEmbedRetry();
             }
+            watchdogTimer.Start();
             InitializeAsync();
         }
 
@@ -258,10 +280,12 @@ namespace DojoWallpaper
             probeTimer.Stop();
             embedTimer.Stop();
             initRetryTimer.Stop();
+            watchdogTimer.Stop();
             retryTimer.Dispose();
             probeTimer.Dispose();
             embedTimer.Dispose();
             initRetryTimer.Dispose();
+            watchdogTimer.Dispose();
             // Masquee avant de quitter le bureau : une fenetre encore visible apparaitrait en plein ecran au premier plan.
             Hide();
             DesktopHost.Detach(this);
@@ -288,17 +312,21 @@ namespace DojoWallpaper
             {
                 return;
             }
+            // Controle vise par cet essai : s'il est recree pendant l'essai, l'essai est abandonne (RecreateWeb relance).
+            WebView2 target = web;
             try
             {
-                CoreWebView2Environment env = await environment();
-                if (shutdown)
+                Task<CoreWebView2Environment> pendingEnv = environment();
+                environmentUsed = pendingEnv;
+                CoreWebView2Environment env = await pendingEnv;
+                if (shutdown || target != web)
                 {
                     return;
                 }
                 CoreWebView2ControllerOptions options = env.CreateCoreWebView2ControllerOptions();
                 options.IsInPrivateModeEnabled = true;
                 await web.EnsureCoreWebView2Async(env, options);
-                if (shutdown)
+                if (shutdown || target != web)
                 {
                     return;
                 }
@@ -310,6 +338,8 @@ namespace DojoWallpaper
                     core.Settings.AreDefaultContextMenusEnabled = false;
                     core.NavigationStarting += OnNavigationStarting;
                     core.NewWindowRequested += OnNewWindowRequested;
+                    core.ProcessFailed += OnProcessFailed;
+                    core.WebMessageReceived += OnWebMessage;
                     web.NavigationCompleted += OnNavigationCompleted;
                     handlersAttached = true;
                 }
@@ -328,7 +358,7 @@ namespace DojoWallpaper
             {
                 CoreLog.Write(Text + " init WebView2 echec: " + ex.Message
                     + " (nouvel essai dans " + (InitRetryMs / 1000) + " s)");
-                if (!shutdown && !initialized)
+                if (!shutdown && !initialized && target == web)
                 {
                     initRetryTimer.Start();
                 }
@@ -349,6 +379,8 @@ namespace DojoWallpaper
             }
             pendingNavigate = false;
             loaded = false;
+            reloading = true;
+            watchdog.Reset();
             CoreLog.Write(Text + " navigate " + DojoLog.Redact(url));
             web.CoreWebView2.Navigate(url);
         }
@@ -361,6 +393,172 @@ namespace DojoWallpaper
             }
             CoreLog.Write(Text + " nouvel essai (agent indisponible)");
             Navigate();
+        }
+
+        // Chien de garde (toutes les 5 s) : navigateur mort -> recreation du controle ; page muette (pas de battement
+        // depuis 20 s) -> sonde, puis rechargement si la sonde reste sans reponse. Rien pendant la pause.
+        // Recreations espacees (PageWatchdog.TryRecreate) : une page qui ne repart jamais ne boucle pas.
+        private void WatchdogTick()
+        {
+            if (shutdown || paused)
+            {
+                return;
+            }
+            try
+            {
+                if (browserDead)
+                {
+                    if (watchdog.TryRecreate())
+                    {
+                        // Environnement du navigateur mort : oublie, la recreation en demande un neuf.
+                        WallpaperManager.ResetSharedEnvironment(environmentUsed);
+                        RecreateWeb();
+                    }
+                    return;
+                }
+                if (initialized && reloading)
+                {
+                    // Rechargement lance il y a 20 s sans fin de navigation : le renderer est fige et le rechargement
+                    // ne le remplace pas. Le controle est recree.
+                    if (watchdog.IsSilent() && watchdog.TryRecreate())
+                    {
+                        CoreLog.Write(Text + " rechargement sans reponse : recreation du controle (n=" + watchdog.Recreations + ")");
+                        RecreateWeb();
+                    }
+                    return;
+                }
+                if (initialized && !probing && watchdog.SilenceDue(loaded, paused))
+                {
+                    ProbeSilentPage();
+                }
+            }
+            catch (Exception ex)
+            {
+                CoreLog.Write(Text + " chien de garde echec: " + ex.Message);
+            }
+        }
+
+        // Page muette depuis SilenceMs : sonde (ExecuteScriptAsync) avant tout rechargement. Un minuteur bride
+        // (page jugee occultee) ne doit pas faire recharger une page vivante. Une seule sonde en vol (probing).
+        private async void ProbeSilentPage()
+        {
+            probing = true;
+            WebView2 target = web;
+            bool alive = false;
+            try
+            {
+                Task<string> script = target.ExecuteScriptAsync("1");
+                // Resultat tardif (renderer repris apres le delai) : observe, pour ne pas laisser une exception non geree.
+                _ = script.ContinueWith(t => { _ = t.Exception; }, TaskScheduler.Default);
+                Task finished = await Task.WhenAny(script, Task.Delay(ProbeTimeoutMs));
+                alive = finished == script && !script.IsFaulted;
+            }
+            catch (Exception ex)
+            {
+                CoreLog.Write(Text + " sonde echec: " + ex.Message);
+            }
+            finally
+            {
+                probing = false;
+            }
+            // Etat change pendant la sonde (pause, navigation, recreation, fermeture) : aucune decision sur du perime.
+            if (shutdown || target != web || paused || !initialized || !loaded)
+            {
+                return;
+            }
+            if (alive)
+            {
+                CoreLog.Write(Text + " page bridee, vivante : silence remis a zero");
+                watchdog.Reset();
+                return;
+            }
+            if (!watchdog.TryReload())
+            {
+                CoreLog.Write(Text + " page muette : rechargement reporte (anti-rebond)");
+                return;
+            }
+            CoreLog.Write(Text + " chien de garde : page muette, sonde sans reponse, rechargement");
+            Navigate();
+        }
+
+        // Processus WebView2 en echec : rechargement de la page pour le rendu et le GPU (anti-rebond), navigateur mort
+        // -> recreation par le chien de garde (WatchdogTick), autres types : journal seul.
+        private void OnProcessFailed(object sender, CoreWebView2ProcessFailedEventArgs e)
+        {
+            if (shutdown)
+            {
+                return;
+            }
+            CoreLog.Write(string.Format(CultureInfo.InvariantCulture, "{0} processus WebView2 en echec: {1} (code {2})",
+                Text, e.ProcessFailedKind, e.ExitCode));
+            if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
+            {
+                browserDead = true;
+                initialized = false;
+                loaded = false;
+                return;
+            }
+            if (!ReloadsPage(e.ProcessFailedKind))
+            {
+                CoreLog.Write(Text + " processus en echec sans rechargement : " + e.ProcessFailedKind);
+                return;
+            }
+            // Navigation deja en cours : pas de relance (les evenements se repetent tant que le renderer est fige).
+            // L'escalade du chien de garde tranche si la navigation n'aboutit pas.
+            if (reloading || !watchdog.TryReload())
+            {
+                CoreLog.Write(Text + " echec du processus : rechargement reporte (en cours ou anti-rebond)");
+                return;
+            }
+            Navigate();
+        }
+
+        // Types d'echec qui justifient un rechargement : rendu (fige ou mort) et GPU. Les autres (utilitaires, sandbox,
+        // plugins...) sont seulement journalises.
+        private static bool ReloadsPage(CoreWebView2ProcessFailedKind kind)
+        {
+            return kind == CoreWebView2ProcessFailedKind.RenderProcessExited
+                || kind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive
+                || kind == CoreWebView2ProcessFailedKind.FrameRenderProcessExited
+                || kind == CoreWebView2ProcessFailedKind.GpuProcessExited;
+        }
+
+        // Battement de la page (chien de garde). Seul message attendu : les autres sont ignores.
+        private void OnWebMessage(object sender, CoreWebView2WebMessageReceivedEventArgs e)
+        {
+            if (!shutdown && string.Equals(e.WebMessageAsJson, "\"dojo:alive\"", StringComparison.Ordinal))
+            {
+                watchdog.Reset();
+            }
+        }
+
+        // Navigateur WebView2 mort : l'ancien controle est jete, un neuf prend sa place (Dock Fill), est relie
+        // au relais souris, puis l'initialisation reprend. Appelee seulement hors pause.
+        private void RecreateWeb()
+        {
+            browserDead = false;
+            // Une initialisation restee en vol (ou ayant abouti sur l'ancien controle) ne compte plus.
+            initialized = false;
+            CoreLog.Write(Text + " navigateur WebView2 arrete : recreation du controle");
+            WebView2 old = web;
+            input.Detach(this);
+            Controls.Remove(old);
+            try
+            {
+                old.Dispose();
+            }
+            catch (Exception ex)
+            {
+                CoreLog.Write(Text + " fermeture du controle echec: " + ex.Message);
+            }
+            ClearFrame();
+            web = new WebView2 { Dock = DockStyle.Fill };
+            Controls.Add(web);
+            input.Attach(this, web);
+            input.SetSuspended(this, paused);
+            // Gestionnaires a reattacher au nouveau controle et a son CoreWebView2 (InitializeAsync).
+            handlersAttached = false;
+            InitializeAsync();
         }
 
         // Pause : la derniere image reste sur le bureau. Capture AVANT le masquage (une WebView masquee ne dessine plus rien).
@@ -489,6 +687,8 @@ namespace DojoWallpaper
 
         private void ResumeCore()
         {
+            // Une page suspendue ne bat pas : le delai de silence repart de la reprise.
+            watchdog.Reset();
             CoreWebView2 core = web.CoreWebView2;
             try
             {
@@ -520,6 +720,8 @@ namespace DojoWallpaper
             {
                 return;
             }
+            // Navigation terminee (reussie ou non) : le renderer repond.
+            reloading = false;
             // Fond vide apres un echec (ShowBlank) : ce n'est pas la page du dojo.
             if (string.Equals(web.CoreWebView2.Source, "about:blank", StringComparison.OrdinalIgnoreCase))
             {
@@ -530,6 +732,9 @@ namespace DojoWallpaper
             if (e.IsSuccess)
             {
                 loaded = true;
+                watchdog.Reset();
+                // Page revenue : le backoff des recreations repart de zero.
+                watchdog.ResetRecreateBackoff();
                 retryTimer.Stop();
                 PushSafe(true);
                 if (CoreLog.Enabled)

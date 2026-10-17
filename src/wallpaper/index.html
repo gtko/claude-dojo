@@ -1829,6 +1829,9 @@ if (isDemo) setSafe({ top: 47, left: 0, notchW: 294, notchH: 47, mirror: false }
 if (DEMO_THEME) loadTheme('?id=' + DEMO_THEME, 'demo:' + DEMO_THEME);   // aperçu : thème demandé, config intacte
 poll();
 setInterval(poll, 2000);
+// Battement pour le chien de garde du fond Windows (WebView2) : sans battement pendant 20 s, la page est rechargée.
+// Indépendant de poll() : un agent injoignable ne doit pas faire croire que la page est figée.
+if (window.chrome && window.chrome.webview) setInterval(() => window.chrome.webview.postMessage('dojo:alive'), 2000);
 
 let last = performance.now();
 function frame(now) {
