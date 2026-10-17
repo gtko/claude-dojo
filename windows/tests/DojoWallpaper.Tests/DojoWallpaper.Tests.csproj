@@ -72,6 +72,10 @@
     <Compile Include="..\..\src\MutexNames.cs">
       <Link>src\MutexNames.cs</Link>
     </Compile>
+    <!-- Chien de garde de la page du fond : decisions pures (silence, anti-rebond). -->
+    <Compile Include="..\..\src\PageWatchdog.cs">
+      <Link>src\PageWatchdog.cs</Link>
+    </Compile>
   </ItemGroup>
 
 </Project>

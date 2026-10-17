@@ -399,6 +399,21 @@ namespace DojoWallpaper
             }
         }
 
+        // Navigateur WebView2 mort : l'environnement qu'il servait est oublie, la prochaine demande en cree un neuf.
+        // Ciblee : sans effet si le cache a deja ete renouvele (autre fenetre). Les controles deja crees (UiWindow)
+        // gardent leur propre reference et ne sont pas touches.
+        internal static void ResetSharedEnvironment(Task<CoreWebView2Environment> dead)
+        {
+            lock (EnvironmentGate)
+            {
+                if (dead != null && ReferenceEquals(sharedEnvironment, dead))
+                {
+                    sharedEnvironment = null;
+                    CoreLog.Write("environnement WebView2 partage oublie (navigateur arrete)");
+                }
+            }
+        }
+
         private static Task<CoreWebView2Environment> CreateEnvironment()
         {
             string dataDir = Path.Combine(
