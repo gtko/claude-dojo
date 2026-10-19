@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-19
+
 ### Added
 
 - Windows: a desktop wallpaper, `DojoWallpaper.exe` (WinForms and WebView2), that shows the same page as on macOS, fed by the same local agent. It is installed from the command line with `install.ps1` and removed with `uninstall.ps1`, without administrator rights. Autostart uses the `HKCU` Run key.
@@ -20,12 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - heavy-gate: on Windows, the hook also checks `PowerShell` commands (matcher `Bash|PowerShell`).
 - Release: each `v*` tag publishes `DojoWallpaper-windows-x64.zip` with its `.sha256` file, next to the DMG.
 - CI: a Windows job runs the Node.js tests, builds and tests `DojoWallpaper.exe`, and installs and uninstalls in a temporary profile. It also checks that `windows\ui` is installed without `tests`, and runs `windows/ui/tests/` when that folder exists.
+- Usage card: per-model share of tokens read (input + cache) and written (output) over 7 days, next to the cost share, so cheap models show their real workload.
+- Usage card: Claude cost per 1,000 lines of code over 7 days, with the trend against the previous 7 days. Lines are counted from Write, Edit, MultiEdit and NotebookEdit tool calls in the transcripts.
 
 ### Changed
 
 - The portable core of the agent is in `src/agent-core.js`. The macOS and Windows samplers are in `src/agent-mac.js` and `src/agent-win.js`.
 - `setup.js` installs and uninstalls the Windows parts (autostart values, launcher, Claude Code settings and `DojoWallpaper.exe`), and skips the macOS-only terminal parts on Windows.
 - The unit tests run on Windows as well as macOS.
+
+### Fixed
+
+- Wallpaper: Claude quotas now come from the freshest source. A failing usage API (expired token, timeout) no longer pins stale values for days over the up-to-date statusline quotas.
 
 ## [0.2.1] - 2026-10-15
 
