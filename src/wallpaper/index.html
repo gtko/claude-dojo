@@ -651,7 +651,9 @@ function renderAI(ai, quota) {
   }
 
   let q = '';
-  const cl = quota?.five_hour ? quota : ai.claudeLimits;
+  // la source la plus fraîche gagne : l'API peut rester en échec des jours (jeton expiré, timeout) avec une vieille valeur en cache
+  const fresh = (s) => s?.five_hour ? s.updated || 0 : -1;
+  const cl = fresh(quota) >= fresh(ai.claudeLimits) ? quota : ai.claudeLimits;
   if (cl?.five_hour) q += quotaRow('Claude · 5 h', cl.five_hour.used_percentage, cl.five_hour.resets_at);
   if (cl?.seven_day) q += quotaRow('Claude · semaine', cl.seven_day.used_percentage, cl.seven_day.resets_at);
   if (cl?.seven_day_opus) q += quotaRow('Opus · semaine', cl.seven_day_opus.used_percentage, cl.seven_day_opus.resets_at);
