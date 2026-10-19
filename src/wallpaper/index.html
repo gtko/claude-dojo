@@ -481,6 +481,31 @@
   </section>
 </div>
 
+<script>
+// Erreurs de la page -> journal du fond (dojo:error:, lu par WallpaperWindow). Installe avant tout autre code de la page.
+// Au plus 5 messages par minute, 300 caracteres au plus. Hors WebView2 (navigateur ordinaire) : rien.
+(function () {
+  let windowStart = 0, sent = 0;
+  function report(text) {
+    try {
+      if (!(window.chrome && window.chrome.webview)) return;
+      const now = Date.now();
+      if (now - windowStart >= 60000) { windowStart = now; sent = 0; }
+      if (sent >= 5) return;
+      sent++;
+      window.chrome.webview.postMessage(('dojo:error:' + text).slice(0, 300));
+    } catch (e) { /* le journal ne doit jamais faire echouer la page */ }
+  }
+  window.onerror = function (message, source, line, col) {
+    report(message + ' @' + line + ':' + col);
+  };
+  window.addEventListener('unhandledrejection', function (e) {
+    let why = e.reason;
+    try { why = (why && why.message) || String(why); } catch (err) { why = '?'; }
+    report('promesse rejetee: ' + why);
+  });
+})();
+</script>
 <script src="props.js"></script>
 <script>
 // Agent local : en file:// (Lively) on appelle http://localhost:7777 ; servie par l'agent (http), l'URL reste relative.
@@ -1845,6 +1870,8 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+// Script entierement execute (battement arme) : la sonde du chien de garde lit cet indicateur (ExecuteScriptAsync).
+window.__dojoReady = true;
 </script>
 </body>
 </html>

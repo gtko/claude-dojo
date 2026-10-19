@@ -1,4 +1,5 @@
 using System;
+using System.Text.RegularExpressions;
 
 namespace DojoWallpaper
 {
@@ -13,6 +14,19 @@ namespace DojoWallpaper
         // Recreations consecutives : ecart minimal de RecreateBaseMs apres la 1re, double a chaque suivante, plafonne.
         public const long RecreateBaseMs = 20000;
         public const long RecreateMaxMs = 300000;
+        // Messages de la page (window.chrome.webview.postMessage) : battement et erreur JS.
+        public const string AliveMessage = "dojo:alive";
+        public const string ErrorPrefix = "dojo:error:";
+        public const int ErrorMaxChars = 300;
+        // Sonde du script de la page : "true" = script entierement execute (battement arme), "false" = script arrete.
+        public const string ReadyProbe = "window.__dojoReady === true";
+        // Rechargements pour script arrete : au-dela de ScriptFreeReloads consecutifs, au plus un par ScriptReloadGapMs.
+        public const int ScriptFreeReloads = 3;
+        public const long ScriptReloadGapMs = 60000;
+
+        private static readonly Regex LineBreaks = new Regex(@"\s*[\r\n]+\s*");
+        // Query string d'une URL (jetons possibles) : masquee, comme DojoLog.Redact pour les URL de navigation.
+        private static readonly Regex UrlQuery = new Regex("(https?://[^\\s?#'\"<>]*)\\?[^\\s'\"<>]*");
 
         private readonly Func<long> clock;
         private long lastBeat;
@@ -20,6 +34,8 @@ namespace DojoWallpaper
         private bool reloaded;
         private int recreations;
         private long lastRecreate;
+        private int scriptReloads;
+        private long lastScriptReload;
 
         // clock : temps monotone, en millisecondes.
         public PageWatchdog(Func<long> clock)
@@ -97,6 +113,70 @@ namespace DojoWallpaper
         public void ResetRecreateBackoff()
         {
             recreations = 0;
+        }
+
+        // Resultat de la sonde de script (Verdict).
+        public enum ProbeVerdict
+        {
+            // Pas de reponse dans le delai : page muette (rechargement, anti-rebond).
+            Silent,
+            // Reponse : page vivante (silence remis a zero).
+            Alive,
+            // Page du dojo qui s'est annoncee, script arrete : rechargement (backoff TryScriptReload).
+            ScriptStopped
+        }
+
+        // Verdict de la sonde. answered : reponse dans le delai ; json : son resultat ; dojoPage : la page s'est annoncee
+        // (battement ou erreur dojo:) pendant cette navigation. Sans cela (URL personnalisee, autre page), un "false"
+        // ne prouve rien : la page est jugee vivante, comme avant la sonde de script.
+        public static ProbeVerdict Verdict(bool answered, string json, bool dojoPage)
+        {
+            if (!answered)
+            {
+                return ProbeVerdict.Silent;
+            }
+            if (dojoPage && string.Equals(json, "false", StringComparison.Ordinal))
+            {
+                return ProbeVerdict.ScriptStopped;
+            }
+            return ProbeVerdict.Alive;
+        }
+
+        // Rechargement pour script arrete : anti-rebond de CooldownMs ; apres ScriptFreeReloads rechargements consecutifs
+        // (sans battement), au plus un par ScriptReloadGapMs. Consomme l'autorisation : l'appelant recharge.
+        public bool TryScriptReload()
+        {
+            long now = clock();
+            if (scriptReloads >= ScriptFreeReloads && now - lastScriptReload < ScriptReloadGapMs)
+            {
+                return false;
+            }
+            if (!TryReload())
+            {
+                return false;
+            }
+            scriptReloads++;
+            lastScriptReload = now;
+            return true;
+        }
+
+        // Battement recu : la page tourne, les rechargements pour script arrete repartent de zero.
+        public void ResetScriptBackoff()
+        {
+            scriptReloads = 0;
+        }
+
+        // Texte d'un message "dojo:error:..." : retours a la ligne remplaces, query des URL masquee, tronque.
+        // Null si le message n'est pas une erreur de la page.
+        public static string PageError(string message)
+        {
+            if (message == null || !message.StartsWith(ErrorPrefix, StringComparison.Ordinal))
+            {
+                return null;
+            }
+            string text = LineBreaks.Replace(message.Substring(ErrorPrefix.Length), " ").Trim();
+            text = UrlQuery.Replace(text, "$1?...");
+            return text.Length > ErrorMaxChars ? text.Substring(0, ErrorMaxChars) : text;
         }
     }
 }
