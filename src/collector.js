@@ -53,6 +53,12 @@ const costUsd = (r) => { const c = costParts(r); return c.i + c.o + c.w + c.cr; 
 
 // ── Lecture incrémentale des fichiers JSONL ──────────────────────────
 const state = readJson(STATE, { offsets: {}, claude: {}, codex: {}, codexLimits: null });
+// v2 : lignes produites par outil (tl) dans state.claude. Une seule relecture complète des JSONL Claude ; Codex n'est pas touché.
+const SCHEMA = 2;
+if (state.v !== SCHEMA) {
+  for (const f in state.offsets) if (f.startsWith(CLAUDE_PROJECTS + path.sep)) delete state.offsets[f];
+  state.v = SCHEMA;
+}
 
 function* walk(dir, depth = 0) {
   let ents = [];
@@ -88,6 +94,30 @@ function readNewLines(file, onLine) {
   } finally { fs.closeSync(fd); }
 }
 
+// Lignes produites par les outils d'édition (Write, Edit, MultiEdit, NotebookEdit). Lignes vides ignorées.
+const nonBlank = (s) => typeof s === 'string' ? s.split('\n').filter((l) => l.trim() !== '') : [];
+// Lignes ajoutées par un Edit : lignes de new absentes de old (multiset ligne à ligne)
+function addedLines(oldS, newS) {
+  const seen = new Map();
+  for (const l of nonBlank(oldS)) seen.set(l, (seen.get(l) || 0) + 1);
+  let n = 0;
+  for (const l of nonBlank(newS)) {
+    const c = seen.get(l) || 0;
+    if (c) seen.set(l, c - 1); else n++;
+  }
+  return n;
+}
+function locOfTool(b) {
+  const x = b.input || {};
+  if (b.name === 'Write') return nonBlank(x.content).length;
+  if (b.name === 'Edit') return addedLines(x.old_string, x.new_string);
+  if (b.name === 'MultiEdit') return (Array.isArray(x.edits) ? x.edits : []).reduce((a, e) => a + addedLines(e?.old_string, e?.new_string), 0);
+  if (b.name === 'NotebookEdit') return nonBlank(x.new_source).length;
+  return 0;
+}
+// Total d'un enregistrement : une entrée par tool_use id, donc relire une même ligne ne compte pas deux fois
+const locOf = (r) => Object.values(r.tl || {}).reduce((a, n) => a + n, 0);
+
 function scanClaude() {
   for (const file of walk(CLAUDE_PROJECTS)) {
     readNewLines(file, (line) => {
@@ -101,12 +131,21 @@ function scanClaude() {
       const w5 = cc.ephemeral_5m_input_tokens ?? Math.max(0, (u.cache_creation_input_tokens || 0) - w1);
       const effort = (line.match(/"effort":"(\w+)"/) || [])[1] || 'n/a';
       const speed = u.speed || (line.match(/"speed":"(\w+)"/) || [])[1] || 'standard';
-      state.claude[id] = {
+      // streaming : un bloc de contenu par ligne, même message id → on reprend les tool_use déjà comptés
+      const tl = { ...state.claude[id]?.tl };
+      for (const b of Array.isArray(m.content) ? m.content : []) {
+        if (b?.type !== 'tool_use' || !b.id) continue;
+        const n = locOfTool(b);
+        if (n) tl[b.id] = n;
+      }
+      const rec = {
         t: Date.parse(o.timestamp), model: m.model, effort, speed,
         i: u.input_tokens || 0, o: u.output_tokens || 0, cr: u.cache_read_input_tokens || 0, w5, w1,
         // session (le fichier), projet, et sous-agent : utilisés par le coach
         s: path.basename(file, '.jsonl'), p: path.basename(o.cwd || '') || '~', sub: !!o.isSidechain || file.includes('subagents'),
       };
+      if (Object.keys(tl).length) rec.tl = tl;   // omis quand vide (taille du state)
+      state.claude[id] = rec;
     });
   }
 }
@@ -235,6 +274,7 @@ function usage() {
   const sum = () => ({ usd: 0, msgs: 0, i: 0, o: 0, cr: 0, w: 0, cost: { i: 0, o: 0, w: 0, cr: 0 }, saved: 0 });
   const today = sum(), week = sum();
   const byModel = {}, byEffort = {}, daily = {};
+  const readByModel = {}, writeByModel = {};   // tokens 7 j par modèle : lus (entrée + cache) et écrits (sortie)
   for (let d = 13; d >= 0; d--) daily[startOfDay(new Date(Date.now() - d * 864e5))] = 0;
 
   for (const r of Object.values(state.claude)) {
@@ -247,6 +287,8 @@ function usage() {
       add(week);
       const mk = prettyModel(r.model);
       byModel[mk] = (byModel[mk] || 0) + c;
+      readByModel[mk] = (readByModel[mk] || 0) + r.i + r.cr + r.w5 + r.w1;
+      writeByModel[mk] = (writeByModel[mk] || 0) + r.o;
       byEffort[r.effort] = (byEffort[r.effort] || 0) + c;
     }
   }
@@ -254,6 +296,12 @@ function usage() {
   const toEur = (s) => ({ ...s, eur: s.usd * eur, savedEur: s.saved * eur, costEur: Object.fromEntries(Object.entries(s.cost).map(([k, v]) => [k, v * eur])) });
   const shares = (o) => Object.entries(o).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1])
     .map(([k, v]) => ({ name: k, eur: v * eur, pct: week.usd ? 100 * v / week.usd : 0 }));
+  // part de la liste elle-même (pas du coût) : un modèle bon marché garde sa part de tokens
+  const tokShares = (o) => {
+    const rows = Object.entries(o).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+    const tot = rows.reduce((a, [, v]) => a + v, 0);
+    return rows.map(([k, v]) => ({ name: k, tok: v, pct: tot ? 100 * v / tot : 0 }));
+  };
 
   const cx = { today: 0, week: 0, model: null };
   for (const r of Object.values(state.codex)) {
@@ -263,11 +311,23 @@ function usage() {
     if (r.model) cx.model = r.model;
   }
 
+  // coût Claude et lignes produites : aujourd'hui, 7 j, et les 7 j précédents (KEEP_MS = 15 j couvre week0 - 7 j)
+  const prev0 = week0 - 7 * 864e5;
+  const locWin = { today: [day0, Infinity], week: [week0, Infinity], prev: [prev0, week0] };
+  const locSum = { today: { usd: 0, lines: 0 }, week: { usd: 0, lines: 0 }, prev: { usd: 0, lines: 0 } };
+  for (const r of Object.values(state.claude)) {
+    const c = costUsd(r), n = locOf(r);
+    for (const k in locWin) if (r.t >= locWin[k][0] && r.t < locWin[k][1]) { locSum[k].usd += c; locSum[k].lines += n; }
+  }
+  const perK = (s) => ({ lines: s.lines, eur: s.usd * eur, per1k: s.lines ? s.usd * eur * 1000 / s.lines : null });
+
   insights.ai = {
     eurRate: eur,
+    loc: { today: perK(locSum.today), week: perK(locSum.week), prev: perK(locSum.prev) },
     coach: coach(Object.values(state.claude).filter((r) => r.t >= week0), eur),
     today: toEur(today), week: toEur(week),
     byModel: shares(byModel), byEffort: shares(byEffort),
+    tokensByModel: { read: tokShares(readByModel), write: tokShares(writeByModel) },
     daily: Object.entries(daily).map(([t, v]) => ({ t: +t, eur: v * eur })),
     claudeLimits: latestClaudeLimits(),
     codex: { ...cx, limits: state.codexLimits },
