@@ -358,6 +358,7 @@
       <div class="kpi"><div class="l">Aujourd'hui</div><div class="v" id="aiToday">–</div><div class="s" id="aiTodayS"></div></div>
       <div class="kpi"><div class="l">7 derniers jours</div><div class="v" id="aiWeek">–</div><div class="s" id="aiWeekS"></div></div>
     </div>
+    <div class="sub" id="locSub" style="display:none">Coût / 1 000 lignes <span id="locVal"></span></div>
     <div class="sub" id="quotasSub">Quotas <span id="quotaNote"></span></div>
     <div id="quotas"></div>
     <div class="sub">14 derniers jours <span id="daysMax"></span></div>
@@ -367,6 +368,10 @@
     <div class="two">
       <div><div class="sub">Modèles <span>7 j</span></div><div class="stack" id="modelBar"></div><div class="legend" id="modelLegend"></div></div>
       <div><div class="sub">Effort <span>7 j</span></div><div class="stack" id="effortBar"></div><div class="legend" id="effortLegend"></div></div>
+    </div>
+    <div class="two">
+      <div><div class="sub">Tokens lus <span>7 j</span></div><div class="stack" id="tokReadBar"></div><div class="legend" id="tokReadLegend"></div></div>
+      <div><div class="sub">Tokens écrits <span>7 j</span></div><div class="stack" id="tokWriteBar"></div><div class="legend" id="tokWriteLegend"></div></div>
     </div>
   </section>
 
@@ -621,7 +626,7 @@ const MODEL_COLORS = [[/fable|mythos/i, '#ff79c6'], [/opus/i, '#bd93f9'], [/sonn
 const EFFORT_COLORS = { low: '#50fa7b', medium: '#8be9fd', high: '#bd93f9', xhigh: '#ff79c6', max: '#ff5555', 'n/a': '#6272a4' };
 const modelColor = (n) => (MODEL_COLORS.find(([re]) => re.test(n)) || [0, '#ffb86c'])[1];
 const eur = (v) => v >= 100 ? nf0.format(v) + ' €' : nf2.format(v) + ' €';
-const tok = (n) => n >= 1e9 ? nf1.format(n / 1e9) + ' G' : n >= 1e6 ? nf1.format(n / 1e6) + ' M' : n >= 1e3 ? nf0.format(n / 1e3) + ' k' : String(n);
+const tok = (n) => { const f = (x) => x >= 10 ? nf0.format(x) : nf1.format(x); return n >= 1e9 ? f(n / 1e9) + ' Md' : n >= 1e6 ? f(n / 1e6) + ' M' : n >= 1e3 ? f(n / 1e3) + ' k' : nf0.format(n); };   // 41 M, 820 k, 1,2 Md
 const fmtReset = (sec) => {
   if (!sec) return '';
   const d = new Date(sec * 1000), diff = d - Date.now();
@@ -639,6 +644,19 @@ function renderAI(ai, quota) {
   $('aiTodayS').textContent = `${nf0.format(ai.today.msgs)} req · dont cache ${eur(cacheEur(ai.today))}`;
   $('aiWeek').textContent = eur(ai.week.eur);
   $('aiWeekS').textContent = `${nf0.format(ai.week.msgs)} req · dont cache ${eur(cacheEur(ai.week))}`;
+
+  // coût Claude par 1 000 lignes produites (7 j), tendance vs les 7 j précédents ; absent des anciens caches
+  const L = ai.loc?.week, base = ai.loc?.prev?.per1k;
+  $('locSub').style.display = L?.lines ? '' : 'none';
+  if (L?.lines) {
+    let tr = '<span style="color:var(--dim)">— vs 7 j préc.</span>';
+    if (base > 0 && L.per1k != null) {
+      const d = 100 * (L.per1k - base) / base, r = Math.round(Math.abs(d));
+      tr = r ? `<span style="color:${d < 0 ? '#50fa7b' : '#ff5555'}">${d < 0 ? '↓' : '↑'} ${nf0.format(r)} % vs 7 j préc.</span>`
+             : '<span style="color:var(--dim)">stable vs 7 j préc.</span>';
+    }
+    $('locVal').innerHTML = `<b style="color:var(--fg)">${eur(L.per1k)}</b> · ${nf0.format(L.lines)} lignes · 7 j · ${tr}`;
+  }
 
   // ventilation du coût : sortie, écriture cache, lecture cache, entrée
   const ce = ai.week.costEur;
@@ -687,12 +705,19 @@ function renderAI(ai, quota) {
   $('daysMax').textContent = 'max ' + eur(max);
 
   const stack = (items, color) => items.map((m) => `<i style="width:${m.pct}%;background:${color(m.name)}"></i>`).join('');
-  const legend = (items, color) => items.map((m) => `<span><i style="background:${color(m.name)}"></i>${esc(m.name)} <em>${nf0.format(m.pct)} % · ${eur(m.eur)}</em></span>`).join('');
+  const legend = (items, color, val = (m) => eur(m.eur)) => items.map((m) => `<span><i style="background:${color(m.name)}"></i>${esc(m.name)} <em>${nf0.format(m.pct)} % · ${val(m)}</em></span>`).join('');
   $('modelBar').innerHTML = stack(ai.byModel, modelColor);
   $('modelLegend').innerHTML = legend(ai.byModel, modelColor);
   const ec = (n) => EFFORT_COLORS[n] || '#6272a4';
   $('effortBar').innerHTML = stack(ai.byEffort, ec);
   $('effortLegend').innerHTML = legend(ai.byEffort, ec);
+  // part de tokens par modèle (lus / écrits), même couleur que la barre de coût
+  const tr = ai.tokensByModel?.read || [], tw = ai.tokensByModel?.write || [];
+  const tokVal = (m) => tok(m.tok);
+  $('tokReadBar').innerHTML = stack(tr, modelColor);
+  $('tokReadLegend').innerHTML = legend(tr, modelColor, tokVal);
+  $('tokWriteBar').innerHTML = stack(tw, modelColor);
+  $('tokWriteLegend').innerHTML = legend(tw, modelColor, tokVal);
 }
 
 /* ── Dev : GitHub, Sentry, Linear ────────────────────────────── */
