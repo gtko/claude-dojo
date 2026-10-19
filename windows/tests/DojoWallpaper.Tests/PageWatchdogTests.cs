@@ -18,6 +18,11 @@ namespace DojoWallpaper.Tests
             list.Add(Case("PageWatchdog : recreations espacees de 20 s, 40 s, 80 s", RecreateBackoffDoubles));
             list.Add(Case("PageWatchdog : ecart de recreation plafonne a 5 min", RecreateGapCapped));
             list.Add(Case("PageWatchdog : ResetRecreateBackoff remet la 1re recreation immediate", RecreateBackoffResets));
+            list.Add(Case("PageWatchdog : sonde -> script arrete seulement si la page s'est annoncee", VerdictNeedsOwnPage));
+            list.Add(Case("PageWatchdog : rechargement pour script arrete : 3 libres, puis au plus un par minute", ScriptReloadBackoff));
+            list.Add(Case("PageWatchdog : rechargement pour script arrete : anti-rebond de 10 s", ScriptReloadCooldown));
+            list.Add(Case("PageWatchdog : ResetScriptBackoff remet les rechargements libres", ScriptBackoffResets));
+            list.Add(Case("PageWatchdog : erreur de page nettoyee, tronquee, URL masquee", PageErrorCleaned));
             return list;
         }
 
@@ -129,6 +134,71 @@ namespace DojoWallpaper.Tests
             watchdog.ResetRecreateBackoff();
             Assert.AreEqual(0, watchdog.Recreations, "compteur remis a zero");
             Assert.IsTrue(watchdog.TryRecreate(), "apres reset : recreation immediate");
+        }
+
+        private static void VerdictNeedsOwnPage()
+        {
+            Assert.AreEqual(PageWatchdog.ProbeVerdict.Silent, PageWatchdog.Verdict(false, null, true), "pas de reponse : muette");
+            Assert.AreEqual(PageWatchdog.ProbeVerdict.ScriptStopped, PageWatchdog.Verdict(true, "false", true), "page du dojo, false : script arrete");
+            Assert.AreEqual(PageWatchdog.ProbeVerdict.Alive, PageWatchdog.Verdict(true, "true", true), "page du dojo, true : vivante");
+            Assert.AreEqual(PageWatchdog.ProbeVerdict.Alive, PageWatchdog.Verdict(true, "false", false), "autre page, false : vivante, pas de rechargement");
+            Assert.AreEqual(PageWatchdog.ProbeVerdict.Alive, PageWatchdog.Verdict(true, "true", false), "autre page, true : vivante");
+        }
+
+        private static void ScriptReloadBackoff()
+        {
+            long now = 0;
+            var watchdog = new PageWatchdog(() => now);
+            Assert.IsTrue(watchdog.TryScriptReload(), "1er rechargement libre");
+            now = 10000;
+            Assert.IsTrue(watchdog.TryScriptReload(), "2e libre a 10 s");
+            now = 20000;
+            Assert.IsTrue(watchdog.TryScriptReload(), "3e libre a 10 s");
+            now = 30000;
+            Assert.IsFalse(watchdog.TryScriptReload(), "4e a 10 s de la 3e : refusee");
+            now = 79999;
+            Assert.IsFalse(watchdog.TryScriptReload(), "4e a 59,999 s de la 3e : refusee");
+            now = 80000;
+            Assert.IsTrue(watchdog.TryScriptReload(), "4e a 60 s de la 3e : permise");
+            now = 139999;
+            Assert.IsFalse(watchdog.TryScriptReload(), "5e a 59,999 s de la 4e : refusee");
+            now = 140000;
+            Assert.IsTrue(watchdog.TryScriptReload(), "5e a 60 s de la 4e : permise");
+        }
+
+        private static void ScriptReloadCooldown()
+        {
+            long now = 0;
+            var watchdog = new PageWatchdog(() => now);
+            Assert.IsTrue(watchdog.TryScriptReload(), "1er rechargement");
+            now = 9999;
+            Assert.IsFalse(watchdog.TryScriptReload(), "9,999 s apres : refuse");
+            now = 10000;
+            Assert.IsTrue(watchdog.TryScriptReload(), "10 s apres : permis");
+        }
+
+        private static void ScriptBackoffResets()
+        {
+            long now = 0;
+            var watchdog = new PageWatchdog(() => now);
+            for (int i = 0; i < 3; i++)
+            {
+                Assert.IsTrue(watchdog.TryScriptReload(), "rechargement libre " + (i + 1));
+                now += 10000;
+            }
+            Assert.IsFalse(watchdog.TryScriptReload(), "4e sans battement : refusee");
+            watchdog.ResetScriptBackoff();
+            Assert.IsTrue(watchdog.TryScriptReload(), "apres battement : rechargement libre");
+        }
+
+        private static void PageErrorCleaned()
+        {
+            Assert.IsTrue(PageWatchdog.PageError(null) == null, "message nul : pas une erreur");
+            Assert.IsTrue(PageWatchdog.PageError("dojo:alive") == null, "battement : pas une erreur");
+            Assert.AreEqual("Uncaught TypeError: x @12:3", PageWatchdog.PageError("dojo:error:Uncaught TypeError: x @12:3"), "erreur simple");
+            Assert.AreEqual("a b c", PageWatchdog.PageError("dojo:error:a\r\n  b\nc"), "retours a la ligne remplaces");
+            Assert.AreEqual("echec http://h/stats?... @1:2", PageWatchdog.PageError("dojo:error:echec http://h/stats?token=abc @1:2"), "query d'URL masquee");
+            Assert.AreEqual(PageWatchdog.ErrorMaxChars, PageWatchdog.PageError("dojo:error:" + new string('x', 400)).Length, "tronquee a 300 caracteres");
         }
     }
 }

@@ -59,6 +59,8 @@ namespace DojoWallpaper
         private Task<CoreWebView2Environment> environmentUsed;
         // Sonde de page en vol : une seule a la fois (ProbeSilentPage).
         private bool probing;
+        // La page s'est annoncee (battement ou erreur dojo:) pendant la navigation en cours : sa sonde fait foi.
+        private bool dojoPage;
         private string lastSafe;
         private DateTime embedSince;
         // Derniere image de la page, affichee sur le fond du formulaire pendant la pause (WebView masquee).
@@ -379,6 +381,7 @@ namespace DojoWallpaper
             }
             pendingNavigate = false;
             loaded = false;
+            dojoPage = false;
             reloading = true;
             watchdog.Reset();
             CoreLog.Write(Text + " navigate " + DojoLog.Redact(url));
@@ -440,18 +443,24 @@ namespace DojoWallpaper
 
         // Page muette depuis SilenceMs : sonde (ExecuteScriptAsync) avant tout rechargement. Un minuteur bride
         // (page jugee occultee) ne doit pas faire recharger une page vivante. Une seule sonde en vol (probing).
+        // Sonde window.__dojoReady : "false" d'une page du dojo = script arrete (rechargement, backoff PageWatchdog).
         private async void ProbeSilentPage()
         {
             probing = true;
             WebView2 target = web;
-            bool alive = false;
+            bool answered = false;
+            string answer = null;
             try
             {
-                Task<string> script = target.ExecuteScriptAsync("1");
+                Task<string> script = target.ExecuteScriptAsync(PageWatchdog.ReadyProbe);
                 // Resultat tardif (renderer repris apres le delai) : observe, pour ne pas laisser une exception non geree.
                 _ = script.ContinueWith(t => { _ = t.Exception; }, TaskScheduler.Default);
                 Task finished = await Task.WhenAny(script, Task.Delay(ProbeTimeoutMs));
-                alive = finished == script && !script.IsFaulted;
+                if (finished == script && script.Status == TaskStatus.RanToCompletion)
+                {
+                    answered = true;
+                    answer = script.Result;
+                }
             }
             catch (Exception ex)
             {
@@ -466,11 +475,25 @@ namespace DojoWallpaper
             {
                 return;
             }
-            if (alive)
+            switch (PageWatchdog.Verdict(answered, answer, dojoPage))
             {
-                CoreLog.Write(Text + " page bridee, vivante : silence remis a zero");
-                watchdog.Reset();
-                return;
+                case PageWatchdog.ProbeVerdict.Alive:
+                    CoreLog.Write(Text + " page bridee, vivante : silence remis a zero");
+                    watchdog.Reset();
+                    return;
+                case PageWatchdog.ProbeVerdict.ScriptStopped:
+                    if (!watchdog.TryScriptReload())
+                    {
+                        // Sonde suivante a SilenceMs (pas a chaque tick) : le journal ne se remplit pas pendant l'attente.
+                        CoreLog.Write(Text + " script de la page arrete : rechargement reporte (anti-rebond)");
+                        watchdog.Reset();
+                        return;
+                    }
+                    CoreLog.Write(Text + " script de la page arrete : rechargement");
+                    Navigate();
+                    return;
+                case PageWatchdog.ProbeVerdict.Silent:
+                    break;
             }
             if (!watchdog.TryReload())
             {
@@ -523,12 +546,37 @@ namespace DojoWallpaper
                 || kind == CoreWebView2ProcessFailedKind.GpuProcessExited;
         }
 
-        // Battement de la page (chien de garde). Seul message attendu : les autres sont ignores.
+        // Messages de la page : battement (dojo:alive, chien de garde) et erreurs JS (dojo:error:, journal seulement).
+        // Les autres messages sont ignores.
         private void OnWebMessage(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
-            if (!shutdown && string.Equals(e.WebMessageAsJson, "\"dojo:alive\"", StringComparison.Ordinal))
+            if (shutdown)
             {
+                return;
+            }
+            string message;
+            try
+            {
+                message = e.TryGetWebMessageAsString();
+            }
+            catch (ArgumentException)
+            {
+                // Message non textuel : ignore.
+                return;
+            }
+            if (string.Equals(message, PageWatchdog.AliveMessage, StringComparison.Ordinal))
+            {
+                dojoPage = true;
                 watchdog.Reset();
+                // Battement : le script tourne, les rechargements pour script arrete repartent de zero.
+                watchdog.ResetScriptBackoff();
+                return;
+            }
+            string error = PageWatchdog.PageError(message);
+            if (error != null)
+            {
+                dojoPage = true;
+                CoreLog.Write(Text + " erreur page: " + error);
             }
         }
 
@@ -728,7 +776,8 @@ namespace DojoWallpaper
                 return;
             }
             CoreLog.Write(Text + " NavigationCompleted IsSuccess=" + e.IsSuccess
-                + " status=" + e.WebErrorStatus + " http=" + e.HttpStatusCode);
+                + " status=" + e.WebErrorStatus + " http=" + e.HttpStatusCode
+                + " url=" + DojoLog.Redact(web.CoreWebView2.Source));
             if (e.IsSuccess)
             {
                 loaded = true;
