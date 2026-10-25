@@ -171,6 +171,14 @@ test('arguments reg.exe : clé Run HKCU, REG_SZ, /f ; suppression sans /d', () =
   assert.deepEqual(setup.regArgs.del('ClaudeDojoWallpaper'), ['delete', setup.RUN_KEY, '/v', 'ClaudeDojoWallpaper', '/f']);
 });
 
+test('isLegacyWallRun : ancienne valeur « DojoWallpaper » visée seulement si elle lance notre exe', () => {
+  const exe = 'C:\\Users\\Ana\\.config\\claude-dojo\\windows\\bin\\DojoWallpaper.exe';
+  assert.equal(setup.isLegacyWallRun(`"${exe}"`, exe), true);
+  assert.equal(setup.isLegacyWallRun(`"${exe.toUpperCase()}"`, exe), true, 'casse ignorée');
+  assert.equal(setup.isLegacyWallRun('"D:\\Autre\\DojoWallpaper.exe"', exe), false, 'autre exe');
+  assert.equal(setup.isLegacyWallRun(null, exe), false, 'valeur absente');
+});
+
 test('autostartInstall en dryRun : rien n écrit, valeurs prévues (agent seul sans exe)', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dojo-dry-'));
   const env = { USERPROFILE: home, HOME: home, DOJO_SKIP_REGISTRY: '1' };

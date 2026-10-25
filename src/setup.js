@@ -1205,6 +1205,20 @@ function skipRegistry() {
   process.stderr.write('Windows : registre non modifié (DOJO_SKIP_REGISTRY=1).\n');
 }
 
+// Ancienne valeur Run de l'app (« DojoWallpaper ») : elle lance le même exe que RUN_WALL, donc deux fois à l'ouverture
+// de session. Visée seulement si elle pointe vers notre exe, sans tenir compte de la casse (fonction pure).
+const isLegacyWallRun = (data, exe) => data !== null && data !== undefined
+  && String(data).toLowerCase().includes(String(exe).toLowerCase());
+
+// Retire l'ancienne valeur de l'app une fois RUN_WALL posée. Renvoie son nom si elle a été retirée, sinon null.
+function dropLegacyWallRun(warnings) {
+  if (!isLegacyWallRun(regValue(RUN_WALL_TOGGLE), paths.exe())) return null;
+  try { execFileSync(regExe(), regArgs.del(RUN_WALL_TOGGLE), regRunOpts); return RUN_WALL_TOGGLE; } catch (e) {
+    warnings.push(`${RUN_WALL_TOGGLE} : suppression impossible (${String(e.stderr || e.message).trim()})`);
+    return null;
+  }
+}
+
 // Lecture seule : valeurs Dojo présentes dans HKCU\...\Run.
 function autostartState() {
   return { agent: regValue(RUN_AGENT) !== null, wallpaper: regValue(RUN_WALL) !== null };
@@ -1255,15 +1269,20 @@ function autostartInstall(opts = {}) {
   writeAtomic(launcher, content);
   const warnings = [];
   const loaded = [];
+  const migrated = [];
   if (opts.noLaunchd !== true) {
     if (regSkipped()) {
       skipRegistry();
       warnings.push('registre : valeurs Run non posées (DOJO_SKIP_REGISTRY=1).');
     } else {
       for (const v of values) { setRunValue(v.name, v.data); loaded.push(v.name); }
+      if (loaded.includes(RUN_WALL)) {
+        const dropped = dropLegacyWallRun(warnings);
+        if (dropped) migrated.push(dropped);
+      }
     }
   }
-  return { ok: true, dryRun: false, written: [launcher], migrated: [], loaded, warnings };
+  return { ok: true, dryRun: false, written: [launcher], migrated, loaded, warnings };
 }
 
 // Retire les valeurs Run de Dojo, et celle de l'exe (« DojoWallpaper ») seulement si elle pointe vers notre exe.
@@ -1272,8 +1291,7 @@ function autostartUninstall(opts = {}) {
   const dryRun = opts.dryRun === true;
   if (opts.noLaunchd === true) return { ok: true, dryRun, skipped: true, removed: [], commands: [], warnings: [] };
   const targets = [RUN_AGENT, RUN_WALL].filter((n) => regValue(n) !== null);
-  const toggle = regValue(RUN_WALL_TOGGLE);
-  if (toggle !== null && toggle.includes(paths.exe())) targets.push(RUN_WALL_TOGGLE);
+  if (isLegacyWallRun(regValue(RUN_WALL_TOGGLE), paths.exe())) targets.push(RUN_WALL_TOGGLE);
   const commands = targets.map((n) => `reg delete "${RUN_KEY}" /v ${n} /f`);
   const removed = [];
   const warnings = [];
@@ -1329,6 +1347,11 @@ function wallpaperReady(exe, source) {
   const out = { ok: true, installed: true, path: exe, source, autostart: null };
   if (!regSkipped() && regValue(RUN_AGENT) !== null) {
     try { setRunValue(RUN_WALL, cmdArg(exe, true)); out.autostart = RUN_WALL; } catch (e) { out.warning = e.message; }
+    if (out.autostart) {
+      const warnings = [];
+      dropLegacyWallRun(warnings);
+      if (warnings.length) out.warning = warnings.join(' ; ');
+    }
   }
   return out;
 }
@@ -3477,5 +3500,5 @@ module.exports = {
   terminalStatus, terminalApply, terminalRemove,
   // Windows (fonctions pures testables sur toute plateforme, voir test/setup-win.test.js).
   mergeTransform, unmergeTransform, cmdArg, scriptPath, vbsStr, launcherVbs, regArgs,
-  autostartInstall, autostartUninstall, ensureWallpaperExe, dojoProcessTargets, RUN_KEY, RUN_AGENT, RUN_WALL,
+  autostartInstall, autostartUninstall, ensureWallpaperExe, dojoProcessTargets, isLegacyWallRun, RUN_KEY, RUN_AGENT, RUN_WALL,
 };
