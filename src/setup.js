@@ -1210,6 +1210,17 @@ function skipRegistry() {
 const isLegacyWallRun = (data, exe) => data !== null && data !== undefined
   && String(data).toLowerCase().includes(String(exe).toLowerCase());
 
+// Poser RUN_WALL : à une première installation, ou si l'utilisateur ne l'a pas retirée (valeur présente, ou ancienne valeur
+// de l'app pointant vers notre exe). Sinon il l'a désactivée dans l'app : on respecte son choix (fonction pure).
+const wallRunWanted = ({ first, wall, legacy }) => !!first
+  || (wall !== null && wall !== undefined)
+  || legacy === true;
+
+// Même décision avec les valeurs du registre (lecture seule).
+function wallRunKept(first) {
+  return wallRunWanted({ first, wall: regValue(RUN_WALL), legacy: isLegacyWallRun(regValue(RUN_WALL_TOGGLE), paths.exe()) });
+}
+
 // Retire l'ancienne valeur de l'app une fois RUN_WALL posée. Renvoie son nom si elle a été retirée, sinon null.
 function dropLegacyWallRun(warnings) {
   if (!isLegacyWallRun(regValue(RUN_WALL_TOGGLE), paths.exe())) return null;
@@ -1263,9 +1274,14 @@ function autostartInstall(opts = {}) {
   const node = canonical(found);
   const launcher = paths.launcher();
   const values = [{ name: RUN_AGENT, data: launcherRunData(launcher) }];
-  if (fs.existsSync(paths.exe())) values.push({ name: RUN_WALL, data: cmdArg(paths.exe(), true) });
+  const off = [];
+  // Fond : valeur posée seulement si l'utilisateur ne l'a pas désactivée dans l'app (agent absent = première installation).
+  if (fs.existsSync(paths.exe())) {
+    if (regSkipped() || wallRunKept(regValue(RUN_AGENT) === null)) values.push({ name: RUN_WALL, data: cmdArg(paths.exe(), true) });
+    else off.push(RUN_WALL);
+  }
   const content = launcherVbs(node, paths.dojo());
-  if (dryRun) return { ok: true, dryRun: true, written: [], migrated: [], loaded: [], warnings: [], launcher: { path: launcher, content }, values };
+  if (dryRun) return { ok: true, dryRun: true, written: [], migrated: [], loaded: [], warnings: [], off, launcher: { path: launcher, content }, values };
   writeAtomic(launcher, content);
   const warnings = [];
   const loaded = [];
@@ -1282,7 +1298,7 @@ function autostartInstall(opts = {}) {
       }
     }
   }
-  return { ok: true, dryRun: false, written: [launcher], migrated, loaded, warnings };
+  return { ok: true, dryRun: false, written: [launcher], migrated, loaded, warnings, off };
 }
 
 // Retire les valeurs Run de Dojo, et celle de l'exe (« DojoWallpaper ») seulement si elle pointe vers notre exe.
@@ -1322,14 +1338,14 @@ async function ensureWallpaperExe(deps = {}) {
   const reasons = [];
   const version = packageVersion(path.join(paths.dojo(), 'package.json'));
   if (parseVersion(version)) {
-    try { await downloadExe(version, deps.get); return wallpaperReady(exe, 'release'); } catch (e) { reasons.push(`téléchargement : ${e.message}`); }
+    try { await downloadExe(version, deps.get); return wallpaperReady(exe, 'release', !hadExe); } catch (e) { reasons.push(`téléchargement : ${e.message}`); }
   } else {
     reasons.push('version inconnue (package.json)');
   }
-  try { await (deps.build || buildExe)(); return wallpaperReady(exe, 'build'); } catch (e) { reasons.push(`compilation : ${e.message}`); }
+  try { await (deps.build || buildExe)(); return wallpaperReady(exe, 'build', !hadExe); } catch (e) { reasons.push(`compilation : ${e.message}`); }
   if (hadExe) {
     return {
-      ...wallpaperReady(exe, 'kept'),
+      ...wallpaperReady(exe, 'kept', !hadExe),
       message: `DojoWallpaper.exe non remplacé (${reasons.join(' ; ')}) : la version déjà installée est gardée.`,
     };
   }
@@ -1342,15 +1358,19 @@ async function ensureWallpaperExe(deps = {}) {
   };
 }
 
-// Exe en place : si l'agent démarre avec Windows, le fond d'écran démarre aussi.
-function wallpaperReady(exe, source) {
+// Exe en place : si l'agent démarre avec Windows, le fond d'écran démarre aussi (sauf s'il a été désactivé dans l'app).
+function wallpaperReady(exe, source, first = false) {
   const out = { ok: true, installed: true, path: exe, source, autostart: null };
   if (!regSkipped() && regValue(RUN_AGENT) !== null) {
-    try { setRunValue(RUN_WALL, cmdArg(exe, true)); out.autostart = RUN_WALL; } catch (e) { out.warning = e.message; }
-    if (out.autostart) {
-      const warnings = [];
-      dropLegacyWallRun(warnings);
-      if (warnings.length) out.warning = warnings.join(' ; ');
+    if (wallRunKept(first)) {
+      try { setRunValue(RUN_WALL, cmdArg(exe, true)); out.autostart = RUN_WALL; } catch (e) { out.warning = e.message; }
+      if (out.autostart) {
+        const warnings = [];
+        dropLegacyWallRun(warnings);
+        if (warnings.length) out.warning = warnings.join(' ; ');
+      }
+    } else {
+      out.autostartOff = RUN_WALL;
     }
   }
   return out;
@@ -3500,5 +3520,5 @@ module.exports = {
   terminalStatus, terminalApply, terminalRemove,
   // Windows (fonctions pures testables sur toute plateforme, voir test/setup-win.test.js).
   mergeTransform, unmergeTransform, cmdArg, scriptPath, vbsStr, launcherVbs, regArgs,
-  autostartInstall, autostartUninstall, ensureWallpaperExe, dojoProcessTargets, isLegacyWallRun, RUN_KEY, RUN_AGENT, RUN_WALL,
+  autostartInstall, autostartUninstall, ensureWallpaperExe, dojoProcessTargets, isLegacyWallRun, wallRunWanted, RUN_KEY, RUN_AGENT, RUN_WALL,
 };

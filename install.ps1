@@ -216,6 +216,7 @@ function Invoke-Install {
     $auto = Invoke-Setup @('launchagents', 'install', '-') -StdinText (ConvertTo-JsonLine @{ node = $script:NodeExe })
     foreach ($file in @($auto.written)) { Write-Info "written: $file" }
     foreach ($name in @($auto.loaded)) { Write-Info "Run value set: $name" }
+    foreach ($name in @($auto.off)) { Write-Info "Run value left off (disabled in the app): $name" }
     foreach ($warning in @($auto.warnings)) { Write-Warning $warning }
 
     Write-Step 'Claude Code settings (hooks, statusline, heavy-gate)'
