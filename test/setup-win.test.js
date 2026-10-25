@@ -179,6 +179,15 @@ test('isLegacyWallRun : ancienne valeur « DojoWallpaper » visée seulement si 
   assert.equal(setup.isLegacyWallRun(null, exe), false, 'valeur absente');
 });
 
+test('wallRunWanted : fond posé à la première installation ou s il n a pas été retiré dans l app (fonction pure)', () => {
+  assert.equal(setup.wallRunWanted({ first: true, wall: null, legacy: false }), true, 'première installation, sans valeur');
+  assert.equal(setup.wallRunWanted({ first: false, wall: '"C:\\dojo\\DojoWallpaper.exe"', legacy: false }), true, 'réinstallation, valeur présente');
+  assert.equal(setup.wallRunWanted({ first: false, wall: null, legacy: true }), true, 'réinstallation, ancienne valeur DojoWallpaper pointant vers notre exe');
+  assert.equal(setup.wallRunWanted({ first: false, wall: null, legacy: false }), false, 'réinstallation, désactivé dans l app : respecté');
+  assert.equal(setup.wallRunWanted({ first: false, wall: undefined, legacy: false }), false, 'valeur undefined = absente');
+  assert.equal(setup.wallRunWanted({ first: false, wall: null, legacy: undefined }), false, 'legacy undefined = absente');
+});
+
 test('autostartInstall en dryRun : rien n écrit, valeurs prévues (agent seul sans exe)', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dojo-dry-'));
   const env = { USERPROFILE: home, HOME: home, DOJO_SKIP_REGISTRY: '1' };

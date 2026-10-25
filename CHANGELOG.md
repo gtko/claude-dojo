@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Windows: the wallpaper no longer starts twice when you sign in. The app's "Start with Windows" option and the installer now share one Run value, `ClaudeDojoWallpaper`, and the old `DojoWallpaper` value is removed when either of them writes it.
+- Windows: reinstalling no longer turns "Start with Windows" back on for the wallpaper when you turned it off in the app. The installer sets the `ClaudeDojoWallpaper` Run value only on a first install, or when it (or the old `DojoWallpaper` value) is already there.
 
 ## [0.2.2] - 2026-10-19
 
